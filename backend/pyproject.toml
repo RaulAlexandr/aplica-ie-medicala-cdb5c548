@@ -23,9 +23,13 @@ test = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["."]
+markers = ["postgres: requires a running PostgreSQL database"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+ignore = ["B008", "E501"]

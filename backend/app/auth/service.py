@@ -1,9 +1,10 @@
-from datetime import UTC, datetime, timedelta
 import hashlib
 import secrets
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer
 from jose import JWTError, jwt
 from pwdlib import PasswordHash
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from app.database import RefreshToken, User, get_db, utcnow
 password_hash = PasswordHash.recommended()
 ALGORITHM = "HS256"
 ROLES = {"clinic_manager", "doctor", "assistant", "reception", "administrator"}
+STAFF_ROLES = ROLES
 
 
 def hash_password(value: str) -> str:
@@ -27,7 +29,7 @@ def verify_password(value: str, hashed: str) -> bool:
 
 def create_access_token(user: User) -> str:
     expires = datetime.now(UTC) + timedelta(minutes=settings.access_token_minutes)
-    return jwt.encode({"sub": str(user.id), "clinic_id": str(user.clinic_id), "role": user.role, "exp": expires}, settings.jwt_secret, algorithm=ALGORITHM)
+    return jwt.encode({"sub": str(user.id), "exp": expires}, settings.jwt_secret, algorithm=ALGORITHM)
 
 
 def _hash_refresh(token: str) -> str:
@@ -49,8 +51,8 @@ async def authenticate(db: AsyncSession, email: str, password: str) -> User | No
 
 
 async def rotate_refresh_token(db: AsyncSession, raw: str) -> User:
-    record = await db.scalar(select(RefreshToken).where(RefreshToken.token_hash == _hash_refresh(raw)))
-    expires_at = record.expires_at if record and record.expires_at.tzinfo is not None else (record.expires_at.replace(tzinfo=UTC) if record else None)
+    record = await db.scalar(select(RefreshToken).where(RefreshToken.token_hash == _hash_refresh(raw)).with_for_update())
+    expires_at = record.expires_at if record and record.expires_at.tzinfo else (record.expires_at.replace(tzinfo=UTC) if record else None)
     if not record or record.revoked_at is not None or expires_at <= utcnow():
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
     user = await db.get(User, record.user_id)
@@ -59,8 +61,6 @@ async def rotate_refresh_token(db: AsyncSession, raw: str) -> User:
     record.revoked_at = utcnow()
     return user
 
-
-from fastapi.security import HTTPBearer
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -80,6 +80,9 @@ async def get_current_user(credentials=Depends(bearer), db: AsyncSession = Depen
 
 
 def require_roles(*roles: str):
+    unknown = set(roles) - ROLES
+    if unknown:
+        raise ValueError(f"Unknown roles: {sorted(unknown)}")
     async def dependency(user: User = Depends(get_current_user)) -> User:
         if user.role not in roles:
             raise HTTPException(status_code=403, detail="Insufficient permissions")

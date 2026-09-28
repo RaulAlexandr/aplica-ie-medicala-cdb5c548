@@ -1,13 +1,13 @@
-from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database import Base, Clinic, Room, User
+from app.auth.service import create_access_token, hash_password
+from app.database import Base, User, get_db
 from app.main import app
-from app.database import get_db
-from app.auth.service import hash_password
+
+SESSION_FACTORIES: dict[int, async_sessionmaker] = {}
 
 
 @pytest.fixture
@@ -22,7 +22,9 @@ async def client():
             yield session
     app.dependency_overrides[get_db] = override
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        SESSION_FACTORIES[id(http)] = sessions
         yield http
+    SESSION_FACTORIES.pop(id(http), None)
     app.dependency_overrides.clear()
     await engine.dispose()
 
@@ -62,3 +64,101 @@ async def test_appointment_conflict_detection(client):
     assert (await client.post("/api/appointments", headers=headers, json=payload)).status_code == 201
     conflict = await client.post("/api/appointments", headers=headers, json={**payload, "starts_at": "2026-10-01T10:30:00+00:00"})
     assert conflict.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_patient_patch_preserves_omitted_clinical_fields_and_records_history(client):
+    tokens = await register(client, email="clinical@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    created = await client.post("/api/patients", headers=headers, json={"first_name": "Ana", "last_name": "Popescu", "allergies": "Penicillin", "medical_alerts": "Diabetes"})
+    patient_id = created.json()["id"]
+    updated = await client.patch(f"/api/patients/{patient_id}", headers=headers, json={"phone": "0712345678"})
+    assert updated.status_code == 200
+    assert updated.json()["allergies"] == "Penicillin"
+    assert updated.json()["medical_alerts"] == "Diabetes"
+    history = await client.get(f"/api/patients/{patient_id}/history", headers=headers)
+    assert history.status_code == 200
+    assert {entry["field"] for entry in history.json()} >= {"phone"}
+    invalid = await client.patch(f"/api/patients/{patient_id}", headers=headers, json={"first_name": None})
+    assert invalid.status_code == 422
+    cleared = await client.patch(f"/api/patients/{patient_id}", headers=headers, json={"phone": None})
+    assert cleared.status_code == 200 and cleared.json()["allergies"] == "Penicillin"
+
+
+@pytest.mark.asyncio
+async def test_appointment_status_transitions_and_rebooking(client):
+    tokens = await register(client, email="transitions@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    room = await client.post("/api/rooms", headers=headers, json={"name": "Cabinet 2"})
+    patient = await client.post("/api/patients", headers=headers, json={"first_name": "Ion", "last_name": "Ionescu"})
+    me = await client.get("/api/auth/me", headers=headers)
+    payload = {"patient_id": patient.json()["id"], "doctor_id": me.json()["id"], "room_id": room.json()["id"], "starts_at": "2026-11-01T10:00:00+00:00", "duration_minutes": 60, "appointment_type": "Review"}
+    appointment = await client.post("/api/appointments", headers=headers, json=payload)
+    appointment_id = appointment.json()["id"]
+    assert (await client.patch(f"/api/appointments/{appointment_id}/status", headers=headers, json={"status": "cancelled"})).status_code == 200
+    assert (await client.post("/api/appointments", headers=headers, json=payload)).status_code == 201
+    assert (await client.patch(f"/api/appointments/{appointment_id}/status", headers=headers, json={"status": "completed"})).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_logout_revokes_refresh_token_and_count_is_not_page_length(client):
+    tokens = await register(client, email="logout@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    for index in range(3):
+        assert (await client.post("/api/patients", headers=headers, json={"first_name": f"P{index}", "last_name": "Patient"})).status_code == 201
+    count = await client.get("/api/patients/count", headers=headers)
+    assert count.status_code == 200 and count.json() == 3
+    assert (await client.post("/api/auth/logout", headers=headers, json={"refresh_token": tokens["refresh_token"]})).status_code == 204
+    assert (await client.post("/api/auth/refresh", json={"refresh_token": tokens["refresh_token"]})).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_protected_routes_require_auth_and_doctor_directory_is_tenant_scoped(client):
+    assert (await client.get("/api/patients")).status_code == 401
+    first = await register(client, clinic="First Clinic", email="first-directory@example.com")
+    first_headers = {"Authorization": f"Bearer {first['access_token']}"}
+    first_doctors = await client.get("/api/staff/doctors", headers=first_headers)
+    assert first_doctors.status_code == 200
+    assert len(first_doctors.json()) == 1
+    second = await register(client, clinic="Second Clinic", email="second-directory@example.com")
+    second_headers = {"Authorization": f"Bearer {second['access_token']}"}
+    assert (await client.get("/api/staff/doctors", headers=second_headers)).json() != first_doctors.json()
+
+
+@pytest.mark.asyncio
+async def test_patient_email_must_be_valid_when_supplied(client):
+    tokens = await register(client, email="email-validation@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    empty = await client.post("/api/patients", headers=headers, json={"first_name": "Ana", "last_name": "Popescu", "email": ""})
+    assert empty.status_code == 201 and empty.json()["email"] is None
+
+
+@pytest.mark.asyncio
+async def test_patient_email_can_be_cleared_and_clinical_fields_are_preserved(client):
+    tokens = await register(client, email="email-clear@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    created = await client.post("/api/patients", headers=headers, json={"first_name": "Ana", "last_name": "Popescu", "email": "ana@example.com", "allergies": "Penicillin"})
+    cleared = await client.patch(f"/api/patients/{created.json()['id']}", headers=headers, json={"email": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["email"] is None and cleared.json()["allergies"] == "Penicillin"
+
+
+@pytest.mark.asyncio
+async def test_assistant_cannot_create_or_change_appointment_status(client):
+    tokens = await register(client, email="assistant-permissions@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    manager = (await client.get("/api/auth/me", headers=headers)).json()
+    async with SESSION_FACTORIES[id(client)]() as session:
+        assistant = User(clinic_id=manager["clinic_id"], full_name="Dental Assistant", email="assistant-role@example.com", password_hash=hash_password("correct horse battery staple"), role="assistant", is_active=True)
+        session.add(assistant)
+        await session.commit()
+        await session.refresh(assistant)
+        assistant_token = create_access_token(assistant)
+    assistant_headers = {"Authorization": f"Bearer {assistant_token}"}
+    room = await client.post("/api/rooms", headers=headers, json={"name": "Assistant Test Room"})
+    patient = await client.post("/api/patients", headers=headers, json={"first_name": "Test", "last_name": "Patient"})
+    payload = {"patient_id": patient.json()["id"], "doctor_id": manager["id"], "room_id": room.json()["id"], "starts_at": "2027-02-01T10:00:00+00:00", "duration_minutes": 30, "appointment_type": "Checkup"}
+    assert (await client.post("/api/appointments", headers=assistant_headers, json=payload)).status_code == 403
+    created = await client.post("/api/appointments", headers=headers, json=payload)
+    assert created.status_code == 201
+    assert (await client.patch(f"/api/appointments/{created.json()['id']}/status", headers=assistant_headers, json={"status": "cancelled"})).status_code == 403

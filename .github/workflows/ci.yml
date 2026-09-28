@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main, fix/security-integrity-workflows]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e '.[test]'
+      - run: pytest -q -m 'not postgres'
+      - run: ruff check app tests alembic
+      - run: python -m compileall -q app alembic
+      - run: alembic heads
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: dentacare
+          POSTGRES_USER: dentacare
+          POSTGRES_PASSWORD: dentacare
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dentacare -d dentacare"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e '.[test]'
+      - name: Upgrade an empty database
+        env:
+          DATABASE_URL: postgresql+asyncpg://dentacare:dentacare@localhost:5432/dentacare
+          JWT_SECRET: ci-only-secret
+          ENVIRONMENT: test
+        run: alembic upgrade head
+      - name: Run PostgreSQL concurrency tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://dentacare:dentacare@localhost:5432/dentacare
+          TEST_DATABASE_URL: postgresql+asyncpg://dentacare:dentacare@localhost:5432/dentacare
+          JWT_SECRET: ci-only-secret
+          ENVIRONMENT: test
+        run: pytest -q tests/test_postgres_integrity.py -m postgres
