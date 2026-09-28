@@ -1,6 +1,7 @@
 import asyncio
 import os
 import subprocess
+from datetime import UTC, datetime
 from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 
@@ -160,7 +161,7 @@ async def _migration_database(overlapping: bool) -> tuple[str, str, int]:
     await connection.execute("INSERT INTO users (id, clinic_id, email, password_hash, full_name, role, is_active) VALUES ($1, $2, $3, 'hash', 'Legacy doctor', 'doctor', true)", doctor_id, clinic_id, f"{doctor_id}@example.com")
     await connection.execute("INSERT INTO rooms (id, clinic_id, name, is_active) VALUES ($1, $2, 'Legacy room', true)", room_id, clinic_id)
     await connection.execute("INSERT INTO patients (id, clinic_id, first_name, last_name, created_at, updated_at) VALUES ($1, $2, 'Legacy', 'Patient', now(), now())", patient_id, clinic_id)
-    starts = ["2027-01-08T10:00:00+00:00", "2027-01-08T10:30:00+00:00"] if overlapping else ["2027-01-08T10:00:00+00:00"]
+    starts = [datetime(2027, 1, 8, 10, tzinfo=UTC), datetime(2027, 1, 8, 10, 30, tzinfo=UTC)] if overlapping else [datetime(2027, 1, 8, 10, tzinfo=UTC)]
     for index, start in enumerate(starts):
         await connection.execute("INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, room_id, starts_at, duration_minutes, status, appointment_type, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, 60, 'scheduled', 'Legacy', now(), now())", str(uuid4()), clinic_id, patient_id, doctor_id, room_id, start)
     await connection.close()
