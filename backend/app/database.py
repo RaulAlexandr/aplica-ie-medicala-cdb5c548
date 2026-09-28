@@ -136,6 +136,7 @@ class Appointment(Base):
     assistant_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"), index=True)
     room_id: Mapped[UUID] = mapped_column(ForeignKey("rooms.id"), nullable=False, index=True)
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="scheduled")
     appointment_type: Mapped[str] = mapped_column(String(100), nullable=False)

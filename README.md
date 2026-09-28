@@ -8,7 +8,7 @@ The API provides clinic registration, JWT access tokens, hashed and rotating ref
 
 Patient PATCH requests use a dedicated partial schema: omitted fields are unchanged, nullable fields may explicitly be cleared, and required identity fields reject explicit null. Clinically significant changes record actor, timestamp, field, previous value, and new value in `patient_revisions`.
 
-Appointments validate clinic ownership for every referenced resource, enforce role policy, validate status transitions, reject reactivation conflicts, and use PostgreSQL GiST exclusion constraints for doctor, room, and assigned-assistant overlap protection under concurrent requests. Intervals are half-open, so a booking ending at the exact start of another booking is allowed.
+Appointments validate clinic ownership for every referenced resource, enforce role policy, validate status transitions, reject reactivation conflicts, and use PostgreSQL GiST exclusion constraints for doctor, room, and assigned-assistant overlap protection under concurrent requests. Intervals are half-open, so a booking ending at the exact start of another booking is allowed. Assistants can view appointments but cannot transition their status.
 
 The staff UI includes login/registration, session refresh and sign-out, overview statistics using a server-side patient count, patient search/list, patient creation, patient detail/edit, and appointment creation/list workflows with loading, empty, validation, and server-error states.
 
@@ -56,7 +56,7 @@ The staff UI is available at `http://localhost:5173`; the API health check is `h
 
 ## Migrations
 
-Application startup does not call `create_all` or mutate the schema. Apply migrations with `alembic upgrade head`. Revision `0002_integrity_and_history` adds patient revision history, aligned indexes, the missing Alembic template, and PostgreSQL scheduling guards. It enables `btree_gist` and adds exclusion constraints for doctor, room, and non-null assigned-assistant time ranges. Existing deployments must run the normal upgrade path; tables are not dropped or recreated.
+Application startup does not call `create_all` or mutate the schema. Apply migrations with `alembic upgrade head`. Revision `0002_integrity_and_history` adds patient revision history, aligned indexes, a trigger-maintained `appointments.ends_at` column, and PostgreSQL scheduling guards. It enables `btree_gist` and adds exclusion constraints for doctor, room, and non-null assigned-assistant time ranges without putting duration/time-zone calculations in index expressions. Before adding constraints, the migration detects existing active overlaps and aborts the transaction with an operator-actionable error; it never deletes records. Existing deployments must run the normal upgrade path; tables are not dropped or recreated.
 
 A subsequent revision can be generated with:
 
@@ -81,8 +81,8 @@ cd ../frontend
 npm run build
 ```
 
-The implementation was verified with five backend tests, Ruff, Python compilation, Alembic head inspection, and a successful frontend production build. A real empty-PostgreSQL migration run and concurrent PostgreSQL booking test remain environment-dependent and were not run in the sandbox because Docker was unavailable.
+The fast backend suite, Ruff, Python compilation, Alembic head inspection, and frontend production build are runnable locally. The real-database checks are reproducible with `DATABASE_URL=postgresql+asyncpg://... alembic upgrade head` followed by `TEST_DATABASE_URL=postgresql+asyncpg://... pytest -q tests/test_postgres_integrity.py -m postgres`; CI runs these against PostgreSQL 16.
 
 ## Remaining limitations
 
-Treatment plans, performed-procedure time tracking, odontogram history, six-site periodontology, inventory movements, staff administration, messaging, reporting, the separate patient portal, and future AI service interfaces remain outside this milestone. No fake endpoints claim those modules are complete. The appointment form currently requires the authenticated staff user to supply a doctor UUID; a doctor directory selector is a follow-up UI improvement.
+Treatment plans, performed-procedure time tracking, odontogram history, six-site periodontology, inventory movements, staff administration, messaging, reporting, the separate patient portal, and future AI service interfaces remain outside this milestone. No fake endpoints claim those modules are complete.

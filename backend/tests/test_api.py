@@ -105,3 +105,24 @@ async def test_logout_revokes_refresh_token_and_count_is_not_page_length(client)
     assert count.status_code == 200 and count.json() == 3
     assert (await client.post("/api/auth/logout", headers=headers, json={"refresh_token": tokens["refresh_token"]})).status_code == 204
     assert (await client.post("/api/auth/refresh", json={"refresh_token": tokens["refresh_token"]})).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_protected_routes_require_auth_and_doctor_directory_is_tenant_scoped(client):
+    assert (await client.get("/api/patients")).status_code == 401
+    first = await register(client, clinic="First Clinic", email="first-directory@example.com")
+    first_headers = {"Authorization": f"Bearer {first['access_token']}"}
+    first_doctors = await client.get("/api/staff/doctors", headers=first_headers)
+    assert first_doctors.status_code == 200
+    assert len(first_doctors.json()) == 1
+    second = await register(client, clinic="Second Clinic", email="second-directory@example.com")
+    second_headers = {"Authorization": f"Bearer {second['access_token']}"}
+    assert (await client.get("/api/staff/doctors", headers=second_headers)).json() != first_doctors.json()
+
+
+@pytest.mark.asyncio
+async def test_patient_email_must_be_valid_when_supplied(client):
+    tokens = await register(client, email="email-validation@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    invalid = await client.post("/api/patients", headers=headers, json={"first_name": "Ana", "last_name": "Popescu", "email": ""})
+    assert invalid.status_code == 422

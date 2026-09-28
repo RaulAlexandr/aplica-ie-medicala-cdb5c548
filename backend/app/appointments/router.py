@@ -12,6 +12,7 @@ from app.database import Appointment, AuditEvent, Patient, Room, User, get_db
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 rooms_router = APIRouter(prefix="/rooms", tags=["rooms"])
+staff_router = APIRouter(prefix="/staff", tags=["staff"])
 STATUSES = {"scheduled", "confirmed", "arrived", "in_progress", "completed", "cancelled", "no_show"}
 ACTIVE_STATUSES = STATUSES - {"cancelled", "no_show"}
 TRANSITIONS = {
@@ -48,6 +49,12 @@ class RoomResponse(BaseModel):
     clinic_id: UUID
     name: str
     is_active: bool
+    model_config = ConfigDict(from_attributes=True)
+
+class DoctorResponse(BaseModel):
+    id: UUID
+    full_name: str
+    role: str
     model_config = ConfigDict(from_attributes=True)
 
 def normalized(value: datetime) -> datetime:
@@ -108,8 +115,13 @@ async def create_room(payload: RoomCreate, db: AsyncSession = Depends(get_db), u
 async def list_rooms(db: AsyncSession = Depends(get_db), user: User = Depends(require_roles("clinic_manager", "doctor", "assistant", "reception", "administrator"))):
     return (await db.scalars(select(Room).where(Room.clinic_id == user.clinic_id, Room.is_active.is_(True)).order_by(Room.name))).all()
 
+@staff_router.get("/doctors", response_model=list[DoctorResponse])
+async def list_doctors(db: AsyncSession = Depends(get_db), user: User = Depends(require_roles("clinic_manager", "doctor", "assistant", "reception", "administrator"))):
+    return (await db.scalars(select(User).where(User.clinic_id == user.clinic_id, User.role.in_(["doctor", "clinic_manager", "administrator"]), User.is_active.is_(True)).order_by(User.full_name))).all()
+
 @router.post("", response_model=AppointmentResponse, status_code=201)
 async def create_appointment(payload: AppointmentCreate, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles("clinic_manager", "doctor", "reception", "administrator"))):
+    require_aware(payload.starts_at)
     await validate_refs(db, payload, user.clinic_id)
     if payload.status in ACTIVE_STATUSES:
         await check_conflicts(db, payload, user.clinic_id)
@@ -135,7 +147,7 @@ async def list_appointments(start: datetime | None = None, end: datetime | None 
     return [as_response(item) for item in (await db.scalars(query)).all()]
 
 @router.patch("/{appointment_id}/status", response_model=AppointmentResponse)
-async def update_status(appointment_id: UUID, payload: AppointmentStatus, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles("clinic_manager", "doctor", "assistant", "reception", "administrator"))):
+async def update_status(appointment_id: UUID, payload: AppointmentStatus, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles("clinic_manager", "doctor", "reception", "administrator"))):
     item = await db.scalar(select(Appointment).where(Appointment.id == appointment_id, Appointment.clinic_id == user.clinic_id).with_for_update())
     if not item:
         raise HTTPException(404, "Appointment not found")
