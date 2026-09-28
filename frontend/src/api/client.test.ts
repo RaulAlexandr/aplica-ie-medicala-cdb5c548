@@ -57,6 +57,21 @@ describe('authenticated session lifecycle', () => {
     expect(onSessionCleared).toHaveBeenCalledOnce();
   });
 
+  it('clears the session when the refreshed request is still unauthorized', async () => {
+    values.set('access_token', 'expired-access');
+    values.set('refresh_token', 'valid-refresh');
+    const onSessionCleared = vi.fn();
+    configureSessionHandlers({ onSessionCleared });
+    installAdapter([{ status: 401, data: { detail: 'expired' } }, { status: 401, data: { detail: 'revoked' } }]);
+    const refresh = vi.spyOn(axios, 'post').mockResolvedValue({ data: { access_token: 'new-access', refresh_token: 'rotated-refresh' } } as never);
+
+    await expect(api.get('/patients')).rejects.toMatchObject({ response: { status: 401 } });
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(values.get('access_token')).toBeUndefined();
+    expect(values.get('refresh_token')).toBeUndefined();
+    expect(onSessionCleared).toHaveBeenCalledOnce();
+  });
+
   it('does not restore tokens when logout ends an in-flight refresh', async () => {
     values.set('access_token', 'expired-access');
     values.set('refresh_token', 'old-refresh');

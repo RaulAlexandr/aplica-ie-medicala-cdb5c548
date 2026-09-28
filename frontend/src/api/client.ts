@@ -67,6 +67,10 @@ api.interceptors.response.use(
     if (!original) throw error;
     if (original._controller) activeControllers.delete(original._controller);
     if (original._sessionGeneration !== sessionGeneration) throw new CanceledError('Session ended');
+    if (error.response?.status === 401 && original._retry) {
+      clearAuthenticatedSession();
+      throw error;
+    }
     const url = original.url ?? '';
     const isAuthEndpoint = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/logout'].some((route) => url.includes(route));
     if (error.response?.status !== 401 || original._retry || isAuthEndpoint) throw error;
