@@ -2,7 +2,7 @@ from datetime import date, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,11 @@ class PatientPayload(BaseModel):
     medical_alerts: str | None = None
     notes: str | None = None
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_optional_email(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
 class PatientPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
     first_name: str = Field(default=None, min_length=1, max_length=80)
@@ -53,6 +58,11 @@ class PatientPatch(BaseModel):
     relevant_medical_conditions: str | None = None
     medical_alerts: str | None = None
     notes: str | None = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_optional_email(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
 
 class PatientResponse(PatientPayload):
     model_config = ConfigDict(from_attributes=True)

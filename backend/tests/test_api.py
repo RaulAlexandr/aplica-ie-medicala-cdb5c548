@@ -3,8 +3,11 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database import Base, get_db
+from app.auth.service import create_access_token, hash_password
+from app.database import Base, User, get_db
 from app.main import app
+
+SESSION_FACTORIES: dict[int, async_sessionmaker] = {}
 
 
 @pytest.fixture
@@ -19,7 +22,9 @@ async def client():
             yield session
     app.dependency_overrides[get_db] = override
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+        SESSION_FACTORIES[id(http)] = sessions
         yield http
+    SESSION_FACTORIES.pop(id(http), None)
     app.dependency_overrides.clear()
     await engine.dispose()
 
@@ -124,5 +129,36 @@ async def test_protected_routes_require_auth_and_doctor_directory_is_tenant_scop
 async def test_patient_email_must_be_valid_when_supplied(client):
     tokens = await register(client, email="email-validation@example.com")
     headers = {"Authorization": f"Bearer {tokens['access_token']}"}
-    invalid = await client.post("/api/patients", headers=headers, json={"first_name": "Ana", "last_name": "Popescu", "email": ""})
-    assert invalid.status_code == 422
+    empty = await client.post("/api/patients", headers=headers, json={"first_name": "Ana", "last_name": "Popescu", "email": ""})
+    assert empty.status_code == 201 and empty.json()["email"] is None
+
+
+@pytest.mark.asyncio
+async def test_patient_email_can_be_cleared_and_clinical_fields_are_preserved(client):
+    tokens = await register(client, email="email-clear@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    created = await client.post("/api/patients", headers=headers, json={"first_name": "Ana", "last_name": "Popescu", "email": "ana@example.com", "allergies": "Penicillin"})
+    cleared = await client.patch(f"/api/patients/{created.json()['id']}", headers=headers, json={"email": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["email"] is None and cleared.json()["allergies"] == "Penicillin"
+
+
+@pytest.mark.asyncio
+async def test_assistant_cannot_create_or_change_appointment_status(client):
+    tokens = await register(client, email="assistant-permissions@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    manager = (await client.get("/api/auth/me", headers=headers)).json()
+    async with SESSION_FACTORIES[id(client)]() as session:
+        assistant = User(clinic_id=manager["clinic_id"], full_name="Dental Assistant", email="assistant-role@example.com", password_hash=hash_password("correct horse battery staple"), role="assistant", is_active=True)
+        session.add(assistant)
+        await session.commit()
+        await session.refresh(assistant)
+        assistant_token = create_access_token(assistant)
+    assistant_headers = {"Authorization": f"Bearer {assistant_token}"}
+    room = await client.post("/api/rooms", headers=headers, json={"name": "Assistant Test Room"})
+    patient = await client.post("/api/patients", headers=headers, json={"first_name": "Test", "last_name": "Patient"})
+    payload = {"patient_id": patient.json()["id"], "doctor_id": manager["id"], "room_id": room.json()["id"], "starts_at": "2027-02-01T10:00:00+00:00", "duration_minutes": 30, "appointment_type": "Checkup"}
+    assert (await client.post("/api/appointments", headers=assistant_headers, json=payload)).status_code == 403
+    created = await client.post("/api/appointments", headers=headers, json=payload)
+    assert created.status_code == 201
+    assert (await client.patch(f"/api/appointments/{created.json()['id']}/status", headers=assistant_headers, json={"status": "cancelled"})).status_code == 403
