@@ -51,7 +51,9 @@ class Clinic(Base):
     __tablename__ = "clinics"
     id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Europe/Bucharest")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     users: Mapped[list["User"]] = relationship(back_populates="clinic")
     rooms: Mapped[list["Room"]] = relationship(back_populates="clinic")
 
@@ -64,7 +66,12 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
+    specialization: Mapped[str | None] = mapped_column(String(160))
+    phone: Mapped[str | None] = mapped_column(String(40))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
     clinic: Mapped[Clinic] = relationship(back_populates="users")
 
 
@@ -75,6 +82,21 @@ class RefreshToken(Base):
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class StaffInvitation(Base):
+    __tablename__ = "staff_invitations"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    invited_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    full_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
 

@@ -54,7 +54,7 @@ Implementat:
 - nu se acceptă `clinic_id` din frontend pentru stabilirea tenantului;
 - izolare verificată prin teste între două clinici.
 
-Nu există încă un ecran de administrare a clinicii, invitații de personal sau schimbare de rol din interfață.
+Task T01 adaugă ecranul de administrare a clinicii, onboardingul prin invitații și administrarea camerelor. Schimbarea rolurilor nu este disponibilă și nici nu face parte din fluxul de onboarding.
 
 ### Pacienți și informații medicale
 
@@ -93,18 +93,22 @@ Implementat:
 - listare pentru personalul clinicii;
 - camerele sunt resurse dinamice ale programărilor, nu sunt legate permanent de un medic.
 
-Administrarea camerelor este în prezent accesibilă prin API; interfața nu are ecran de creare/editare camere.
+Administrarea camerelor este disponibilă în interfață pentru manager și administrator: creare, redenumire, activare și dezactivare sigură. Dezactivarea este blocată când există programări viitoare active și răspunsul enumeră programările afectate.
 
 ### Director de personal
 
-Implementat parțial:
+Implementat pentru onboardingul de bază:
 
+- listă și detaliu de personal în UI și API;
+- invitații single-use cu secret păstrat doar hash-uit, expirare, revocare și reemitere;
+- acceptarea invitației cu parola aleasă de destinatar, fără posibilitatea de a modifica rolul sau clinica;
+- deactivare personal obișnuită cu păstrarea istoricului și blocare când există programări viitoare atribuite;
 - director API pentru medici eligibili la programare;
 - verificare că medicul este activ și aparține clinicii;
 - selector de medic în formularul de programare;
 - rolurile managerului și administratorului pot fi folosite ca personal medical programabil conform politicii existente.
 
-Nu există încă model și interfață complete pentru profiluri de staff, specializare, contact, statut de angajare, program de lucru, documente sau metrici. Nu există payroll.
+Profilul implementat pentru acest milestone include identitate, rol, contact de bază, specializare și statut activ/inactiv. Programul de lucru, documentele și metricile detaliate rămân în afara scopului. Nu există payroll.
 
 ### Programări
 
@@ -134,6 +138,8 @@ Implementat:
 - formular de pacient nou;
 - detaliu și editare pacient;
 - formular de programare cu selectoare pentru pacient, medic și cameră;
+- ecrane manageriale pentru timezone clinică, camere și onboarding staff;
+- acceptare invitație prin link copiat manual, cu parolă setată de destinatar;
 - afișarea stărilor loading, empty, validation și server error;
 - refresh de sesiune, sign-out local și server-side și prevenirea restaurării datelor din sesiunea anterioară;
 - build Vite verificat în CI.
@@ -142,11 +148,11 @@ Implementat:
 
 | Rol | Prin interfață | Prin API / limitări actuale |
 |---|---|---|
-| `clinic_manager` | Înregistrare/login, overview, listă/căutare/creare/editare pacienți, creare/listare programări, schimbare stare, logout | Poate crea camere și vedea istoricul pacientului; nu are încă administrare completă staff sau clinică |
-| `administrator` | Aceleași fluxuri operaționale expuse în frontend | Poate crea camere și vedea istoricul pacientului; nu există încă modul administrativ dedicat |
-| `doctor` | Listă/căutare/creare/editare pacienți, creare/listare programări, schimbare stare, logout | Vede camerele și directorul de medici; istoricul pacientului este API-only; nu are tratamente/odontogramă/periodontologie |
+| `clinic_manager` | Înregistrare/login, overview, listă/căutare/creare/editare pacienți, creare/listare programări, setup clinică, camere și staff, logout | API-ul permite și schimbări de stare pentru programări; UI-ul curent nu expune controale pentru schimbarea stării |
+| `administrator` | Aceleași fluxuri operaționale și ecranele de setup expuse în frontend | Are aceeași politică de administrare a clinicii, camerelor și onboardingului |
+| `doctor` | Listă/căutare/creare/editare pacienți, creare/listare programări, logout | Poate vedea camerele și directorul de medici; nu poate administra setup-ul sau invita staff; istoricul pacientului este API-only |
 | `assistant` | Overview, listă/căutare/creare pacienți, listare programări, logout | Nu poate edita pacientul, crea programări sau schimba starea; poate lista camere și medici |
-| `reception` | Overview, listă/căutare/creare pacienți, creare/listare programări, schimbare stare, logout | Nu poate edita pacientul sau accesa istoricul pacientului; poate lista camere și medici |
+| `reception` | Overview, listă/căutare/creare pacienți, creare/listare programări, logout | Nu poate edita pacientul, accesa istoricul pacientului sau administra setup-ul; poate lista camere și medici |
 
 Acestea sunt roluri ale aplicației interne. Nu există rol de pacient și nu există portal separat pentru pacienți.
 
@@ -160,12 +166,12 @@ Acestea sunt roluri ale aplicației interne. Nu există rol de pacient și nu ex
 4. Frontendul încarcă `/auth/me` și deschide overview-ul.
 5. Un utilizator existent se autentifică prin email/parolă; parolele greșite sunt respinse.
 
-Crearea altor utilizatori, invitațiile și setarea rolurilor nu sunt încă fluxuri UI; necesită intervenție tehnică/bază de date sau API extins.
+Managerul deschide Clinic setup pentru timezone și camere, apoi Staff pentru invitații. Linkul poate fi copiat manual; aplicația nu integrează un furnizor de email și nu pretinde că a trimis mesaje.
 
 ### Pacient
 
 1. Un rol autorizat deschide Patients.
-2. Caută după nume, telefon sau email sau vede lista paginată.
+2. Caută după nume, telefon sau email. API-ul suportă paginare; ecranul curent afișează cel mult 100 de rezultate și nu are controale de navigare între pagini.
 3. Alege New patient și completează datele de identitate, contact și câmpurile medicale disponibile.
 4. Deschide detaliul pacientului.
 5. Managerul, administratorul sau medicul poate edita câmpurile permise în frontend.
@@ -178,10 +184,10 @@ Nu există încă atașamente, timeline clinic, consultație, diagnostic sau pla
 1. Utilizatorul cu drept de creare deschide Appointments și New appointment.
 2. Caută și selectează pacientul.
 3. Selectează medicul autorizat și camera activă.
-4. Introduce data/ora cu fus orar, durata, tipul și notele.
+4. Introduce data/ora cu fus orar și durata. API-ul acceptă tip și note, însă formularul UI curent folosește un tip presetat și nu expune editarea notelor.
 5. Backendul verifică tenantul, resursele, starea și suprapunerile.
 6. La conflict primește 409; altfel programarea este salvată și apare în listă.
-7. Rolurile autorizate schimbă starea numai prin tranziții valide.
+7. API-ul validează tranzițiile pentru rolurile autorizate; formularul UI curent nu are încă un control de schimbare a stării.
 
 Nu există încă asociere de proceduri sau închidere distinctă a procedurii față de plecarea pacientului.
 
@@ -264,7 +270,7 @@ Acestea nu trebuie considerate implementate doar pentru că apar în cerințe sa
 - **CI post-merge:** verde, run `36497103953`.
 - **Deploy:** nu a fost făcut și nu a fost solicitat. Nu există mediu public de producție rezultat din această sarcină.
 - **Acces local:** PostgreSQL 16, `alembic upgrade head`, backend FastAPI pe `localhost:8000` și frontend Vite pe `localhost:5173`, conform README.
-- **Intervenție tehnică necesară:** configurarea `.env`, secret JWT, baza PostgreSQL, migrațiile și pornirea celor două procese; crearea staffului suplimentar și a camerelor se face prin API în starea actuală.
+- **Intervenție tehnică necesară:** configurarea `.env`, secret JWT, baza PostgreSQL, migrațiile și pornirea celor două procese; camerele și stafful obișnuit pot fi create prin UI după autentificarea managerului.
 - **Workspace:** checkout-ul local este pe `main`, sincronizat cu `origin/main`, fără modificări necomise, nepushed sau neintegrate în acest workspace la momentul raportului.
 - **Mistral:** nu a fost integrat și este exclus din acest raport, conform instrucțiunii.
 

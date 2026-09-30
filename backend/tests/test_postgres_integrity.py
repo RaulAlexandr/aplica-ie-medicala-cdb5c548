@@ -185,7 +185,7 @@ async def test_postgresql_upgrade_from_0001_preserves_valid_records():
     try:
         assert returncode == 0
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0002_integrity_and_history"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup_staff_onboarding"
         assert await connection.fetchval("SELECT count(*) FROM patients") == 1
         await connection.close()
     finally:

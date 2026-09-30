@@ -4,20 +4,20 @@ DentaCare is a multi-tenant dental clinic management platform. This repository c
 
 ## Implemented in this milestone
 
-The API provides clinic registration, JWT access tokens, hashed and rotating refresh tokens, server-side logout/revocation, password hashing with Argon2, UUID identifiers, timezone-aware timestamps, clinic tenant isolation, explicit role authorization, patients with medical fields, partial patient updates, access-controlled patient revision history, search/pagination, patient totals, rooms, and appointments.
+The API provides clinic registration, JWT access tokens, hashed and rotating refresh tokens, server-side logout/revocation, password hashing with Argon2, UUID identifiers, timezone-aware timestamps, clinic tenant isolation, explicit role authorization, manager-authorized clinic settings with IANA timezone, safe room lifecycle management, single-use staff invitations with hashed secrets, staff deactivation safeguards, patients with medical fields, partial patient updates, access-controlled patient revision history, search/pagination, patient totals, rooms, and appointments.
 
 Patient PATCH requests use a dedicated partial schema: omitted fields are unchanged, nullable fields may explicitly be cleared, and required identity fields reject explicit null. Clinically significant changes record actor, timestamp, field, previous value, and new value in `patient_revisions`.
 
 Appointments validate clinic ownership for every referenced resource, enforce role policy, validate status transitions, reject reactivation conflicts, and use PostgreSQL GiST exclusion constraints for doctor, room, and assigned-assistant overlap protection under concurrent requests. Intervals are half-open, so a booking ending at the exact start of another booking is allowed. Assistants can view appointments but cannot transition their status.
 
-The staff UI includes login/registration, session refresh and sign-out, overview statistics using a server-side patient count, patient search/list, patient creation, patient detail/edit, and appointment creation/list workflows with loading, empty, validation, and server-error states.
+The staff UI includes login/registration, session refresh and sign-out, overview statistics using a server-side patient count, patient search/list, patient creation, patient detail/edit, appointment creation/list, clinic settings, room administration, staff invitation/list/deactivation, and invitation acceptance workflows with loading, empty, validation, and server-error states.
 
 ## Role policy
 
 | Role | Patient list/detail | Patient edit/history | Appointments | Room administration |
 |---|---|---|---|---|
-| `clinic_manager` | Yes | Yes | Create, view, transition | Create, view |
-| `administrator` | Yes | Yes | Create, view, transition | Create, view |
+| `clinic_manager` | Yes | Yes | Create, view, transition | Full settings, room lifecycle, invite/deactivate staff |
+| `administrator` | Yes | Yes | Create, view, transition | Full settings, room lifecycle, invite/deactivate staff |
 | `doctor` | Yes | Yes | Create, view, transition | View |
 | `assistant` | Yes | No | View | View |
 | `reception` | Yes | No | Create, view, transition | View |
@@ -85,4 +85,4 @@ The fast backend suite, Ruff, Python compilation, Alembic head inspection, and f
 
 ## Remaining limitations
 
-Treatment plans, performed-procedure time tracking, odontogram history, six-site periodontology, inventory movements, staff administration, messaging, reporting, the separate patient portal, and future AI service interfaces remain outside this milestone. No fake endpoints claim those modules are complete.
+Treatment plans, performed-procedure time tracking, odontogram history, six-site periodontology, inventory movements, detailed staff scheduling/documents/metrics, messaging, reporting, the separate patient portal, and future AI service interfaces remain outside this milestone. No fake endpoints claim those modules are complete.
