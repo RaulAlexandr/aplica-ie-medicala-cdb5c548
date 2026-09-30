@@ -74,8 +74,12 @@ async def test_working_hours_and_room_unavailability_are_enforced(client):
     assert hours.status_code == 200
     outside = await client.post("/api/appointments", headers=headers, json={"patient_id": patient["id"], "doctor_id": manager["id"], "room_id": room["id"], "local_start": "2027-02-01T08:00", "duration_minutes": 30, "appointment_type": "Outside"})
     assert outside.status_code == 422 and "working hours" in outside.json()["detail"]
+    closed_day = await client.post("/api/appointments", headers=headers, json={"patient_id": patient["id"], "doctor_id": manager["id"], "room_id": room["id"], "local_start": "2027-02-02T10:00", "duration_minutes": 30, "appointment_type": "Closed day"})
+    assert closed_day.status_code == 422 and "closed" in closed_day.json()["detail"]
+    existing = await client.post("/api/appointments", headers=headers, json={"patient_id": patient["id"], "doctor_id": manager["id"], "room_id": room["id"], "local_start": "2027-02-01T14:00", "duration_minutes": 30, "appointment_type": "Existing"})
+    assert existing.status_code == 201
     blocked = await client.post("/api/availability/unavailability", headers=headers, json={"resource_type": "room", "resource_id": room["id"], "starts_at": "2027-02-01T12:00:00+00:00", "ends_at": "2027-02-01T13:00:00+00:00", "reason": "Maintenance"})
-    assert blocked.status_code == 201
+    assert blocked.status_code == 201 and blocked.json()["affected_appointments"][0]["id"] == existing.json()["id"]
     unavailable = await client.post("/api/appointments", headers=headers, json={"patient_id": patient["id"], "doctor_id": manager["id"], "room_id": room["id"], "local_start": "2027-02-01T14:00", "duration_minutes": 30, "appointment_type": "Blocked"})
     assert unavailable.status_code == 422 and "room" in unavailable.json()["detail"]
 
@@ -87,3 +91,15 @@ def test_dst_policy_is_explicit():
     with pytest.raises(Exception, match="ambiguous"):
         local_to_utc(datetime.fromisoformat("2027-10-31T03:30:00"), "Europe/Bucharest")
     assert local_to_utc(datetime.fromisoformat("2027-10-31T03:30:00"), "Europe/Bucharest", fold=1).utcoffset() == UTC.utcoffset(None)
+
+
+@pytest.mark.asyncio
+async def test_dst_occurrence_is_selected_through_creation(client):
+    headers, manager, patient, room = await setup(client, "dst-api@example.com")
+    payload = {"patient_id": patient["id"], "doctor_id": manager["id"], "room_id": room["id"], "local_start": "2027-10-31T03:30", "duration_minutes": 30, "appointment_type": "DST"}
+    ambiguous = await client.post("/api/appointments", headers=headers, json=payload)
+    assert ambiguous.status_code == 422 and "ambiguous" in ambiguous.json()["detail"]
+    first = await client.post("/api/appointments", headers=headers, json={**payload, "timezone_fold": 0})
+    second = await client.post("/api/appointments", headers=headers, json={**payload, "timezone_fold": 1})
+    assert first.status_code == 201 and second.status_code == 201
+    assert first.json()["starts_at"] != second.json()["starts_at"]

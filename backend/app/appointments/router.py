@@ -27,6 +27,7 @@ from app.database import (
     Appointment,
     AppointmentHistory,
     AuditEvent,
+    Clinic,
     Patient,
     ResourceUnavailability,
     Room,
@@ -82,6 +83,20 @@ class UnavailabilityInput(BaseModel):
         if self.resource_type not in {"doctor", "assistant", "room"}: raise ValueError("resource_type must be doctor, assistant, or room")
         if self.starts_at.tzinfo is None or self.ends_at.tzinfo is None or self.ends_at <= self.starts_at: raise ValueError("Unavailability requires an aware, positive interval")
         return self
+class AffectedAppointmentResponse(BaseModel):
+    id: UUID
+    starts_at: datetime
+    ends_at: datetime
+    status: str
+    appointment_type: str
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WorkingHoursChangeResponse(BaseModel):
+    working_hours: list[WorkingHoursResponse]
+    affected_appointments: list[AffectedAppointmentResponse]
+
+
 class UnavailabilityResponse(BaseModel):
     id: UUID
     resource_type: str
@@ -91,6 +106,11 @@ class UnavailabilityResponse(BaseModel):
     reason: str | None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+class UnavailabilityMutationResponse(BaseModel):
+    unavailability: UnavailabilityResponse
+    affected_appointments: list[AffectedAppointmentResponse]
+
+
 class AppointmentHistoryResponse(BaseModel):
     id: UUID; actor_id: UUID; action: str; details: dict; occurred_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -113,6 +133,25 @@ async def validate_slot(db: AsyncSession, clinic_id: UUID, start: datetime, dura
 async def appointment_with_names(db: AsyncSession, item: Appointment) -> AppointmentResponse:
     patient = await db.get(Patient, item.patient_id); doctor = await db.get(User, item.doctor_id); assistant = await db.get(User, item.assistant_id) if item.assistant_id else None; room = await db.get(Room, item.room_id); clinic, _ = await clinic_timezone(db, item.clinic_id)
     return as_response(item, clinic.timezone, ((f"{patient.first_name} {patient.last_name}" if patient else None), doctor.full_name if doctor else None, assistant.full_name if assistant else None, room.name if room else None))
+async def affected_by_working_hours(db: AsyncSession, clinic_id: UUID, rows: list[WorkingHours]) -> list[Appointment]:
+    _, zone = await clinic_timezone(db, clinic_id)
+    configured = [row for row in rows if row.is_active]
+    appointments = (await db.scalars(select(Appointment).where(Appointment.clinic_id == clinic_id, Appointment.status.in_(ACTIVE_STATUSES)).order_by(Appointment.starts_at))).all()
+    affected: list[Appointment] = []
+    for item in appointments:
+        local_start = utc(item.starts_at).astimezone(zone)
+        local_end = utc(item.ends_at or appointment_end(item.starts_at, item.duration_minutes)).astimezone(zone)
+        day_rows = [row for row in configured if row.day_of_week == local_start.weekday()]
+        if configured and (local_start.date() != local_end.date() or not day_rows or not any(row.start_time <= local_start.timetz().replace(tzinfo=None) and row.end_time >= local_end.timetz().replace(tzinfo=None) for row in day_rows)):
+            affected.append(item)
+    return affected
+
+
+async def affected_by_unavailability(db: AsyncSession, clinic_id: UUID, resource_type: str, resource_id: UUID, start: datetime, end: datetime) -> list[Appointment]:
+    resource_column = {"doctor": Appointment.doctor_id, "assistant": Appointment.assistant_id, "room": Appointment.room_id}[resource_type]
+    return list((await db.scalars(select(Appointment).where(Appointment.clinic_id == clinic_id, Appointment.status.in_(ACTIVE_STATUSES), resource_column == resource_id, Appointment.starts_at < end, Appointment.ends_at > start).order_by(Appointment.starts_at))).all())
+
+
 @router.post("", response_model=AppointmentResponse, status_code=201)
 async def create_appointment(payload: AppointmentCreate, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGE_APPOINTMENTS))):
     if payload.status != "scheduled": raise HTTPException(422, "New appointments must start in scheduled status")
@@ -190,18 +229,34 @@ async def list_rooms(db: AsyncSession = Depends(get_db), user: User = Depends(re
 async def list_doctors(db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*ALL_STAFF))): return (await db.scalars(select(User).where(User.clinic_id == user.clinic_id, User.role.in_(["doctor", "clinic_manager", "administrator"]), User.is_active.is_(True)).order_by(User.full_name))).all()
 @availability_router.get("/working-hours", response_model=list[WorkingHoursResponse])
 async def list_working_hours(db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*ALL_STAFF))): return list((await db.scalars(select(WorkingHours).where(WorkingHours.clinic_id == user.clinic_id).order_by(WorkingHours.day_of_week, WorkingHours.start_time))).all())
-@availability_router.put("/working-hours", response_model=list[WorkingHoursResponse])
+@availability_router.put("/working-hours", response_model=WorkingHoursChangeResponse)
 async def replace_working_hours(payload: list[WorkingHoursInput], db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
-    await db.execute(WorkingHours.__table__.delete().where(WorkingHours.clinic_id == user.clinic_id)); rows = [WorkingHours(clinic_id=user.clinic_id, **item.model_dump()) for item in payload]; db.add_all(rows); await db.commit(); return list((await db.scalars(select(WorkingHours).where(WorkingHours.clinic_id == user.clinic_id).order_by(WorkingHours.day_of_week, WorkingHours.start_time))).all())
+    await db.execute(select(WorkingHours.id).where(WorkingHours.clinic_id == user.clinic_id).with_for_update())
+    await db.execute(select(Clinic.id).where(Clinic.id == user.clinic_id).with_for_update())
+    rows = [WorkingHours(clinic_id=user.clinic_id, **item.model_dump()) for item in payload]
+    affected = await affected_by_working_hours(db, user.clinic_id, rows)
+    await db.execute(WorkingHours.__table__.delete().where(WorkingHours.clinic_id == user.clinic_id))
+    db.add_all(rows)
+    await db.commit()
+    saved = list((await db.scalars(select(WorkingHours).where(WorkingHours.clinic_id == user.clinic_id).order_by(WorkingHours.day_of_week, WorkingHours.start_time))).all())
+    return {"working_hours": saved, "affected_appointments": affected}
 @availability_router.get("/unavailability", response_model=list[UnavailabilityResponse])
 async def list_unavailability(db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*ALL_STAFF))): return list((await db.scalars(select(ResourceUnavailability).where(ResourceUnavailability.clinic_id == user.clinic_id).order_by(ResourceUnavailability.starts_at))).all())
-@availability_router.post("/unavailability", response_model=UnavailabilityResponse, status_code=201)
+@availability_router.post("/unavailability", response_model=UnavailabilityMutationResponse, status_code=201)
 async def create_unavailability(payload: UnavailabilityInput, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
+    await db.execute(select(Clinic.id).where(Clinic.id == user.clinic_id).with_for_update())
     valid = await db.scalar(select(User.id).where(User.id == payload.resource_id, User.clinic_id == user.clinic_id)) if payload.resource_type in {"doctor", "assistant"} else await db.scalar(select(Room.id).where(Room.id == payload.resource_id, Room.clinic_id == user.clinic_id))
     if not valid: raise HTTPException(422, "Resource is not valid for this clinic")
-    item = ResourceUnavailability(clinic_id=user.clinic_id, created_by_id=user.id, **payload.model_dump()); db.add(item); await db.commit(); await db.refresh(item); return item
+    item = ResourceUnavailability(clinic_id=user.clinic_id, created_by_id=user.id, **payload.model_dump())
+    db.add(item)
+    await db.flush()
+    affected = await affected_by_unavailability(db, user.clinic_id, payload.resource_type, payload.resource_id, payload.starts_at, payload.ends_at)
+    await db.commit()
+    await db.refresh(item)
+    return {"unavailability": item, "affected_appointments": affected}
 @availability_router.delete("/unavailability/{item_id}", status_code=204)
 async def delete_unavailability(item_id: UUID, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
+    await db.execute(select(Clinic.id).where(Clinic.id == user.clinic_id).with_for_update())
     item = await db.scalar(select(ResourceUnavailability).where(ResourceUnavailability.id == item_id, ResourceUnavailability.clinic_id == user.clinic_id).with_for_update());
     if not item: raise HTTPException(404, "Unavailability not found")
     await db.delete(item); await db.commit()

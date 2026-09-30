@@ -360,6 +360,9 @@ export async function acceptInvitation(token: string, password: string) {
 }
 export type AppointmentFilters = { day?: string; week_start?: string; room_id?: string; doctor_id?: string; assistant_id?: string; status?: string; patient_search?: string; appointment_type?: string };
 export type WorkingHours = { id: string; day_of_week: number; start_time: string; end_time: string; is_active: boolean };
+export type AffectedAppointment = { id: string; starts_at: string; ends_at: string; status: string; appointment_type: string };
+export type WorkingHoursChange = { working_hours: WorkingHours[]; affected_appointments: AffectedAppointment[] };
+export type UnavailabilityChange = { unavailability: Unavailability; affected_appointments: AffectedAppointment[] };
 export type Unavailability = { id: string; resource_type: string; resource_id: string; starts_at: string; ends_at: string; reason: string | null; created_at: string };
 export async function listAppointments(filters: AppointmentFilters = {}) { return (await api.get<Appointment[]>('/appointments', { params: Object.fromEntries(Object.entries(filters).filter(([, value]) => value)) })).data; }
 export async function getAppointment(id: string) { return (await api.get<Appointment>(`/appointments/${id}`)).data; }
@@ -368,5 +371,8 @@ export async function updateAppointment(id: string, input: Record<string, unknow
 export async function updateAppointmentStatus(id: string, status: string) { return (await api.patch<Appointment>(`/appointments/${id}/status`, { status })).data; }
 export async function rescheduleAppointment(id: string, input: Record<string, unknown>) { return (await api.post<Appointment>(`/appointments/${id}/reschedule`, input)).data; }
 export async function listWorkingHours() { return (await api.get<WorkingHours[]>('/availability/working-hours')).data; }
-export async function replaceWorkingHours(input: Array<Omit<WorkingHours, 'id'>>) { return (await api.put<WorkingHours[]>('/availability/working-hours', input)).data; }
+export async function replaceWorkingHours(input: Array<Omit<WorkingHours, 'id'>>) { return (await api.put<WorkingHoursChange>('/availability/working-hours', input)).data; }
 export async function listUnavailability() { return (await api.get<Unavailability[]>('/availability/unavailability')).data; }
+
+export async function createUnavailability(input: { resource_type: string; resource_id: string; starts_at: string; ends_at: string; reason?: string }) { return (await api.post<UnavailabilityChange>('/availability/unavailability', input)).data; }
+export async function deleteUnavailability(id: string) { await api.delete(`/availability/unavailability/${id}`); }

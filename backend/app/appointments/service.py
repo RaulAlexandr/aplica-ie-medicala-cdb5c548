@@ -77,9 +77,12 @@ async def validate_working_hours(db: AsyncSession, clinic_id: UUID, start: datet
     local_end = end.astimezone(zone)
     if local_start.date() != local_end.date():
         raise HTTPException(422, "Appointments must fit within one clinic-local working day")
-    rows = (await db.scalars(select(WorkingHours).where(WorkingHours.clinic_id == clinic_id, WorkingHours.day_of_week == local_start.weekday(), WorkingHours.is_active.is_(True)))).all()
-    if not rows:
+    configured_rows = (await db.scalars(select(WorkingHours).where(WorkingHours.clinic_id == clinic_id, WorkingHours.is_active.is_(True)))).all()
+    if not configured_rows:
         return
+    rows = [row for row in configured_rows if row.day_of_week == local_start.weekday()]
+    if not rows:
+        raise HTTPException(422, "The clinic is closed on the selected day")
     start_time = local_start.timetz().replace(tzinfo=None)
     end_time = local_end.timetz().replace(tzinfo=None)
     if not any(row.start_time <= start_time and row.end_time >= end_time for row in rows):
@@ -100,6 +103,7 @@ async def validate_unavailability(db: AsyncSession, clinic_id: UUID, start: date
 
 
 async def validate_availability(db: AsyncSession, clinic_id: UUID, start: datetime, end: datetime, doctor_id: UUID, assistant_id: UUID | None, room_id: UUID) -> None:
+    await db.execute(select(Clinic.id).where(Clinic.id == clinic_id).with_for_update())
     await validate_working_hours(db, clinic_id, start, end)
     await validate_unavailability(db, clinic_id, start, end, doctor_id, assistant_id, room_id)
 
