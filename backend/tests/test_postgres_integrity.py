@@ -299,3 +299,109 @@ async def test_postgresql_booking_and_room_deactivation_do_not_leave_invalid_ass
         active_assignment = await session.scalar(select(Appointment.id).where(Appointment.room_id == rooms[0].id, Appointment.status.in_(["scheduled", "confirmed", "arrived", "in_progress", "completed"])))
         room = await session.get(Room, rooms[0].id)
     assert not (active_assignment and room and not room.is_active)
+
+
+async def _create_future_appointment(client: AsyncClient, headers: dict[str, str], doctor_id: str, room_id: str, patient_name: str, assistant_id: str | None = None, start: str = "2027-03-05T10:00:00+00:00") -> dict:
+    patient = await client.post("/api/patients", headers=headers, json={"first_name": patient_name, "last_name": "Reactivation"})
+    assert patient.status_code == 201
+    payload = {
+        "patient_id": patient.json()["id"],
+        "doctor_id": doctor_id,
+        "room_id": room_id,
+        "starts_at": start,
+        "duration_minutes": 30,
+        "appointment_type": "Reactivation regression",
+    }
+    if assistant_id is not None:
+        payload["assistant_id"] = assistant_id
+    appointment = await client.post("/api/appointments", headers=headers, json=payload)
+    assert appointment.status_code == 201, appointment.text
+    cancelled = await client.patch(f"/api/appointments/{appointment.json()['id']}/status", headers=headers, json={"status": "cancelled"})
+    assert cancelled.status_code == 200
+    return {**appointment.json(), **payload}
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_postgresql_reactivation_rejects_deactivated_room_doctor_and_assistant(postgres_context):
+    client, sessions = postgres_context
+    headers, doctors, assistants, rooms = await create_resources(client, sessions)
+    cases = [
+        ("room", rooms[0], None),
+        ("doctor", doctors[1], None),
+        ("assistant", assistants[0], assistants[0]),
+    ]
+    for resource, entity, assistant in cases:
+        appointment = await _create_future_appointment(
+            client,
+            headers,
+            str(doctors[0].id),
+            str(rooms[1].id if resource != "room" else entity.id),
+            f"{resource.title()} Case",
+            assistant_id=str(assistant.id) if assistant is not None else None,
+        )
+        if resource == "room":
+            deactivation = await client.patch(f"/api/rooms/{entity.id}", headers=headers, json={"is_active": False})
+        else:
+            deactivation = await client.post(f"/api/staff/{entity.id}/deactivate", headers=headers)
+        assert deactivation.status_code == 200
+        reactivation = await client.patch(f"/api/appointments/{appointment['id']}/status", headers=headers, json={"status": "scheduled"})
+        assert reactivation.status_code == 422
+        current = await client.get("/api/appointments", headers=headers)
+        saved = next(item for item in current.json() if item["id"] == appointment["id"])
+        assert saved["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_postgresql_reactivation_racing_resource_deactivation_never_assigns_inactive_resource(postgres_context):
+    client, sessions = postgres_context
+    headers, doctors, assistants, rooms = await create_resources(client, sessions)
+    cases = [
+        ("room", rooms[0], {"doctor_id": str(doctors[0].id), "room_id": str(rooms[0].id)}),
+        ("doctor", doctors[1], {"doctor_id": str(doctors[1].id), "room_id": str(rooms[1].id)}),
+        ("assistant", assistants[0], {"doctor_id": str(doctors[0].id), "room_id": str(rooms[2].id), "assistant_id": str(assistants[0].id)}),
+    ]
+    for resource, entity, refs in cases:
+        appointment = await _create_future_appointment(client, headers, patient_name=f"Race {resource}", **refs)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as left, AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as right:
+            if resource == "room":
+                deactivation_request = right.patch(f"/api/rooms/{entity.id}", headers=headers, json={"is_active": False})
+            else:
+                deactivation_request = right.post(f"/api/staff/{entity.id}/deactivate", headers=headers)
+            reactivation, deactivation = await asyncio.gather(
+                left.patch(f"/api/appointments/{appointment['id']}/status", headers=headers, json={"status": "scheduled"}),
+                deactivation_request,
+            )
+        assert reactivation.status_code in {200, 422}
+        assert deactivation.status_code == 200
+        async with sessions() as session:
+            saved = await session.get(Appointment, appointment["id"])
+            resource_active = await session.scalar(select(Room.is_active).where(Room.id == entity.id)) if resource == "room" else await session.scalar(select(User.is_active).where(User.id == entity.id))
+        assert saved is not None
+        assert not (saved.status in {"scheduled", "confirmed", "arrived", "in_progress", "completed"} and resource_active is False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_postgresql_booking_racing_doctor_and_assistant_deactivation_never_assigns_inactive_staff(postgres_context):
+    client, sessions = postgres_context
+    headers, doctors, assistants, rooms = await create_resources(client, sessions)
+    cases = [
+        ("doctor", doctors[1], {"doctor_id": str(doctors[1].id), "room_id": str(rooms[0].id)}),
+        ("assistant", assistants[0], {"doctor_id": str(doctors[0].id), "room_id": str(rooms[1].id), "assistant_id": str(assistants[0].id)}),
+    ]
+    for resource, entity, refs in cases:
+        patient = await client.post("/api/patients", headers=headers, json={"first_name": f"Booking {resource}", "last_name": "Race"})
+        payload = {"patient_id": patient.json()["id"], **refs, "starts_at": "2027-03-06T10:00:00+00:00", "duration_minutes": 30, "appointment_type": "Booking race"}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as left, AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as right:
+            booking, deactivation = await asyncio.gather(
+                left.post("/api/appointments", headers=headers, json=payload),
+                right.post(f"/api/staff/{entity.id}/deactivate", headers=headers),
+            )
+        assert booking.status_code in {201, 422}
+        assert deactivation.status_code == 200
+        async with sessions() as session:
+            active_appointment = await session.scalar(select(Appointment).where(Appointment.clinic_id == entity.clinic_id, Appointment.status.in_(["scheduled", "confirmed", "arrived", "in_progress", "completed"]), (Appointment.doctor_id == entity.id) | (Appointment.assistant_id == entity.id)))
+            staff_active = await session.scalar(select(User.is_active).where(User.id == entity.id))
+        assert not (active_appointment is not None and staff_active is False)

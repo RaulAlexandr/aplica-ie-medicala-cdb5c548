@@ -15,7 +15,7 @@ Arhitectura actuală este:
 
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy 2 async, Pydantic v2, PostgreSQL și Alembic.
 - **Autentificare:** JWT pentru access token, refresh token rotativ păstrat doar sub formă hash, Argon2 pentru parole și revocare server-side la logout.
-- **Identificatori și timp:** UUID-uri și timestamp-uri timezone-aware; programările folosesc intervale half-open.
+- **Identificatori și timp:** UUID-uri și timestamp-uri timezone-aware; programările folosesc intervale half-open. Fusul orar al clinicii este persistat, dar formularul și listarea programărilor folosesc încă fusul orar local al browserului.
 - **Frontend:** React 18, TypeScript, Vite, React Router, TanStack Query, Axios și CSS simplu. Pachetele pentru React Hook Form, Zod și Zustand sunt disponibile, dar fluxul actual nu are nevoie de ele.
 - **Persistență:** schema este schimbată prin migrații; startup-ul nu execută `create_all` și nu reconstruiește tabelele.
 - **Izolare:** clinic_id este derivat din utilizatorul autentificat și verificat server-side pentru toate resursele relevante.
@@ -184,12 +184,14 @@ Nu există încă atașamente, timeline clinic, consultație, diagnostic sau pla
 1. Utilizatorul cu drept de creare deschide Appointments și New appointment.
 2. Caută și selectează pacientul.
 3. Selectează medicul autorizat și camera activă.
-4. Introduce data/ora cu fus orar și durata. API-ul acceptă tip și note, însă formularul UI curent folosește un tip presetat și nu expune editarea notelor.
+4. Introduce data/ora și durata. Inputul `datetime-local` și afișarea curentă folosesc fusul orar local al browserului; API-ul păstrează instantul timezone-aware. API-ul acceptă tip și note, însă formularul UI curent folosește un tip presetat și nu expune editarea notelor.
 5. Backendul verifică tenantul, resursele, starea și suprapunerile.
 6. La conflict primește 409; altfel programarea este salvată și apare în listă.
 7. API-ul validează tranzițiile pentru rolurile autorizate; formularul UI curent nu are încă un control de schimbare a stării.
 
 Nu există încă asociere de proceduri sau închidere distinctă a procedurii față de plecarea pacientului.
+
+> **Comportament calendaristic planificat pentru T02:** ecranul de programări trebuie să interpreteze inputul și să afișeze programările în fusul orar persistat al clinicii, inclusiv conversii consistente la schimbarea clinicii și tranziții DST. T01 nu pretinde că această conversie este implementată.
 
 ### Logout și sesiune expirată
 

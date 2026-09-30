@@ -157,6 +157,7 @@ async def update_status(appointment_id: UUID, payload: AppointmentStatus, db: As
         raise HTTPException(409, f"Invalid appointment transition: {item.status} -> {payload.status}")
     if payload.status in ACTIVE_STATUSES and item.status not in ACTIVE_STATUSES:
         candidate = AppointmentCreate.model_validate(item, from_attributes=True)
+        await validate_refs(db, candidate, user.clinic_id)
         await check_conflicts(db, candidate, user.clinic_id)
     item.status = payload.status
     db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="appointment", entity_id=item.id, action="status_changed"))
