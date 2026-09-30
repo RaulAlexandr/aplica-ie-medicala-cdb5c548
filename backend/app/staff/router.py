@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.service import get_current_user, hash_password, require_roles
@@ -103,8 +103,7 @@ async def get_staff(staff_id: UUID, user: User = Depends(get_current_user), db: 
     staff = await db.scalar(select(User).where(User.id == staff_id, User.clinic_id == user.clinic_id))
     if not staff:
         raise HTTPException(404, "Staff member not found")
-    count = await db.scalar(select(Appointment.id).where(Appointment.clinic_id == user.clinic_id, Appointment.starts_at > utcnow(), Appointment.status.in_(ACTIVE_APPOINTMENT_STATUSES), (Appointment.doctor_id == staff.id) | (Appointment.assistant_id == staff.id)).limit(1))
-    upcoming = 1 if count else 0
+    upcoming = int(await db.scalar(select(func.count(Appointment.id)).where(Appointment.clinic_id == user.clinic_id, Appointment.starts_at > utcnow(), Appointment.status.in_(ACTIVE_APPOINTMENT_STATUSES), (Appointment.doctor_id == staff.id) | (Appointment.assistant_id == staff.id))) or 0)
     return StaffDetailResponse.model_validate({**staff.__dict__, "upcoming_appointment_count": upcoming}, from_attributes=True)
 
 

@@ -6,6 +6,7 @@ export type Patient = { id: string; clinic_id: string; first_name: string; last_
 export type Room = { id: string; clinic_id: string; name: string; is_active: boolean };
 export type Clinic = { id: string; name: string; timezone: string; created_at: string; updated_at: string };
 export type Staff = { id: string; clinic_id: string; full_name: string; email: string; role: string; specialization: string | null; phone: string | null; is_active: boolean; deactivated_at: string | null; created_at: string; updated_at: string };
+export type StaffDetail = Staff & { upcoming_appointment_count: number };
 export type Invitation = { id: string; email: string; full_name: string; role: string; expires_at: string; revoked_at: string | null; accepted_at: string | null; created_at: string; invitation_url: string | null };
 export type Appointment = { id: string; clinic_id: string; patient_id: string; doctor_id: string; assistant_id: string | null; room_id: string; starts_at: string; ends_at: string; duration_minutes: number; appointment_type: string; status: string; notes: string | null };
 export type AuthResponse = { access_token: string; refresh_token: string; token_type: string };
@@ -147,6 +148,7 @@ export async function updateClinic(input: Pick<Clinic, 'name' | 'timezone'>) { r
 export async function createRoom(name: string) { return (await api.post<Room>('/rooms', { name })).data; }
 export async function updateRoom(id: string, input: { name?: string; is_active?: boolean }) { return (await api.patch<{ room: Room; affected_appointments: Array<{ id: string; starts_at: string; status: string }> }>(`/rooms/${id}`, input)).data; }
 export async function listStaff() { return (await api.get<Staff[]>('/staff')).data; }
+export async function getStaff(id: string) { return (await api.get<StaffDetail>(`/staff/members/${id}`)).data; }
 export async function createInvitation(input: { email: string; full_name: string; role: string }) { return (await api.post<Invitation>('/staff/invitations', input)).data; }
 export async function listInvitations() { return (await api.get<Invitation[]>('/staff/invitations')).data; }
 export async function revokeInvitation(id: string) { return (await api.post<Invitation>(`/staff/invitations/${id}/revoke`)).data; }

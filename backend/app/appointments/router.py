@@ -78,12 +78,12 @@ async def validate_refs(db: AsyncSession, payload: AppointmentCreate, clinic_id:
     if payload.status not in STATUSES:
         raise HTTPException(422, "Unknown appointment status")
     patient = await db.scalar(select(Patient).where(Patient.id == payload.patient_id, Patient.clinic_id == clinic_id))
-    doctor = await db.scalar(select(User).where(User.id == payload.doctor_id, User.clinic_id == clinic_id, User.role.in_(["doctor", "clinic_manager", "administrator"]), User.is_active.is_(True)))
-    room = await db.scalar(select(Room).where(Room.id == payload.room_id, Room.clinic_id == clinic_id, Room.is_active.is_(True)))
+    doctor = await db.scalar(select(User).where(User.id == payload.doctor_id, User.clinic_id == clinic_id, User.role.in_(["doctor", "clinic_manager", "administrator"]), User.is_active.is_(True)).with_for_update())
+    room = await db.scalar(select(Room).where(Room.id == payload.room_id, Room.clinic_id == clinic_id, Room.is_active.is_(True)).with_for_update())
     if not patient or not doctor or not room:
         raise HTTPException(422, "Patient, doctor, or room is not valid for this clinic")
     if payload.assistant_id:
-        assistant = await db.scalar(select(User).where(User.id == payload.assistant_id, User.clinic_id == clinic_id, User.role == "assistant", User.is_active.is_(True)))
+        assistant = await db.scalar(select(User).where(User.id == payload.assistant_id, User.clinic_id == clinic_id, User.role == "assistant", User.is_active.is_(True)).with_for_update())
         if not assistant:
             raise HTTPException(422, "Assistant is not valid for this clinic")
 

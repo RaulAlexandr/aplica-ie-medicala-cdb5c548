@@ -117,3 +117,27 @@ async def test_room_uniqueness_inactive_selection_and_future_deactivation(client
     assert inactive.status_code == 200 and inactive.json()["room"]["is_active"] is False
     unavailable = await client.post("/api/appointments", headers=headers, json={"patient_id": patient.json()["id"], "doctor_id": manager["id"], "room_id": first.json()["id"], "starts_at": "2030-01-02T10:00:00+00:00", "duration_minutes": 30, "appointment_type": "Setup"})
     assert unavailable.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_reissue_returns_new_transient_link_and_staff_detail_counts_appointments(client):
+    _, headers = await register_manager(client, "Detail Clinic", "t01-detail@example.com")
+    invitation_response = await client.post("/api/staff/invitations", headers=headers, json={"email": "detail.doctor@example.com", "full_name": "Detail Doctor", "role": "doctor"})
+    original = invitation_response.json()
+    original_token = parse_qs(urlparse(original["invitation_url"]).query)["token"][0]
+    reissued = await client.post(f"/api/staff/invitations/{original['id']}/reissue", headers=headers)
+    assert reissued.status_code == 200 and reissued.json()["invitation_url"]
+    replacement_token = parse_qs(urlparse(reissued.json()["invitation_url"]).query)["token"][0]
+    assert replacement_token != original_token
+    assert (await client.post("/api/staff/invitations/accept", params={"token": original_token}, json={"password": "correct horse battery staple"})).status_code == 400
+    accepted = await client.post("/api/staff/invitations/accept", params={"token": replacement_token}, json={"password": "correct horse battery staple"})
+    assert accepted.status_code == 200
+    doctor_id = accepted.json()["id"]
+    room = await client.post("/api/rooms", headers=headers, json={"name": "Detail Room"})
+    patient = await client.post("/api/patients", headers=headers, json={"first_name": "Detail", "last_name": "Patient"})
+    appointment = await client.post("/api/appointments", headers=headers, json={"patient_id": patient.json()["id"], "doctor_id": doctor_id, "room_id": room.json()["id"], "starts_at": "2030-02-01T10:00:00+00:00", "duration_minutes": 30, "appointment_type": "Detail"})
+    assert appointment.status_code == 201
+    detail = await client.get(f"/api/staff/members/{doctor_id}", headers=headers)
+    assert detail.status_code == 200 and detail.json()["upcoming_appointment_count"] == 1
+    renamed = await client.patch(f"/api/rooms/{room.json()['id']}", headers=headers, json={"name": "Renamed Detail Room"})
+    assert renamed.status_code == 200 and renamed.json()["room"]["name"] == "Renamed Detail Room"

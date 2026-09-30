@@ -8,10 +8,11 @@ from uuid import uuid4
 import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth.service import hash_password
-from app.database import Room, User, get_db
+from app.database import Appointment, Room, User, get_db
 from app.main import app
 
 
@@ -145,7 +146,7 @@ def _postgres_dsn(url: str, database: str) -> str:
     return urlunparse(parsed._replace(scheme="postgresql", path=f"/{database}"))
 
 
-async def _migration_database(overlapping: bool) -> tuple[str, str, int]:
+async def _migration_database(overlapping: bool, start_revision: str = "0001_initial") -> tuple[str, str, int]:
     source = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
     assert source is not None
     name = f"dentacare_migration_{uuid4().hex[:12]}"
@@ -154,13 +155,15 @@ async def _migration_database(overlapping: bool) -> tuple[str, str, int]:
     await admin.close()
     target = source.rsplit("/", 1)[0] + f"/{name}"
     env = {**os.environ, "DATABASE_URL": target, "JWT_SECRET": "migration-test-secret", "ENVIRONMENT": "test"}
-    await asyncio.to_thread(subprocess.run, ["alembic", "upgrade", "0001_initial"], cwd=os.path.dirname(__file__) + "/..", env=env, check=True, capture_output=True, text=True)
+    await asyncio.to_thread(subprocess.run, ["alembic", "upgrade", start_revision], cwd=os.path.dirname(__file__) + "/..", env=env, check=True, capture_output=True, text=True)
     connection = await asyncpg.connect(_postgres_dsn(target, name))
     clinic_id, doctor_id, room_id, patient_id = [str(uuid4()) for _ in range(4)]
     await connection.execute("INSERT INTO clinics (id, name, created_at) VALUES ($1, 'Legacy clinic', now())", clinic_id)
     await connection.execute("INSERT INTO users (id, clinic_id, email, password_hash, full_name, role, is_active) VALUES ($1, $2, $3, 'hash', 'Legacy doctor', 'doctor', true)", doctor_id, clinic_id, f"{doctor_id}@example.com")
     await connection.execute("INSERT INTO rooms (id, clinic_id, name, is_active) VALUES ($1, $2, 'Legacy room', true)", room_id, clinic_id)
     await connection.execute("INSERT INTO patients (id, clinic_id, first_name, last_name, created_at, updated_at) VALUES ($1, $2, 'Legacy', 'Patient', now(), now())", patient_id, clinic_id)
+    if start_revision == "0002_integrity_and_history":
+        await connection.execute("INSERT INTO patient_revisions (id, clinic_id, patient_id, actor_id, field, previous_value, new_value, occurred_at) VALUES ($1, $2, $3, $4, 'notes', NULL, 'legacy', now())", str(uuid4()), clinic_id, patient_id, doctor_id)
     starts = [datetime(2027, 1, 8, 10, tzinfo=UTC), datetime(2027, 1, 8, 10, 30, tzinfo=UTC)] if overlapping else [datetime(2027, 1, 8, 10, tzinfo=UTC)]
     for index, start in enumerate(starts):
         await connection.execute("INSERT INTO appointments (id, clinic_id, patient_id, doctor_id, room_id, starts_at, duration_minutes, status, appointment_type, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, 60, 'scheduled', 'Legacy', now(), now())", str(uuid4()), clinic_id, patient_id, doctor_id, room_id, start)
@@ -185,8 +188,34 @@ async def test_postgresql_upgrade_from_0001_preserves_valid_records():
     try:
         assert returncode == 0
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup_staff_onboarding"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup"
         assert await connection.fetchval("SELECT count(*) FROM patients") == 1
+        assert await connection.fetchval("SELECT count(*) FROM patient_revisions") == 0
+        assert await connection.fetchval("SELECT count(*) FROM users WHERE created_at IS NULL OR updated_at IS NULL") == 0
+        assert await connection.fetchval("SELECT count(*) FROM clinics WHERE updated_at IS NULL") == 0
+        await connection.close()
+    finally:
+        await _drop_migration_database(source, name)
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_postgresql_upgrade_from_0002_preserves_clinical_history():
+    source = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
+    if not source or not source.startswith("postgresql+"):
+        pytest.skip("TEST_DATABASE_URL must point to PostgreSQL")
+    target, name, returncode = await _migration_database(overlapping=False, start_revision="0002_integrity_and_history")
+    try:
+        assert returncode == 0
+        connection = await asyncpg.connect(_postgres_dsn(target, name))
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup"
+        assert await connection.fetchval("SELECT count(*) FROM clinics") == 1
+        assert await connection.fetchval("SELECT count(*) FROM users") == 1
+        assert await connection.fetchval("SELECT count(*) FROM rooms") == 1
+        assert await connection.fetchval("SELECT count(*) FROM patients") == 1
+        assert await connection.fetchval("SELECT count(*) FROM appointments") == 1
+        assert await connection.fetchval("SELECT count(*) FROM patient_revisions") == 1
+        assert await connection.fetchval("SELECT count(*) FROM users WHERE created_at IS NULL OR updated_at IS NULL") == 0
         await connection.close()
     finally:
         await _drop_migration_database(source, name)
@@ -208,3 +237,65 @@ async def test_postgresql_upgrade_rejects_existing_overlaps_without_mutating_000
         await connection.close()
     finally:
         await _drop_migration_database(source, name)
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_postgresql_empty_database_upgrade_reaches_corrected_head():
+    source = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
+    if not source or not source.startswith("postgresql+"):
+        pytest.skip("TEST_DATABASE_URL must point to PostgreSQL")
+    name = f"dentacare_empty_{uuid4().hex[:12]}"
+    admin = await asyncpg.connect(_postgres_dsn(source, "postgres"))
+    await admin.execute(f'CREATE DATABASE "{name}"')
+    await admin.close()
+    target = source.rsplit("/", 1)[0] + f"/{name}"
+    env = {**os.environ, "DATABASE_URL": target, "JWT_SECRET": "empty-migration-secret", "ENVIRONMENT": "test"}
+    try:
+        result = await asyncio.to_thread(subprocess.run, ["alembic", "upgrade", "head"], cwd=os.path.dirname(__file__) + "/..", env=env, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr
+        connection = await asyncpg.connect(_postgres_dsn(target, name))
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup"
+        assert await connection.fetchval("SELECT count(*) FROM information_schema.columns WHERE table_name = 'users' AND column_name IN ('created_at', 'updated_at')") == 2
+        await connection.close()
+    finally:
+        await _drop_migration_database(source, name)
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_postgresql_concurrent_case_insensitive_room_create_and_rename(postgres_context):
+    client, sessions = postgres_context
+    headers, _, _, rooms = await create_resources(client, sessions)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as left, AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as right:
+        created = await asyncio.gather(
+            left.post("/api/rooms", headers=headers, json={"name": "Concurrent Room"}),
+            right.post("/api/rooms", headers=headers, json={"name": "concurrent room"}),
+        )
+    assert sorted(response.status_code for response in created) == [201, 409]
+    first_room, second_room = rooms[0], rooms[1]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as left, AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as right:
+        renamed = await asyncio.gather(
+            left.patch(f"/api/rooms/{first_room.id}", headers=headers, json={"name": "Shared Rename"}),
+            right.patch(f"/api/rooms/{second_room.id}", headers=headers, json={"name": "shared rename"}),
+        )
+    assert sorted(response.status_code for response in renamed) == [200, 409]
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_postgresql_booking_and_room_deactivation_do_not_leave_invalid_assignment(postgres_context):
+    client, sessions = postgres_context
+    headers, doctors, _, rooms = await create_resources(client, sessions)
+    patient = await client.post("/api/patients", headers=headers, json={"first_name": "Race", "last_name": "Patient"})
+    payload = {"patient_id": patient.json()["id"], "doctor_id": str(doctors[0].id), "room_id": str(rooms[0].id), "starts_at": "2027-02-01T10:00:00+00:00", "duration_minutes": 30, "appointment_type": "Race"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as booking_client, AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as management_client:
+        booking, deactivation = await asyncio.gather(
+            booking_client.post("/api/appointments", headers=headers, json=payload),
+            management_client.patch(f"/api/rooms/{rooms[0].id}", headers=headers, json={"is_active": False}),
+        )
+    assert (booking.status_code, deactivation.status_code) in {(201, 200), (422, 200)}
+    async with sessions() as session:
+        active_assignment = await session.scalar(select(Appointment.id).where(Appointment.room_id == rooms[0].id, Appointment.status.in_(["scheduled", "confirmed", "arrived", "in_progress", "completed"])))
+        room = await session.get(Room, rooms[0].id)
+    assert not (active_assignment and room and not room.is_active)

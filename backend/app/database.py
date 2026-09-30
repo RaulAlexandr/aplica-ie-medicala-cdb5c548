@@ -13,6 +13,7 @@ from sqlalchemy import (
     Text,
     TypeDecorator,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -107,7 +108,10 @@ class Room(Base):
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     clinic: Mapped[Clinic] = relationship(back_populates="rooms")
-    __table_args__ = (UniqueConstraint("clinic_id", "name", name="uq_room_clinic_name"),)
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "name", name="uq_room_clinic_name"),
+        Index("uq_room_clinic_lower_name", "clinic_id", func.lower(name), unique=True),
+    )
 
 
 class Patient(Base):

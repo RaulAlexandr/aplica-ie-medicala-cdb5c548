@@ -1,6 +1,6 @@
 """clinic setup and staff onboarding
 
-Revision ID: 0003_clinic_setup_staff_onboarding
+Revision ID: 0003_clinic_setup
 Revises: 0002_integrity_and_history
 """
 
@@ -9,7 +9,7 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "0003_clinic_setup_staff_onboarding"
+revision = "0003_clinic_setup"
 down_revision = "0002_integrity_and_history"
 branch_labels = None
 depends_on = None
@@ -28,7 +28,8 @@ def upgrade() -> None:
     op.add_column("users", sa.Column("deactivated_at", now, nullable=True))
     op.add_column("users", sa.Column("created_at", now, nullable=True))
     op.add_column("users", sa.Column("updated_at", now, nullable=True))
-    op.execute("UPDATE users SET created_at = (SELECT created_at FROM clinics WHERE clinics.id = users.clinic_id), updated_at = created_at")
+    op.execute("UPDATE users SET created_at = (SELECT created_at FROM clinics WHERE clinics.id = users.clinic_id)")
+    op.execute("UPDATE users SET updated_at = created_at")
     op.alter_column("users", "created_at", nullable=False, server_default=None)
     op.alter_column("users", "updated_at", nullable=False, server_default=None)
 
@@ -49,9 +50,25 @@ def upgrade() -> None:
     )
     op.create_index("ix_staff_invitations_clinic_id", "staff_invitations", ["clinic_id"])
     op.create_index("ix_staff_invitations_email", "staff_invitations", ["email"])
+    op.execute("""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM rooms
+                GROUP BY clinic_id, lower(name)
+                HAVING count(*) > 1
+            ) THEN
+                RAISE EXCEPTION 'Cannot add case-insensitive room uniqueness: existing duplicate names require remediation';
+            END IF;
+        END
+        $$;
+    """)
+    op.execute("CREATE UNIQUE INDEX uq_room_clinic_lower_name ON rooms (clinic_id, lower(name))")
 
 
 def downgrade() -> None:
+    op.execute("DROP INDEX IF EXISTS uq_room_clinic_lower_name")
     op.drop_index("ix_staff_invitations_email", table_name="staff_invitations")
     op.drop_index("ix_staff_invitations_clinic_id", table_name="staff_invitations")
     op.drop_table("staff_invitations")
