@@ -361,7 +361,7 @@ async def test_postgresql_reactivation_racing_resource_deactivation_never_assign
     cases = [
         ("room", rooms[0], {"doctor_id": str(doctors[0].id), "room_id": str(rooms[0].id)}),
         ("doctor", doctors[1], {"doctor_id": str(doctors[1].id), "room_id": str(rooms[1].id)}),
-        ("assistant", assistants[0], {"doctor_id": str(doctors[0].id), "room_id": str(rooms[2].id), "assistant_id": str(assistants[0].id)}),
+        ("assistant", assistants[0], {"doctor_id": str(doctors[2].id), "room_id": str(rooms[2].id), "assistant_id": str(assistants[0].id)}),
     ]
     for resource, entity, refs in cases:
         appointment = await _create_future_appointment(client, headers, patient_name=f"Race {resource}", **refs)
