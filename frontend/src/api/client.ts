@@ -4,6 +4,10 @@ export type User = { id: string; clinic_id: string; full_name: string; email: st
 export type Doctor = { id: string; full_name: string; role: string };
 export type Patient = { id: string; clinic_id: string; first_name: string; last_name: string; date_of_birth: string | null; sex: string | null; phone: string | null; email: string | null; address: string | null; emergency_contact: string | null; occupation: string | null; allergies: string | null; medications: string | null; chronic_diseases: string | null; pregnancy_status: string | null; smoking_status: string | null; previous_surgeries: string | null; relevant_medical_conditions: string | null; medical_alerts: string | null; notes: string | null; created_at: string; updated_at: string };
 export type Room = { id: string; clinic_id: string; name: string; is_active: boolean };
+export type Clinic = { id: string; name: string; timezone: string; created_at: string; updated_at: string };
+export type Staff = { id: string; clinic_id: string; full_name: string; email: string; role: string; specialization: string | null; phone: string | null; is_active: boolean; deactivated_at: string | null; created_at: string; updated_at: string };
+export type StaffDetail = Staff & { upcoming_appointment_count: number };
+export type Invitation = { id: string; email: string; full_name: string; role: string; expires_at: string; revoked_at: string | null; accepted_at: string | null; created_at: string; invitation_url: string | null };
 export type Appointment = { id: string; clinic_id: string; patient_id: string; doctor_id: string; assistant_id: string | null; room_id: string; starts_at: string; ends_at: string; duration_minutes: number; appointment_type: string; status: string; notes: string | null };
 export type AuthResponse = { access_token: string; refresh_token: string; token_type: string };
 
@@ -139,5 +143,17 @@ export async function getPatient(id: string) { return (await api.get<Patient>(`/
 export async function createPatient(input: Partial<Patient> & Pick<Patient, 'first_name' | 'last_name'>) { return (await api.post<Patient>('/patients', input)).data; }
 export async function updatePatient(id: string, input: Partial<Patient>) { return (await api.patch<Patient>(`/patients/${id}`, input)).data; }
 export async function listRooms() { return (await api.get<Room[]>('/rooms')).data; }
+export async function getClinic() { return (await api.get<Clinic>('/clinic')).data; }
+export async function updateClinic(input: Pick<Clinic, 'name' | 'timezone'>) { return (await api.patch<Clinic>('/clinic', input)).data; }
+export async function createRoom(name: string) { return (await api.post<Room>('/rooms', { name })).data; }
+export async function updateRoom(id: string, input: { name?: string; is_active?: boolean }) { return (await api.patch<{ room: Room; affected_appointments: Array<{ id: string; starts_at: string; status: string }> }>(`/rooms/${id}`, input)).data; }
+export async function listStaff() { return (await api.get<Staff[]>('/staff')).data; }
+export async function getStaff(id: string) { return (await api.get<StaffDetail>(`/staff/members/${id}`)).data; }
+export async function createInvitation(input: { email: string; full_name: string; role: string }) { return (await api.post<Invitation>('/staff/invitations', input)).data; }
+export async function listInvitations() { return (await api.get<Invitation[]>('/staff/invitations')).data; }
+export async function revokeInvitation(id: string) { return (await api.post<Invitation>(`/staff/invitations/${id}/revoke`)).data; }
+export async function reissueInvitation(id: string) { return (await api.post<Invitation>(`/staff/invitations/${id}/reissue`)).data; }
+export async function deactivateStaff(id: string) { return (await api.post<{ staff: Staff; affected_appointments: Array<{ id: string; starts_at: string; status: string }> }>(`/staff/${id}/deactivate`)).data; }
+export async function acceptInvitation(token: string, password: string) { return (await api.post<Staff>('/staff/invitations/accept', { password }, { params: { token } })).data; }
 export async function listAppointments() { return (await api.get<Appointment[]>('/appointments')).data; }
 export async function createAppointment(input: Omit<Appointment, 'id' | 'clinic_id' | 'ends_at'>) { return (await api.post<Appointment>('/appointments', input)).data; }

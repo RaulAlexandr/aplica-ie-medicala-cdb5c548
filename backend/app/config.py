@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     environment: str = "development"
     access_token_minutes: int = 15
     refresh_token_days: int = 14
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,https://5173-iq44yzwn2tim322rhv7dl-e61fa79d.us1.manus.computer"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @model_validator(mode="after")
