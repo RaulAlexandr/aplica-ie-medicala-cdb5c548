@@ -331,14 +331,15 @@ async def test_postgresql_reactivation_rejects_deactivated_room_doctor_and_assis
         ("doctor", doctors[1], None),
         ("assistant", assistants[0], assistants[0]),
     ]
-    for resource, entity, assistant in cases:
+    for index, (resource, entity, assistant) in enumerate(cases):
         appointment = await _create_future_appointment(
             client,
             headers,
-            str(doctors[0].id),
+            str(entity.id) if resource == "doctor" else str(doctors[0].id),
             str(rooms[1].id if resource != "room" else entity.id),
             f"{resource.title()} Case",
             assistant_id=str(assistant.id) if assistant is not None else None,
+            start=f"2027-03-05T{10 + index:02d}:00:00+00:00",
         )
         if resource == "room":
             deactivation = await client.patch(f"/api/rooms/{entity.id}", headers=headers, json={"is_active": False})
