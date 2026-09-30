@@ -1,350 +1,260 @@
 # Raport de progres DentaCare
 
-**Data raportului:** 29 septembrie 2026  
-**Ramura evaluată:** `main`  
-**Commitul rezultat după merge:** `33ae083089b3413e3d73a215498b4f6f7e8fae42`  
-**PR integrat:** [#1](https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/pull/1), cu head-ul autorizat `29da26a662c253b283a36101eec8080347e6886b`
+**Data raportului:** 30 septembrie 2026
+**Baseline deja integrat în `main`:** commit `33ae083089b3413e3d73a215498b4f6f7e8fae42`, după [PR #1](https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/pull/1)
+**Implementarea T01 evaluată în PR deschis:** [PR #2](https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/pull/2), branch `feat/task-t01-clinic-setup-staff-onboarding`, commit `d7c0336b859e169d8d976f7118ad00197544da4f`
+**Migrația la head-ul T01:** `0003_clinic_setup` — prezentă în PR #2, nu încă în `main`
 
-Acest raport descrie numai codul existent în repository și verificările care au dovezi. Modulele planificate, structurile de date inexistente și implementarea separată Mistral nu sunt prezentate ca funcționalități finalizate.
+Acest raport separă explicit funcționalitatea deja integrată în `main` de implementarea T01 aflată în PR #2. Codul Mistral nu este integrat și nu este prezentat ca funcționalitate finalizată.
 
 ## 1. Scop, arhitectură și tehnologii
 
-DentaCare este, în starea actuală, un **MVP intern pentru operațiuni de clinică dentară**: permite unei clinici să își creeze contul, personalului autorizat să se autentifice, să gestioneze pacienți și să programeze consultații în camere, cu protecție de tenant și reguli de acces.
+DentaCare este un **MVP intern pentru operațiuni de clinică dentară**: permite unei clinici să creeze contul, personalului autorizat să se autentifice, să gestioneze pacienți și să programeze consultații cu protecție de tenant și reguli de acces.
 
-Arhitectura actuală este:
+Arhitectura este:
 
 - **Backend:** Python 3.12, FastAPI, SQLAlchemy 2 async, Pydantic v2, PostgreSQL și Alembic.
 - **Autentificare:** JWT pentru access token, refresh token rotativ păstrat doar sub formă hash, Argon2 pentru parole și revocare server-side la logout.
-- **Identificatori și timp:** UUID-uri și timestamp-uri timezone-aware; programările folosesc intervale half-open. Fusul orar al clinicii este persistat, dar formularul și listarea programărilor folosesc încă fusul orar local al browserului.
-- **Frontend:** React 18, TypeScript, Vite, React Router, TanStack Query, Axios și CSS simplu. Pachetele pentru React Hook Form, Zod și Zustand sunt disponibile, dar fluxul actual nu are nevoie de ele.
+- **Identificatori și timp:** UUID-uri și timestamp-uri timezone-aware; programările folosesc intervale half-open. Fusul orar al clinicii este persistat în T01, dar inputul și afișarea programărilor folosesc încă fusul orar local al browserului.
+- **Frontend:** React 18, TypeScript, Vite, React Router, TanStack Query, Axios și CSS simplu.
 - **Persistență:** schema este schimbată prin migrații; startup-ul nu execută `create_all` și nu reconstruiește tabelele.
-- **Izolare:** clinic_id este derivat din utilizatorul autentificat și verificat server-side pentru toate resursele relevante.
+- **Izolare:** `clinic_id` este derivat din utilizatorul autentificat și verificat server-side pentru resursele relevante.
 
-Structura curentă este intenționat mică: modulele implementate sunt `auth`, `patients` și `appointments`, iar modelele comune sunt în `backend/app/database.py`. Nu există încă module funcționale pentru toate domeniile din specificația inițială.
+## 2. Baseline deja integrat în `main`
 
-## 2. Ce este implementat, pe module
+PR #1 a integrat în `main` nucleul de autentificare, pacienți, programări și istoric/audit de bază. La nivelul baseline-ului din `main`, head-ul de migrații este `0002_integrity_and_history`.
 
 ### Autentificare și sesiuni
 
-Implementat:
+În `main` sunt implementate:
 
 - înregistrare clinică și creare automată a primului utilizator ca `clinic_manager`;
 - login cu email și parolă;
 - parole hash-uite cu Argon2;
-- access token JWT cu durată configurabilă;
-- refresh token aleator, hash-uit în baza de date, cu expirare și rotație la refresh;
-- revocarea tokenului vechi după rotație și revocare la logout;
-- endpoint `/auth/me` pentru sesiunea curentă;
-- respingerea utilizatorilor inexistenți sau inactivi;
+- access token JWT și refresh token aleator, hash-uit în baza de date;
+- expirare, rotație și revocare server-side a refresh tokenurilor;
+- endpoint `/auth/me` și respingerea utilizatorilor inexistenți sau inactivi;
 - protejarea rutelor fără token și răspunsuri 401/403 coerente;
-- frontend Axios care atașează tokenul, încearcă o singură reautentificare prin refresh și coordonează cererile concurente;
-- invalidarea cererilor active și protecția împotriva răspunsurilor întârziate după logout sau schimbarea sesiunii.
+- client Axios cu o singură reautentificare prin refresh, coordonarea cererilor concurente și invalidarea răspunsurilor unei sesiuni vechi.
 
-Limitarea de verificare este descrisă separat în [gap-ul de verificare în browser](browser-verification-gap.md): scenariile de expirare a sesiunii și de răspuns întârziat au acoperire automată, dar nu au fost confirmate complet end-to-end într-un browser real.
+### Clinici, tenant și permisiuni
 
-### Clinici și permisiuni de acces
+În `main` sunt implementate:
 
-Implementat:
+- modelul clinicii și asocierea obligatorie a utilizatorilor, pacienților, camerelor și programărilor cu o clinică;
+- rolurile `clinic_manager`, `doctor`, `assistant`, `reception` și `administrator`;
+- autorizare FastAPI pe rol;
+- filtrare server-side după clinică;
+- verificarea ownership-ului pentru referințele din programări;
+- izolarea între două clinici, acoperită prin teste.
 
-- model de clinică și asociere obligatorie a utilizatorilor, pacienților, camerelor și programărilor cu o clinică;
-- roluri recunoscute: `clinic_manager`, `doctor`, `assistant`, `reception`, `administrator`;
-- dependențe FastAPI de autorizare pe rol;
-- filtrare server-side după clinică pentru listări și identificarea resurselor;
-- referințele din programări sunt verificate ca aparținând aceleiași clinici;
-- nu se acceptă `clinic_id` din frontend pentru stabilirea tenantului;
-- izolare verificată prin teste între două clinici.
+### Pacienți, istoric și audit
 
-Task T01 adaugă ecranul de administrare a clinicii, onboardingul prin invitații și administrarea camerelor. Schimbarea rolurilor nu este disponibilă și nici nu face parte din fluxul de onboarding.
+În `main` sunt implementate listarea paginată, căutarea, contorul server-side, crearea, vizualizarea și editarea parțială a pacienților, cu câmpuri medicale și validări de păstrare a valorilor omise.
 
-### Pacienți și informații medicale
+Există `patient_revisions` append-only și audit de bază pentru operații importante. Istoricul de revizii este disponibil prin API, fără ecran frontend dedicat.
 
-Implementat:
+### Programări și integritate
 
-- listare paginată și sortată;
-- căutare după nume, telefon sau email;
-- contor server-side de pacienți, separat de dimensiunea paginii;
-- creare și vizualizare pacient;
-- editare parțială cu schema dedicată de PATCH;
-- câmpuri de identitate și contact: nume, data nașterii, sex, telefon, email, adresă, contact de urgență și ocupație;
-- informații medicale: alergii, medicamente, boli cronice, sarcină, fumat, operații, condiții relevante, alerte medicale și note;
-- email opțional validat; un câmp nullable poate fi golit explicit;
-- câmpurile omise la PATCH rămân neschimbate, iar câmpurile obligatorii nu pot primi explicit `null`.
-
-Există afișare frontend pentru lista, căutarea, crearea, detaliul și editarea pacientului. Nu există încă pagina Patient 360 completă cu timeline clinic, consultații, diagnostice, odontogramă, documente sau plăți.
-
-### Istoric și audit
-
-Implementat:
-
-- `patient_revisions` append-only pentru schimbările importante ale câmpurilor pacientului;
-- fiecare revizie păstrează actorul, câmpul, valoarea anterioară, valoarea nouă și momentul schimbării;
-- evenimente de audit pentru crearea și actualizarea pacienților și pentru crearea și schimbarea stării unei programări;
-- istoricul pacientului este protejat pentru roluri clinice/manageriale.
-
-Istoricul de revizii este disponibil prin API, nu are încă ecran dedicat în frontend. Nu există încă audit pentru domeniile clinice care nu sunt implementate.
-
-### Camere
-
-Implementat:
-
-- model de cameră asociat clinicii;
-- nume unic per clinică și stare activă;
-- creare de cameră, autorizată pentru manager și administrator;
-- listare pentru personalul clinicii;
-- camerele sunt resurse dinamice ale programărilor, nu sunt legate permanent de un medic.
-
-Administrarea camerelor este disponibilă în interfață pentru manager și administrator: creare, redenumire, activare și dezactivare sigură. Dezactivarea este blocată când există programări viitoare active și răspunsul enumeră programările afectate.
-
-### Director de personal
-
-Implementat pentru onboardingul de bază:
-
-- listă și detaliu de personal în UI și API;
-- invitații single-use cu secret păstrat doar hash-uit, expirare, revocare și reemitere;
-- acceptarea invitației cu parola aleasă de destinatar, fără posibilitatea de a modifica rolul sau clinica;
-- deactivare personal obișnuită cu păstrarea istoricului și blocare când există programări viitoare atribuite;
-- director API pentru medici eligibili la programare;
-- verificare că medicul este activ și aparține clinicii;
-- selector de medic în formularul de programare;
-- rolurile managerului și administratorului pot fi folosite ca personal medical programabil conform politicii existente.
-
-Profilul implementat pentru acest milestone include identitate, rol, contact de bază, specializare și statut activ/inactiv. Programul de lucru, documentele și metricile detaliate rămân în afara scopului. Nu există payroll.
-
-### Programări
-
-Implementat:
+În `main` sunt implementate:
 
 - creare și listare programări;
 - pacient, medic, asistent opțional, cameră, start, durată, tip, note și stare;
-- stările `scheduled`, `confirmed`, `arrived`, `in_progress`, `completed`, `cancelled`, `no_show`;
-- tranziții de stare explicite și respingerea tranzițiilor invalide;
-- verificarea conflictelor pentru medic, cameră și asistent atribuit;
-- intervale half-open: o programare care se termină exact când începe următoarea este permisă;
-- reactivarea unei programări anulate/no-show este reverificată pentru conflicte;
-- protecție PostgreSQL prin trigger pentru `ends_at` și exclusion constraints GiST pentru suprapuneri concurente;
-- toate referințele sunt verificate în tenantul utilizatorului;
-- recepția, medicii, managerii și administratorii pot crea programări; asistenții le pot vedea, dar nu le pot crea sau schimba starea.
+- stările `scheduled`, `confirmed`, `arrived`, `in_progress`, `completed`, `cancelled` și `no_show`;
+- tranziții de stare explicite;
+- verificarea conflictelor pentru medic, cameră și asistent;
+- intervale half-open;
+- trigger PostgreSQL pentru `ends_at` și exclusion constraints GiST pentru suprapuneri concurente;
+- validarea tenantului pentru toate referințele.
 
-Frontendul are listare și formular de creare. Nu există încă vedere zilnică/săptămânală vizuală completă, drag-and-drop, proceduri multiple sau urmărirea timpului efectiv al procedurilor.
+Frontendul din baseline are listare și formular de creare, dar nu are calendar zilnic/săptămânal complet, drag-and-drop sau operațiuni avansate de programare.
 
-### Frontend
+## 3. T01 în PR #2 — implementat, verificat și încă neintegrat în `main`
 
-Implementat:
+T01 extinde baseline-ul cu setup-ul clinicii, camere, onboarding staff, protecții de lifecycle și corecții de integritate. Toate aceste modificări sunt în PR #2 la commitul `d7c0336...`; nu trebuie descrise ca fiind deja prezente în `main` până la merge.
 
-- ecran de autentificare cu moduri login și înregistrare clinică;
-- layout cu utilizator, rol, navigație, logout și protecția rutelor prin sesiune;
-- overview cu numărul server-side de pacienți și numărul de programări încărcate;
-- listă și căutare pacienți;
-- formular de pacient nou;
-- detaliu și editare pacient;
-- formular de programare cu selectoare pentru pacient, medic și cameră;
-- ecrane manageriale pentru timezone clinică, camere și onboarding staff;
-- acceptare invitație prin link copiat manual, cu parolă setată de destinatar;
-- afișarea stărilor loading, empty, validation și server error;
-- refresh de sesiune, sign-out local și server-side și prevenirea restaurării datelor din sesiunea anterioară;
-- build Vite verificat în CI.
+### Setup clinic și camere
 
-## 3. Ce poate face fiecare rol astăzi
+T01 adaugă:
+
+- setări de clinică, inclusiv persistarea fusului orar;
+- creare, listare, redenumire, activare și dezactivare camere;
+- unicitate case-insensitive a numelui camerei;
+- blocarea dezactivării unei camere cu programări viitoare active;
+- răspunsuri care enumeră programările afectate;
+- protecție tranzacțională și teste PostgreSQL pentru creare/redenumire concurentă.
+
+Administrarea camerelor este disponibilă în interfața managerului/administratorului, nu este API-only.
+
+### Director staff și onboarding
+
+T01 adaugă:
+
+- listă și detaliu de personal în UI și API;
+- invitații single-use cu token păstrat doar hash-uit;
+- expirare, revocare, reemitere și acceptare cu parola aleasă de destinatar;
+- afișarea linkului nou la creare și reemitere;
+- copierea linkului și fallback pentru copiere manuală când clipboard-ul nu este disponibil;
+- deactivarea staffului obișnuit, cu blocare atunci când există programări viitoare atribuite;
+- director API pentru medici eligibili la programare și selector frontend de medic.
+
+Onboardingul staffului este disponibil în UI și API în PR #2; nu este neimplementat. Emailul/SMS-ul de transmitere a invitației nu este implementat: linkul este afișat pentru copiere manuală.
+
+### Lifecycle și concurență programări
+
+T01 adaugă:
+
+- reverificarea și blocarea doctorului, camerei și asistentului la reactivarea unei programări `cancelled` sau `no_show`;
+- păstrarea stării anterioare când reactivarea este respinsă din cauza unei resurse inactive sau a unui conflict;
+- teste PostgreSQL pentru reactivare după dezactivarea fiecărei resurse;
+- teste pentru curse între reactivare și dezactivarea resursei;
+- teste pentru curse între booking și dezactivarea doctorului/asistentului, în completarea testului pentru cameră.
+
+## 4. Ce poate face fiecare rol în implementarea T01
 
 | Rol | Prin interfață | Prin API / limitări actuale |
 |---|---|---|
-| `clinic_manager` | Înregistrare/login, overview, listă/căutare/creare/editare pacienți, creare/listare programări, setup clinică, camere și staff, logout | API-ul permite și schimbări de stare pentru programări; UI-ul curent nu expune controale pentru schimbarea stării |
-| `administrator` | Aceleași fluxuri operaționale și ecranele de setup expuse în frontend | Are aceeași politică de administrare a clinicii, camerelor și onboardingului |
-| `doctor` | Listă/căutare/creare/editare pacienți, creare/listare programări, logout | Poate vedea camerele și directorul de medici; nu poate administra setup-ul sau invita staff; istoricul pacientului este API-only |
-| `assistant` | Overview, listă/căutare/creare pacienți, listare programări, logout | Nu poate edita pacientul, crea programări sau schimba starea; poate lista camere și medici |
-| `reception` | Overview, listă/căutare/creare pacienți, creare/listare programări, logout | Nu poate edita pacientul, accesa istoricul pacientului sau administra setup-ul; poate lista camere și medici |
+| `clinic_manager` | Înregistrare/login, overview, pacienți, programări, setup clinică, camere, invitații și director staff | Poate schimba starea programărilor prin API; UI-ul nu expune încă controale pentru status |
+| `administrator` | Aceleași ecrane de setup și fluxuri operaționale expuse în frontend | Are aceeași politică de administrare a clinicii, camerelor și onboardingului |
+| `doctor` | Pacienți, programări, logout și vizualizarea resurselor disponibile | Nu poate administra setup-ul sau invita staff; istoricul pacientului este API-only |
+| `assistant` | Overview, pacienți și listare programări | Nu poate crea programări sau schimba starea; poate lista camere și medici |
+| `reception` | Overview, pacienți și creare/listare programări | Nu poate edita pacientul, accesa istoricul sau administra setup-ul |
 
-Acestea sunt roluri ale aplicației interne. Nu există rol de pacient și nu există portal separat pentru pacienți.
+Nu există rol de pacient și nu există portal separat pentru pacienți.
 
-## 4. Parcursuri de utilizator suportate
+## 5. Parcursuri suportate în UI
 
-### Înregistrare clinică și login
+### Înregistrare, setup și onboarding
 
-1. Proprietarul deschide frontendul și alege înregistrarea.
-2. Introduce numele clinicii, numele său, emailul și o parolă de cel puțin 12 caractere.
-3. Backendul creează clinica și utilizatorul manager, emite access și refresh token.
-4. Frontendul încarcă `/auth/me` și deschide overview-ul.
-5. Un utilizator existent se autentifică prin email/parolă; parolele greșite sunt respinse.
+Managerul poate înregistra clinica, se poate autentifica, poate deschide Clinic setup, poate salva fusul orar, poate crea/redenumii/dezactiva camere și poate deschide Staff pentru invitații. Linkul de invitație este afișat o singură dată pentru copiere; aplicația nu pretinde că a trimis un email.
 
-Managerul deschide Clinic setup pentru timezone și camere, apoi Staff pentru invitații. Linkul poate fi copiat manual; aplicația nu integrează un furnizor de email și nu pretinde că a trimis mesaje.
+Invitatul deschide linkul, alege parola și activează contul. Linkurile acceptate sau revocate sunt respinse, iar operațiile eșuate afișează mesaje vizibile.
 
-### Pacient
+### Pacienți
 
-1. Un rol autorizat deschide Patients.
-2. Caută după nume, telefon sau email. API-ul suportă paginare; ecranul curent afișează cel mult 100 de rezultate și nu are controale de navigare între pagini.
-3. Alege New patient și completează datele de identitate, contact și câmpurile medicale disponibile.
-4. Deschide detaliul pacientului.
-5. Managerul, administratorul sau medicul poate edita câmpurile permise în frontend.
-6. Backendul păstrează câmpurile omise și creează revizii pentru modificările urmărite.
+Un rol autorizat poate căuta, crea, vizualiza și, unde politica permite, edita pacienți. API-ul suportă paginare; ecranul actual afișează cel mult 100 de rezultate și nu are navigare între pagini.
 
-Nu există încă atașamente, timeline clinic, consultație, diagnostic sau plată în acest parcurs.
+Nu există încă Patient 360 complet, timeline clinic, consultații, diagnostice, odontogramă, documente sau plăți.
 
-### Programare
+### Programări
 
-1. Utilizatorul cu drept de creare deschide Appointments și New appointment.
-2. Caută și selectează pacientul.
-3. Selectează medicul autorizat și camera activă.
-4. Introduce data/ora și durata. Inputul `datetime-local` și afișarea curentă folosesc fusul orar local al browserului; API-ul păstrează instantul timezone-aware. API-ul acceptă tip și note, însă formularul UI curent folosește un tip presetat și nu expune editarea notelor.
-5. Backendul verifică tenantul, resursele, starea și suprapunerile.
-6. La conflict primește 409; altfel programarea este salvată și apare în listă.
-7. API-ul validează tranzițiile pentru rolurile autorizate; formularul UI curent nu are încă un control de schimbare a stării.
+Utilizatorul cu drept de creare selectează pacientul, medicul și camera activă, apoi introduce data/ora și durata. `datetime-local` și listarea folosesc fusul orar local al browserului; API-ul păstrează instanța timezone-aware. Backendul verifică tenantul, resursele, starea și suprapunerile.
 
-Nu există încă asociere de proceduri sau închidere distinctă a procedurii față de plecarea pacientului.
+Nu există încă vedere calendaristică zilnică/săptămânală completă, drag-and-drop, operațiuni avansate de rescheduling sau asociere de proceduri.
 
-> **Comportament calendaristic planificat pentru T02:** ecranul de programări trebuie să interpreteze inputul și să afișeze programările în fusul orar persistat al clinicii, inclusiv conversii consistente la schimbarea clinicii și tranziții DST. T01 nu pretinde că această conversie este implementată.
+> **T02 planificat:** implementarea calendarului operațional zilnic/săptămânal, cu input și randare în fusul orar persistat al clinicii, conversii consistente între browser și clinică și tratarea explicită a tranzițiilor DST. T01 nu pretinde că acest comportament este implementat.
 
 ### Logout și sesiune expirată
 
-1. Utilizatorul apasă Sign out.
-2. Frontendul șterge local tokenurile și anulează cererile active, apoi cere revocarea server-side când este posibil.
-3. Răspunsurile ulterioare care aparțin unei sesiuni vechi nu mai pot repopula interfața.
-4. Dacă access tokenul expiră, clientul încearcă refresh o singură dată; dacă refreshul eșuează, sesiunea este curățată și utilizatorul revine la autentificare.
+Frontendul curăță tokenurile local, revocă sesiunea server-side când este posibil și ignoră răspunsurile unei sesiuni vechi. Refresh-ul eșuat readuce utilizatorul la autentificare.
 
-Acest parcurs este acoperit automat, dar verificarea completă în browser rămâne restantă pentru scenariile menționate în documentația gap-ului.
+## 6. Verificare și dovezi
 
-## 5. Probleme descoperite și corectate
+### Verificare CI pentru T01
 
-Pe parcursul iterărilor, problemele principale și impactul corecțiilor au fost:
+Workflow-ul [CI run 36704936353](https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/36704936353), pe commitul final T01 `d7c0336b859e169d8d976f7118ad00197544da4f`, s-a încheiat cu succes. Toate joburile au fost verzi:
 
-- **Izolare insuficient de explicită:** verificările au fost centralizate pe utilizatorul autentificat și clinică, reducând riscul ca un utilizator să acceseze date din alt tenant.
-- **Permisiuni prea largi pentru staff:** politica a fost clarificată; asistenții pot vedea programări, dar nu le pot crea sau modifica starea, iar editarea/istoricul medical sunt limitate.
-- **PATCH care putea șterge accidental date:** schema parțială separată distinge câmpurile omise de cele trimise explicit ca `null`; informațiile clinice neincluse rămân intacte.
-- **Lipsa trasabilității la schimbarea pacientului:** au fost adăugate revizii de pacient și audit events fără ștergerea istoricului.
-- **Contorul de pacienți dependent de pagina curentă:** overview-ul folosește endpoint server-side de count.
-- **Conflicte de programare la nivel de verificare simplă:** au fost adăugate migrații PostgreSQL, trigger pentru capătul intervalului și exclusion constraints pentru doctor, cameră și asistent, astfel încât două cereri concurente să nu poată rezerva aceeași resursă.
-- **Tranziții de stare implicite sau invalide:** stările și tranzițiile sunt validate explicit, inclusiv la reactivare.
-- **Timestamp-uri naive sau conversii în indexuri:** migrația și testele au fost corectate pentru timestamp-uri timezone-aware, iar calculele de timp sunt păstrate în coloane/trigger, nu în expresii instabile de index.
-- **Refresh concurent și răspunsuri întârziate în frontend:** refreshul este partajat între cereri, sesiunile au generații, iar logoutul anulează requesturile active și ignoră răspunsurile sesiunilor vechi.
-- **Startup care putea modifica schema:** aplicarea schemei este mutată explicit în Alembic; startupul nu mai creează sau recreează tabele.
-- **Lipsa verificării reproductibile:** CI include lint, compilare, teste rapide, build frontend, upgrade de bază PostgreSQL goală și teste de integritate/concurență PostgreSQL.
+- **backend:** teste rapide, Ruff, compilare Python și `alembic heads`;
+- **frontend:** teste Vitest și build Vite;
+- **postgres:** PostgreSQL 16, upgrade pe bază goală, upgrade de la baze populate și testele de migrare/integritate/concurență, inclusiv camere case-insensitive, booking/dezactivare și reactivare/dezactivare.
 
-## 6. Verificare efectuată
+Înainte de CI, testele frontend au verificat cu API mock-uit crearea invitației, reemiterea, afișarea fiecărui link nou și fallback-ul de copiere manuală. Testele rapide backend au trecut local; PostgreSQL a fost validat în jobul CI.
 
-### Confirmat în CI după merge
+### Browser și limite de verificare
 
-Workflow-ul [CI run 36497103953](https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/36497103953), pe commitul `33ae083089b3413e3d73a215498b4f6f7e8fae42`, s-a terminat cu succes. Toate cele trei joburi au fost verzi:
+Parcursul T01 corectat a fost exercitat în browserul sandbox cu frontendul și backendul hosted: înregistrare clinică, setup/timezone, cameră, creare/redenumire, invitație, copiere, acceptare, reemitere, revocare, respingerea linkurilor reutilizate/revocate, login doctor, selector doctor/cameră, booking și blocarea dezactivării cu programări afectate au fost observate.
 
-- **backend:** `pytest -q -m 'not postgres'`, Ruff, `compileall` și `alembic heads`;
-- **frontend:** `npm ci`, `npm test` și `npm run build`;
-- **postgres:** PostgreSQL 16, `alembic upgrade head` pe bază goală și `tests/test_postgres_integrity.py -m postgres`, inclusiv testele de concurență.
+Rămân explicit neconfirmate end-to-end într-un browser real:
 
-### Confirmat prin istoric și cod
+- expirarea sesiunii și redirectul la autentificare fără restaurarea datelor protejate;
+- răspunsuri întârziate după logout sau schimbarea sesiunii;
+- validarea clinică de către utilizatori medicali;
+- testare de încărcare, backup/restore, monitorizare, scanare de securitate și hardening de producție.
 
-- PR #1 avea exact head-ul autorizat înainte de merge: `29da26a...`.
-- Toate check-urile cerute înainte de merge erau finalizate cu succes.
-- PR-ul a fost merge-uit în `main` cu commitul `33ae083...`.
-- Gap-ul pentru verificarea în browser a fost înregistrat în `docs/browser-verification-gap.md` înainte de merge.
-- Migrația curentă este `0002_integrity_and_history`.
-- Testele rapide acoperă autentificare, izolarea tenantului, refresh rotation/replay, conflicte, tranziții, revizii, logout, validare email și RBAC.
-- Testele PostgreSQL acoperă migrarea și integritatea/concurența pentru rezervări.
+Aceste limite sunt consemnate și în [browser-verification-gap.md](browser-verification-gap.md). Documentul păstrează istoricul blocajului CORS întâlnit în prima încercare; configurația hosted-origin a fost ulterior corectată în T01.
 
-### Neverificat complet / limitări de evidență
+## 7. Ce lipsește față de platforma dentară completă
 
-- Nu există dovadă completă de verificare end-to-end într-un browser real pentru expirarea sesiunii și răspunsurile întârziate după logout/schimbarea sesiunii.
-- Nu a fost efectuată o validare clinică de către utilizatori medicali.
-- Nu există test de încărcare, backup/restore, monitorizare, scanare de securitate sau hardening de producție documentat.
-- În sandboxul inițial Docker nu a fost disponibil pentru verificarea locală; verificarea reală PostgreSQL a fost realizată în jobul CI cu serviciu PostgreSQL 16.
+Rămân neimplementate sau parțiale:
 
-## 7. Ce lipsește față de cerințele platformei dentare
-
-Cerințele complete sunt disponibile în `dental_clinic_coding_stress_test_prompt.md`. Față de acestea, lipsesc funcțional sau sunt doar parțiale:
-
+- calendar operațional zilnic/săptămânal, inclusiv input/randare în fusul clinicii și DST — planificat pentru T02;
 - Patient 360 complet, timeline clinic, consultații, diagnostice, documente și plăți;
-- urmărirea timpului pentru proceduri individuale și separarea de finalizarea programării;
+- proceduri individuale, start/finish și urmărirea timpului efectiv;
 - odontogramă adultă FDI 2D, suprafețe, observații și istoric;
 - periodontologie cu șase situsuri, măsurători istorice, calcule și comparații;
-- planuri de tratament, articole, statusuri și trasabilitatea procedurilor finalizate;
-- administrare completă de personal, disponibilitate, program de lucru, documente și metrici;
-- mesagerie internă, canale de echipă/cameră și unread state;
-- inventar, mișcări imuabile, loturi/expirări și alerte low-stock;
-- raportare operațională și financiară-ready pe perioade;
-- portal separat pentru pacient și invitații clinic-specific;
-- interfețe pentru integrarea viitoare AI, fără apeluri LLM reale;
-- management clinic, invitații și configurare de utilizatori/roluri prin interfață;
-- calendar zilnic/săptămânal complet și operațiuni avansate de programare.
+- planuri de tratament și trasabilitatea procedurilor efectuate;
+- program de lucru, disponibilitate, documente și metrici detaliate pentru staff;
+- mesagerie internă și canale de echipă/cameră;
+- inventar, loturi, expirări și alerte low-stock;
+- raportare operațională și financiară;
+- portal separat pentru pacient;
+- email/SMS pentru invitații;
+- integrarea AI/Mistral.
 
-Acestea nu trebuie considerate implementate doar pentru că apar în cerințe sau pentru că pachetele frontend permit extinderea lor.
+Administrarea clinicii, camerelor și onboardingul de bază nu mai apar în lista de funcționalități neimplementate: acestea sunt livrate în T01 PR #2, dar încă nu sunt în `main`.
 
 ## 8. Starea livrării
 
-- **Merged în `main`:** da, PR #1, merge commit `33ae083089b3413e3d73a215498b4f6f7e8fae42`.
-- **Head-ul autorizat al PR-ului:** `29da26a662c253b283a36101eec8080347e6886b`, neschimbat înainte de merge.
-- **CI post-merge:** verde, run `36497103953`.
-- **Deploy:** nu a fost făcut și nu a fost solicitat. Nu există mediu public de producție rezultat din această sarcină.
-- **Acces local:** PostgreSQL 16, `alembic upgrade head`, backend FastAPI pe `localhost:8000` și frontend Vite pe `localhost:5173`, conform README.
-- **Intervenție tehnică necesară:** configurarea `.env`, secret JWT, baza PostgreSQL, migrațiile și pornirea celor două procese; camerele și stafful obișnuit pot fi create prin UI după autentificarea managerului.
-- **Workspace:** checkout-ul local este pe `main`, sincronizat cu `origin/main`, fără modificări necomise, nepushed sau neintegrate în acest workspace la momentul raportului.
-- **Mistral:** nu a fost integrat și este exclus din acest raport, conform instrucțiunii.
+- **În `main`:** baseline-ul PR #1, commit `33ae083...`, cu migrația `0002_integrity_and_history`.
+- **În PR #2:** T01 complet până la commitul `d7c0336...`, inclusiv migrația `0003_clinic_setup`, setup clinic, camere, onboarding staff și corecțiile de reactivare/concurență.
+- **PR #2:** deschis; nu a fost încă merge-uit.
+- **CI T01:** verde, workflow `36704936353`, cu backend/frontend/PostgreSQL reușite.
+- **Deploy:** nu a fost făcut și nu a fost solicitat.
+- **Browser:** parcursul T01 corectat a fost exercitat în sandbox; limitele de sesiune și validarea clinică rămân neconfirmate.
+- **Mistral:** nu a fost integrat.
+- **T02:** nu a început; următorul task planificat este calendarul operațional zilnic/săptămânal cu timezone clinică și DST.
 
 ## 9. Evaluarea pregătirii
 
-### Demonstrație
+### Demonstrație cu date sintetice
 
-**Potrivit cu date sintetice:** da. Se pot demonstra înregistrarea clinicii, loginul, overview-ul, pacienții, căutarea, editarea și programările cu protecția conflictelor. Este necesară pornirea tehnică a PostgreSQL, backendului și frontendului.
+**Potrivită:** da, pentru baseline-ul din `main` și pentru fluxurile T01 din PR #2 când branch-ul este rulat cu migrația `0003_clinic_setup`. Se pot demonstra autentificarea, pacienții, programările, setup-ul clinicii, camerele și onboardingul staffului.
 
 ### Pilot cu date sintetice
 
-**Posibil, dar limitat:** da pentru fluxurile de recepție și programare de bază și pentru testarea izolării între clinici. Înainte de pilot trebuie configurate conturile/rolurile suplimentare prin intervenție tehnică și trebuie făcută o verificare browser a sesiunilor. Lipsesc modulele clinice, inventory, mesagerie și raportare, deci pilotul nu acoperă operațiunile complete ale unei clinici.
+**Posibil, dar limitat:** da pentru recepție, programare de bază, izolarea între clinici și administrarea T01. Pilotul nu acoperă operațiunile clinice complete, calendarul operațional, inventarul, mesageria sau raportarea. Trebuie rulate migrațiile și trebuie păstrate limitările de browser și timezone descrise mai sus.
 
-### Date reale de pacienți
+### Date reale de pacienți și producție
 
-**Nu este recomandat:** nu. Lipsesc Patient 360 complet, audit clinic extins, documente, odontogramă, periodontologie, tratamente, politici operaționale, backup/restore, monitorizare, hardening și validare clinică. Codul actual este un milestone funcțional pentru MVP, nu o declarație de pregătire pentru date medicale reale sau producție.
+**Nu este recomandat:** nu. Lipsesc Patient 360 complet, modulele clinice, backup/restore operațional, monitorizarea, hardening-ul de producție, validarea clinică și calendarul operațional cu timezone clinică.
 
-## 10. Milestone recomandat
+## 10. Următorul task: T02
 
-Recomand următorul milestone: **nucleul clinic pentru un pacient**, cu scop limitat la planuri de tratament, proceduri efectuate și primul Patient 360 auditabil.
+T02 este calendarul operațional zilnic/săptămânal. Domeniul planificat include:
 
-### Domeniu inclus
+1. vizualizare zilnică și săptămânală a programărilor;
+2. input și randare în fusul orar persistat al clinicii, nu în fusul implicit al browserului;
+3. conversii stabile între instantul UTC stocat, browser și timezone clinică;
+4. reguli și teste pentru DST, inclusiv ore ambigue sau inexistente;
+5. operațiuni calendaristice de bază pentru mutare/rescheduling, cu aceleași verificări de conflict și tenant isolation;
+6. teste backend, frontend, PostgreSQL și browser pentru comportamentul calendaristic.
 
-1. modele și migrații pentru consultație, diagnostic, plan de tratament, itemi de plan și proceduri efectuate;
-2. start/finish pentru procedură cu `procedure_started_at`, `procedure_completed_at` și durată calculată;
-3. statusuri și tranziții server-side pentru plan și itemi;
-4. timeline API pentru pacient care agregă evenimentele existente și noile evenimente clinice;
-5. ecrane frontend pentru plan, itemi, finalizare procedură și timeline;
-6. audit și tenant isolation pentru fiecare operație;
-7. teste pentru tranziții, durate, trasabilitatea itemului și acces între clinici.
-
-### Dependențe
-
-- schema și politicile existente din `main`;
-- decizie clinică asupra catalogului de proceduri, statusurilor și regulilor de editare;
-- PostgreSQL disponibil pentru migrații și teste de integritate;
-- roluri clinice confirmate pentru medic, asistent și manager;
-- date sintetice reprezentative pentru acceptanță.
-
-### Criterii de acceptare
-
-- un medic poate crea un plan cu cel puțin doi itemi, iar fiecare item are dinți/suprafețe unde este cazul, prioritate, durată estimată și status;
-- planul și itemii respectă tranziții valide și resping tranzițiile invalide;
-- procedura efectuată păstrează legătura cu itemul de plan și calculează durata numai între start și finish;
-- finalizarea programării nu modifică durata clinică a procedurii;
-- timeline-ul pacientului este cronologic, tenant-scoped și nu șterge evenimente istorice;
-- un utilizator din altă clinică primește 404/403 și nu vede datele;
-- testele automate, migrația PostgreSQL și CI sunt verzi;
-- fluxul este verificat end-to-end în browser pentru creare, editare, finalizare și logout;
-- nu se începe periodontologia, inventarul, portalul sau AI în același milestone.
-
-Acest milestone este o recomandare; nu face parte din implementarea raportată aici.
+T02 nu a început și nu include încă periodontologie, inventar, portal de pacient sau AI/Mistral.
 
 ## Tabel compact de stare
 
-| Funcționalitate | Stare |
+| Funcționalitate | Stare actuală |
 |---|---|
-| Înregistrare clinică, login, JWT, refresh rotativ, logout server-side | **implementat, dar nu complet verificat** — scenariile browser de expirare/răspuns întârziat rămân de confirmat |
-| Izolare tenant, RBAC și validarea ownership-ului | **implementat și verificat** |
-| Pacienți, căutare, paginare, câmpuri medicale și editare parțială | **implementat și verificat** |
-| Revizii pacient și audit de bază | **implementat și verificat** prin teste/API |
-| Camere și director API de medici | **implementat, dar nu complet verificat** în interfață; administrarea camerelor este API-only |
-| Programări, tranziții și conflicte doctor/cameră/asistent | **implementat și verificat**, inclusiv PostgreSQL/concurență în CI |
-| Frontend staff pentru auth, overview, pacienți și programări | **implementat, dar nu complet verificat** end-to-end în browser |
-| Timeline Patient 360, consultații, diagnostice, documente și plăți | **parțial implementat** — există revizii/audit de bază, nu Patient 360 complet |
-| Proceduri și urmărire timp efectiv | **neimplementat** |
-| Odontogramă FDI și istoric odontogramă | **neimplementat** |
-| Periodontologie cu șase situsuri și calcule | **neimplementat** |
-| Planuri de tratament | **neimplementat** |
-| Administrare completă staff și disponibilitate | **parțial implementat** — doar director API de medici pentru programare |
-| Mesagerie internă | **neimplementat** |
-| Inventar și mișcări de stoc | **neimplementat** |
-| Rapoarte operaționale | **neimplementat** |
-| Portal separat pentru pacient | **neimplementat** |
-| Interfețe pentru viitorul AI/Mistral | **neimplementat** și exclus intenționat din acest task |
+| Auth, JWT, refresh rotativ, logout server-side | **În `main`, implementat;** scenariile browser de expirare/răspuns întârziat rămân neconfirmate |
+| Izolare tenant, RBAC și ownership | **În `main`, implementat și verificat** |
+| Pacienți, căutare, paginare și editare parțială | **În `main`, implementat și verificat** |
+| Revizii pacient și audit de bază | **În `main`, implementat și verificat** prin teste/API |
+| Programări, tranziții și conflicte | **În `main`, implementat;** T01 adaugă reactivare cu resurse active și curse PostgreSQL în PR #2 |
+| Setup clinică și timezone persistat | **În T01 PR #2, implementat și verificat;** conversia calendaristică nu este încă implementată |
+| Camere: creare, redenumire, activare/dezactivare sigură | **În T01 PR #2, implementat și verificat;** disponibil în UI, nu API-only |
+| Staff directory, invitații și acceptare | **În T01 PR #2, implementat și verificat;** disponibil în UI și API |
+| Staff deactivation safeguards și appointment details | **În T01 PR #2, implementat și verificat** |
+| Frontend auth, overview, pacienți și programări | **În `main`, implementat;** T01 adaugă ecranele setup/staff |
+| Calendar zilnic/săptămânal și timezone clinică la input/randare | **Planificat pentru T02, neimplementat** |
+| Patient 360, consultații, diagnostice, documente și plăți | **Neimplementat/parțial** |
+| Proceduri și urmărire timp efectiv | **Neimplementat** |
+| Odontogramă FDI și istoric | **Neimplementat** |
+| Periodontologie | **Neimplementat** |
+| Planuri de tratament | **Neimplementat** |
+| Disponibilitate și administrare completă staff | **Parțial implementat;** onboardingul de bază este în T01, programul de lucru nu există |
+| Mesagerie internă | **Neimplementat** |
+| Inventar și mișcări de stoc | **Neimplementat** |
+| Rapoarte operaționale | **Neimplementat** |
+| Portal separat pentru pacient | **Neimplementat** |
+| Email/SMS pentru invitații | **Neimplementat** |
+| Interfețe AI/Mistral | **Neimplementat și exclus intenționat** |
