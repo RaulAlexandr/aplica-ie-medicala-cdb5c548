@@ -9,6 +9,7 @@ from app.auth.router import router as auth_router
 from app.clinic.router import router as clinic_router
 from app.config import settings
 from app.patients.router import router as patients_router
+from app.procedures.router import router as procedures_router
 from app.rooms_router import router as rooms_router
 from app.staff.router import router as staff_management_router
 
@@ -24,6 +25,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(clinic_router, prefix="/api")
 app.include_router(patients_router, prefix="/api")
 app.include_router(appointments_router, prefix="/api")
+app.include_router(procedures_router, prefix="/api")
 app.include_router(rooms_router, prefix="/api")
 app.include_router(staff_router, prefix="/api")
 app.include_router(staff_management_router, prefix="/api")

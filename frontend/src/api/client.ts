@@ -10,6 +10,7 @@ export type StaffDetail = Staff & { upcoming_appointment_count: number };
 export type Invitation = { id: string; email: string; full_name: string; role: string; expires_at: string; revoked_at: string | null; accepted_at: string | null; created_at: string; invitation_url: string | null };
 export type Appointment = { id: string; clinic_id: string; patient_id: string; doctor_id: string; assistant_id: string | null; room_id: string; starts_at: string; ends_at: string; duration_minutes: number; appointment_type: string; status: string; notes: string | null };
 export type AuthResponse = { access_token: string; refresh_token: string; token_type: string };
+export type ProcedureCatalog = { id: string; clinic_id: string; code: string; name: string; description: string | null; category: string | null; default_duration_minutes: number; base_price: string; currency: string; is_active: boolean; created_at: string; updated_at: string };
 
 type RequestConfig = InternalAxiosRequestConfig & { _retry?: boolean; _sessionGeneration?: number; _controller?: AbortController };
 type SessionHandlers = { onSessionCleared?: () => void };
@@ -157,3 +158,9 @@ export async function deactivateStaff(id: string) { return (await api.post<{ sta
 export async function acceptInvitation(token: string, password: string) { return (await api.post<Staff>('/staff/invitations/accept', { password }, { params: { token } })).data; }
 export async function listAppointments() { return (await api.get<Appointment[]>('/appointments')).data; }
 export async function createAppointment(input: Omit<Appointment, 'id' | 'clinic_id' | 'ends_at'>) { return (await api.post<Appointment>('/appointments', input)).data; }
+export async function listProcedures(search?: string, activeOnly?: boolean, limit = 50, offset = 0) { return (await api.get<ProcedureCatalog[]>('/procedures', { params: { ...(search ? { search } : {}), active_only: activeOnly !== false, limit, offset } })).data; }
+export async function getProcedure(id: string) { return (await api.get<ProcedureCatalog>(`/procedures/${id}`)).data; }
+export async function createProcedure(input: Omit<ProcedureCatalog, 'id' | 'clinic_id' | 'created_at' | 'updated_at' | 'is_active' | 'base_price'> & { base_price: string }) { return (await api.post<ProcedureCatalog>('/procedures', input)).data; }
+export async function updateProcedure(id: string, input: Partial<Omit<ProcedureCatalog, 'id' | 'clinic_id' | 'created_at' | 'updated_at'>>) { return (await api.patch<ProcedureCatalog>(`/procedures/${id}`, input)).data; }
+export async function activateProcedure(id: string) { return (await api.post<ProcedureCatalog>(`/procedures/${id}/activate`)).data; }
+export async function deactivateProcedure(id: string) { return (await api.post<ProcedureCatalog>(`/procedures/${id}/deactivate`)).data; }
