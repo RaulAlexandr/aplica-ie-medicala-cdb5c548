@@ -1,9 +1,9 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,11 +19,69 @@ MAX_DURATION_MINUTES = 1440  # 24 hours
 MIN_DURATION_MINUTES = 1
 MAX_PRICE = Decimal("999999999.99")
 MIN_PRICE = Decimal("0.00")
+RON = "RON"
 
 
 def normalize_code(value: str) -> str:
     """Normalize procedure code: strip whitespace and lowercase."""
     return value.strip().lower()
+
+
+def validate_price_value(value: object) -> Decimal:
+    """Validate and parse price from various input types.
+    
+    Accepts:
+    - Decimal instances
+    - String representations of decimals (e.g., "123.45")
+    - Integer strings (e.g., "100")
+    - Float-like strings
+    
+    Rejects:
+    - JSON numbers (int/float) - must come as strings for exact decimal representation
+    - Malformed strings (e.g., "abc", "12.34.56")
+    - Non-finite values (Infinity, NaN)
+    - Values outside bounds [0, 999999999.99]
+    - Values with more than 2 decimal places
+    """
+    if isinstance(value, Decimal):
+        pass
+    elif isinstance(value, str):
+        value = value.strip()
+        if not value:
+            raise ValueError("Price cannot be empty")
+        try:
+            value = Decimal(value)
+        except (ValueError, InvalidOperation) as exc:
+            raise ValueError("Price must be a valid decimal number") from exc
+    elif isinstance(value, (int, float)):
+        # JSON numbers come through as int/float - reject for exact decimal safety
+        raise TypeError("Price must be provided as a string for exact decimal representation")
+    else:
+        raise TypeError("Price must be a decimal number")
+    
+    # Check for non-finite values
+    if value.is_infinite() or value.is_nan():
+        raise ValueError("Price must be a finite number")
+    
+    # Check bounds
+    if value < MIN_PRICE:
+        raise ValueError(f"Price must be at least {MIN_PRICE}")
+    if value > MAX_PRICE:
+        raise ValueError(f"Price must be at most {MAX_PRICE}")
+    
+    # Check decimal precision
+    if value.as_tuple().exponent < -2:
+        raise ValueError("Price must have at most 2 decimal places")
+    
+    return value
+
+
+def validate_currency_value(value: str) -> str:
+    """Validate currency is RON only for this milestone."""
+    value = value.strip().upper()
+    if value != RON:
+        raise ValueError("Only RON currency is supported for this milestone")
+    return value
 
 
 class ProcedureCatalogCreate(BaseModel):
@@ -33,7 +91,7 @@ class ProcedureCatalogCreate(BaseModel):
     category: str | None = Field(default=None, max_length=80)
     default_duration_minutes: int = Field(ge=MIN_DURATION_MINUTES, le=MAX_DURATION_MINUTES)
     base_price: Decimal = Field(ge=MIN_PRICE, le=MAX_PRICE)
-    currency: str = Field(default="RON", min_length=1, max_length=3)
+    currency: str = Field(default=RON, min_length=1, max_length=3)
     is_active: bool = Field(default=True)
 
     @field_validator("code", mode="before")
@@ -52,14 +110,15 @@ class ProcedureCatalogCreate(BaseModel):
             raise ValueError("Name cannot be empty")
         return value
 
+    @field_validator("currency", mode="before")
+    @classmethod
+    def validate_currency(cls, value: str) -> str:
+        return validate_currency_value(value)
+
     @field_validator("base_price", mode="before")
     @classmethod
-    def parse_price(cls, value: str | Decimal) -> Decimal:
-        if isinstance(value, str):
-            value = Decimal(value)
-        if value.as_tuple().exponent < -2:
-            raise ValueError("Price must have at most 2 decimal places")
-        return value
+    def parse_price(cls, value: object) -> Decimal:
+        return validate_price_value(value)
 
 
 class ProcedureCatalogUpdate(BaseModel):
@@ -92,16 +151,19 @@ class ProcedureCatalogUpdate(BaseModel):
             raise ValueError("Name cannot be empty")
         return value
 
-    @field_validator("base_price", mode="before")
+    @field_validator("currency", mode="before")
     @classmethod
-    def parse_price(cls, value: str | Decimal | None) -> Decimal | None:
+    def validate_currency(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        if isinstance(value, str):
-            value = Decimal(value)
-        if value.as_tuple().exponent < -2:
-            raise ValueError("Price must have at most 2 decimal places")
-        return value
+        return validate_currency_value(value)
+
+    @field_validator("base_price", mode="before")
+    @classmethod
+    def parse_price(cls, value: object | None) -> Decimal | None:
+        if value is None:
+            return None
+        return validate_price_value(value)
 
 
 class ProcedureCatalogResponse(BaseModel):
@@ -130,6 +192,29 @@ def response(procedure: ProcedureCatalog) -> ProcedureCatalogResponse:
         },
         from_attributes=True,
     )
+
+
+@router.get("/count", response_model=int)
+async def count_procedures(
+    search: str | None = Query(default=None, max_length=100),
+    active_only: bool = Query(default=True),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles(*STAFF_ROLES)),
+) -> int:
+    query = select(func.count()).select_from(ProcedureCatalog).where(ProcedureCatalog.clinic_id == user.clinic_id)
+    if active_only:
+        query = query.where(ProcedureCatalog.is_active.is_(True))
+    if search:
+        term = f"%{search.strip()}%"
+        query = query.where(
+            or_(
+                ProcedureCatalog.code.ilike(term),
+                ProcedureCatalog.name.ilike(term),
+                ProcedureCatalog.category.ilike(term),
+                ProcedureCatalog.description.ilike(term),
+            )
+        )
+    return await db.scalar(query)
 
 
 @router.get("", response_model=list[ProcedureCatalogResponse])
@@ -188,7 +273,7 @@ async def create_procedure(
         category=payload.category.strip() if payload.category else None,
         default_duration_minutes=payload.default_duration_minutes,
         base_price=payload.base_price,
-        currency=payload.currency.upper() if payload.currency else "RON",
+        currency=payload.currency,
         is_active=payload.is_active,
     )
     db.add(procedure)
@@ -232,7 +317,7 @@ async def update_procedure(
     if payload.base_price is not None:
         procedure.base_price = payload.base_price
     if payload.currency is not None:
-        procedure.currency = payload.currency.upper()
+        procedure.currency = payload.currency
     procedure.updated_at = utcnow()
     try:
         await db.flush()

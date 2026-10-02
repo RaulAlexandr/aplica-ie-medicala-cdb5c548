@@ -188,7 +188,7 @@ async def test_postgresql_upgrade_from_0001_preserves_valid_records():
     try:
         assert returncode == 0
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "c2195d701d56"
         assert await connection.fetchval("SELECT count(*) FROM patients") == 1
         assert await connection.fetchval("SELECT count(*) FROM patient_revisions") == 0
         assert await connection.fetchval("SELECT count(*) FROM users WHERE created_at IS NULL OR updated_at IS NULL") == 0
@@ -208,7 +208,7 @@ async def test_postgresql_upgrade_from_0002_preserves_clinical_history():
     try:
         assert returncode == 0
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "c2195d701d56"
         assert await connection.fetchval("SELECT count(*) FROM clinics") == 1
         assert await connection.fetchval("SELECT count(*) FROM users") == 1
         assert await connection.fetchval("SELECT count(*) FROM rooms") == 1
@@ -255,7 +255,7 @@ async def test_postgresql_empty_database_upgrade_reaches_corrected_head():
         result = await asyncio.to_thread(subprocess.run, ["alembic", "upgrade", "head"], cwd=os.path.dirname(__file__) + "/..", env=env, capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "c2195d701d56"
         assert await connection.fetchval("SELECT count(*) FROM information_schema.columns WHERE table_name = 'users' AND column_name IN ('created_at', 'updated_at')") == 2
         await connection.close()
     finally:

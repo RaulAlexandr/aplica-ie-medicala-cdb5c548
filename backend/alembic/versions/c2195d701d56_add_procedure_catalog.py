@@ -1,8 +1,8 @@
 """add_procedure_catalog"""
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
+from alembic import op
 
 revision = 'c2195d701d56'
 down_revision = '0003_clinic_setup'

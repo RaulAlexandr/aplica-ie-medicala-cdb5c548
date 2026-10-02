@@ -137,7 +137,7 @@ function Appointments({ user }: { user: User }) {
   </>;
 }
 
-function ProcedureForm({ initial, onSaved }: { initial?: ProcedureCatalog; onSaved: (procedure: ProcedureCatalog) => void }) {
+function ProcedureForm({ initial, onSaved, onCancel }: { initial?: ProcedureCatalog; onSaved: (procedure: ProcedureCatalog) => void; onCancel: () => void }) {
   const [form, setForm] = useState<{ code: string; name: string; description: string; category: string; default_duration_minutes: number; base_price: string; currency: string }>({
     code: initial?.code ?? '',
     name: initial?.name ?? '',
@@ -147,50 +147,131 @@ function ProcedureForm({ initial, onSaved }: { initial?: ProcedureCatalog; onSav
     base_price: initial?.base_price ?? '',
     currency: initial?.currency ?? 'RON'
   });
+  useEffect(() => {
+    if (initial) {
+      setForm({
+        code: initial.code ?? '',
+        name: initial.name ?? '',
+        description: initial.description ?? '',
+        category: initial.category ?? '',
+        default_duration_minutes: initial.default_duration_minutes ?? 30,
+        base_price: initial.base_price ?? '',
+        currency: initial.currency ?? 'RON'
+      });
+    } else {
+      setForm({
+        code: '',
+        name: '',
+        description: '',
+        category: '',
+        default_duration_minutes: 30,
+        base_price: '',
+        currency: 'RON'
+      });
+    }
+  }, [initial]);
   const mutation = useMutation({ mutationFn: async () => { const payload = { ...form, base_price: form.base_price }; return initial ? updateProcedure(initial.id, payload) : createProcedure(payload); }, onSuccess: onSaved });
   const set = (key: keyof typeof form, value: string | number) => setForm(current => ({ ...current, [key]: value }));
   return <form className="card" onSubmit={e => { e.preventDefault(); mutation.mutate(); }}>
     <h2>{initial ? 'Edit procedure' : 'New procedure'}</h2>
     <div className="grid two">
-      <label>Code<input required value={form.code ?? ''} onChange={e => set('code', e.target.value)} /></label>
-      <label>Name<input required value={form.name ?? ''} onChange={e => set('name', e.target.value)} /></label>
-      <label>Category<input value={form.category ?? ''} onChange={e => set('category', e.target.value)} /></label>
-      <label>Currency<input required value={form.currency ?? 'RON'} onChange={e => set('currency', e.target.value)} /></label>
-      <label>Duration (minutes)<input type="number" min={1} max={1440} required value={form.default_duration_minutes ?? 30} onChange={e => set('default_duration_minutes', Number(e.target.value))} /></label>
-      <label>Base price<input type="text" inputMode="decimal" pattern="[0-9]*\.?[0-9]*" required value={form.base_price ?? ''} onChange={e => set('base_price', e.target.value)} /></label>
+      <label>Code<input required value={form.code} onChange={e => set('code', e.target.value)} /></label>
+      <label>Name<input required value={form.name} onChange={e => set('name', e.target.value)} /></label>
+      <label>Category<input value={form.category} onChange={e => set('category', e.target.value)} /></label>
+      <label>Currency<input required value={form.currency} onChange={e => set('currency', e.target.value)} /></label>
+      <label>Duration (minutes)<input type="number" min={1} max={1440} required value={form.default_duration_minutes} onChange={e => set('default_duration_minutes', Number(e.target.value))} /></label>
+      <label>Base price<input type="text" inputMode="decimal" pattern="[0-9]*\.?[0-9]*" required value={form.base_price} onChange={e => set('base_price', e.target.value)} /></label>
     </div>
-    <label>Description<textarea value={form.description ?? ''} onChange={e => set('description', e.target.value)} /></label>
+    <label>Description<textarea value={form.description} onChange={e => set('description', e.target.value)} /></label>
     {mutation.isError && <ErrorState error={mutation.error} />}
-    <button disabled={mutation.isPending}>{mutation.isPending ? 'Saving\u2026' : 'Save procedure'}</button>
+    <div className="form-actions">
+      <button type="button" className="secondary" onClick={onCancel} disabled={mutation.isPending}>Cancel</button>
+      <button disabled={mutation.isPending}>{mutation.isPending ? 'Saving\u2026' : 'Save procedure'}</button>
+    </div>
   </form>;
 }
 
 function Procedures({ user }: { user: User }) {
   const [search, setSearch] = useState('');
-  const [activeOnly, setActiveOnly] = useState(true);
+  const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [page, setPage] = useState(0);
+  const [limit, setLimit] = useState(50);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ProcedureCatalog | undefined>(undefined);
   const client = useQueryClient();
-  const query = useQuery({ queryKey: ['procedures', search, activeOnly], queryFn: () => listProcedures(search || undefined, activeOnly, 100, 0) });
-  const activateMutation = useMutation({ mutationFn: activateProcedure, onSuccess: () => { client.invalidateQueries({ queryKey: ['procedures'] }); }, onError: error => setShowForm(false) });
-  const deactivateMutation = useMutation({ mutationFn: deactivateProcedure, onSuccess: () => { client.invalidateQueries({ queryKey: ['procedures'] }); }, onError: error => setShowForm(false) });
+  const query = useQuery({
+    queryKey: ['procedures', search, activeFilter, page, limit],
+    queryFn: () => listProcedures(search || undefined, activeFilter === 'active', limit, page * limit)
+  });
+  const countQuery = useQuery({
+    queryKey: ['procedures-count', search, activeFilter],
+    queryFn: () => countProcedures(search || undefined, activeFilter === 'active')
+  });
+  const activateMutation = useMutation({
+    mutationFn: activateProcedure,
+    onSuccess: () => { client.invalidateQueries({ queryKey: ['procedures'] }); },
+    onError: (error) => { client.invalidateQueries({ queryKey: ['procedures'] }); }
+  });
+  const deactivateMutation = useMutation({
+    mutationFn: deactivateProcedure,
+    onSuccess: () => { client.invalidateQueries({ queryKey: ['procedures'] }); },
+    onError: (error) => { client.invalidateQueries({ queryKey: ['procedures'] }); }
+  });
   const canEdit = managementRoles.includes(user.role);
+
+  useEffect(() => {
+    setPage(0);
+  }, [search, activeFilter]);
+
+  const handleActivate = (id: string) => {
+    activateMutation.mutate(id, {
+      onSuccess: () => {},
+      onError: (error) => {}
+    });
+  };
+
+  const handleDeactivate = (id: string) => {
+    deactivateMutation.mutate(id, {
+      onSuccess: () => {},
+      onError: (error) => {}
+    });
+  };
+
+  const totalPages = query.data ? Math.ceil(query.data.length / limit) : 0;
+
   return <>
     <header><div><p className="eyebrow">PROCEDURE CATALOG</p><h1>Procedure catalog</h1></div>{canEdit && <button onClick={() => { setShowForm(!showForm); setEditing(undefined); }}>{showForm ? 'Close' : 'New procedure'}</button>}</header>
-    {showForm && <ProcedureForm initial={editing} onSaved={() => { setShowForm(false); setEditing(undefined); client.invalidateQueries({ queryKey: ['procedures'] }); }} />}
+    {showForm && <ProcedureForm key={editing?.id ?? 'new'} initial={editing} onSaved={() => { setShowForm(false); setEditing(undefined); client.invalidateQueries({ queryKey: ['procedures'] }); }} onCancel={() => { setShowForm(false); setEditing(undefined); }} />}
     <section className="card">
       <label>Search procedures<input placeholder="Code, name, category or description" value={search} onChange={e => setSearch(e.target.value)} /></label>
-      <label><input type="checkbox" checked={activeOnly} onChange={e => setActiveOnly(e.target.checked)} /> Show active only</label>
+      <label>Filter:
+        <select value={activeFilter} onChange={e => setActiveFilter(e.target.value as 'all' | 'active' | 'inactive')}>
+          <option value="all">All</option>
+          <option value="active">Active only</option>
+          <option value="inactive">Inactive only</option>
+        </select>
+      </label>
       <QueryState loading={query.isLoading} empty={!query.isLoading && !query.isError && query.data?.length === 0} error={query.error} />
-      {!query.isLoading && !query.isError && query.data && <div className="list">
-        {query.data.map(p => <article key={p.id} className="list-row">
-          <span><strong>{p.code}</strong> - {p.name}<br /><span className="muted">{p.category || 'No category'} \u00b7 {p.default_duration_minutes} min \u00b7 {p.base_price} {p.currency} \u00b7 {p.is_active ? 'Active' : 'Inactive'}</span></span>
-          {canEdit && <>
-            <button className="secondary" onClick={() => { setEditing(p); setShowForm(true); }}>Edit</button>
-            {p.is_active ? <button className="secondary" onClick={() => deactivateMutation.mutate(p.id)}>Deactivate</button> : <button className="secondary" onClick={() => activateMutation.mutate(p.id)}>Activate</button>}
-          </>}
-        </article>)}
-      </div>}
+      {!query.isLoading && !query.isError && query.data && <>
+        <div className="list">
+          {query.data.map(p => <article key={p.id} className="list-row">
+            <span><Link to={`/procedures/${p.id}`}><strong>{p.code}</strong> - {p.name}</Link><br /><span className="muted">{p.category || 'No category'} \u00b7 {p.default_duration_minutes} min \u00b7 {p.base_price} {p.currency} \u00b7 {p.is_active ? 'Active' : 'Inactive'}</span></span>
+            {canEdit && <>
+              <button className="secondary" onClick={() => { setEditing(p); setShowForm(true); }}>Edit</button>
+              {p.is_active ? <button className="secondary" onClick={() => handleDeactivate(p.id)} disabled={deactivateMutation.isPending}>Deactivate</button> : <button className="secondary" onClick={() => handleActivate(p.id)} disabled={activateMutation.isPending}>Activate</button>}
+            </>}
+          </article>)}
+        </div>
+        {countQuery.data !== undefined && <div className="pagination">
+          <button className="secondary" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</button>
+          <span>Page {page + 1} of {Math.ceil(countQuery.data / limit)}</span>
+          <button className="secondary" disabled={(page + 1) * limit >= countQuery.data} onClick={() => setPage(p => p + 1)}>Next</button>
+        </div>}
+      </>}
+      {activateMutation.isError && <ErrorState error={activateMutation.error} />}
+      {deactivateMutation.isError && <ErrorState error={deactivateMutation.error} />}
+      {activateMutation.isPending && <p className="muted">Activating...</p>}
+      {deactivateMutation.isPending && <p className="muted">Deactivating...</p>}
     </section>
   </>;
 }
@@ -334,17 +415,11 @@ export function StaffOnboarding() {
     <section className="card">
       <h2>Active and inactive staff</h2>
       {staff.isError && <ErrorState error={staff.error} />}
-      {staff.data?.map(person => <article className="list-row" key={person.id}>
-        <span><Link to={`/staff/${person.id}`}><strong>{person.full_name}</strong></Link><br />{person.email} \u00b7 {person.role} \u00b7 {person.is_active ? 'Active' : 'Inactive'}</span>
-        {person.is_active && !managementRoles.includes(person.role) && <button className="secondary" onClick={() => deactivate.mutate(person.id)}>Deactivate</button>}
-      </article>)}
+      {staff.data?.map(person => <article className="list-row" key={person.id}><span><Link to={`/staff/${person.id}`}><strong>{person.full_name}</strong></Link><br />{person.email} \u00b7 {person.role} \u00b7 {person.is_active ? 'Active' : 'Inactive'}</span>{person.is_active && !managementRoles.includes(person.role) && <button className="secondary" onClick={() => deactivate.mutate(person.id)}>Deactivate</button>}</article>)}
     </section>
     <section className="card">
       <h2>Invitation history</h2>
-      {invitations.data?.map(inv => <article className="list-row" key={inv.id}>
-        <span><strong>{inv.full_name}</strong> \u00b7 {inv.role}<br /><span className="muted">{inv.accepted_at ? 'Accepted' : inv.revoked_at ? 'Revoked' : `Expires ${new Date(inv.expires_at).toLocaleString()}`}</span></span>
-        {!inv.accepted_at && !inv.revoked_at && <><button className="secondary" onClick={() => reissue.mutate(inv.id)}>Reissue</button><button className="secondary" onClick={() => revoke.mutate(inv.id)}>Revoke</button></>}
-      </article>)}
+      {invitations.data?.map(inv => <article className="list-row" key={inv.id}><span><strong>{inv.full_name}</strong> \u00b7 {inv.role}<br /><span className="muted">{inv.accepted_at ? 'Accepted' : inv.revoked_at ? 'Revoked' : `Expires ${new Date(inv.expires_at).toLocaleString()}`}</span></span>{!inv.accepted_at && !inv.revoked_at && <><button className="secondary" onClick={() => reissue.mutate(inv.id)}>Reissue</button><button className="secondary" onClick={() => revoke.mutate(inv.id)}>Revoke</button></>}</article>)}
     </section>
   </>;
 }
