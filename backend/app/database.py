@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -9,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     TypeDecorator,
@@ -181,6 +183,28 @@ class AuditEvent(Base):
     entity_id: Mapped[UUID] = mapped_column(UUIDType, nullable=False)
     action: Mapped[str] = mapped_column(String(40), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class ProcedureCatalog(Base):
+    __tablename__ = "procedure_catalog"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(40), nullable=False)
+    code_lower: Mapped[str] = mapped_column(String(40), nullable=False)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500))
+    category: Mapped[str | None] = mapped_column(String(80))
+    default_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="RON")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "code_lower", name="uq_procedure_catalog_clinic_code"),
+        Index("ix_procedure_catalog_clinic_active", "clinic_id", "is_active"),
+        Index("ix_procedure_catalog_clinic_name", "clinic_id", "name"),
+    )
 
 
 engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
