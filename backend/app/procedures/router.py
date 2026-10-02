@@ -55,9 +55,9 @@ def validate_price_value(value: object) -> Decimal:
             raise ValueError("Price must be a valid decimal number") from exc
     elif isinstance(value, (int, float)):
         # JSON numbers come through as int/float - reject for exact decimal safety
-        raise ValueError("Price must be provided as a string for exact decimal representation")
+        raise TypeError("Price must be provided as a string for exact decimal representation")
     else:
-        raise ValueError("Price must be a decimal number")
+        raise TypeError("Price must be a decimal number")
     
     # Check for non-finite values
     if value.is_infinite() or value.is_nan():
