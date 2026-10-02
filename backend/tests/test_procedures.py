@@ -249,27 +249,33 @@ async def test_procedure_search_and_filtering(client):
         "is_active": False
     })
 
-    # Search by name
-    search_resp = await client.get("/api/procedures", headers=headers, params={"search": "Root", "active_only": False})
+    # Search by name (across all active states)
+    search_resp = await client.get("/api/procedures", headers=headers, params={"search": "Root"})
     assert search_resp.status_code == 200
     assert len(search_resp.json()) == 1
     assert search_resp.json()[0]["name"] == "Root Canal"
 
     # Search by category
-    search_resp = await client.get("/api/procedures", headers=headers, params={"search": "Surgery", "active_only": False})
+    search_resp = await client.get("/api/procedures", headers=headers, params={"search": "Surgery"})
     assert search_resp.status_code == 200
     assert len(search_resp.json()) == 1
     assert search_resp.json()[0]["name"] == "Extraction"
 
-    # Filter active only (default)
-    active_resp = await client.get("/api/procedures", headers=headers, params={"active_only": True})
+    # Filter active only
+    active_resp = await client.get("/api/procedures", headers=headers, params={"active": True})
     assert active_resp.status_code == 200
     results = active_resp.json()
     assert len(results) == 2
     assert all(p["is_active"] for p in results)
 
-    # Include inactive
-    all_resp = await client.get("/api/procedures", headers=headers, params={"active_only": False})
+    # Filter inactive only
+    inactive_resp = await client.get("/api/procedures", headers=headers, params={"active": False})
+    assert inactive_resp.status_code == 200
+    assert len(inactive_resp.json()) == 1
+    assert all(not p["is_active"] for p in inactive_resp.json())
+
+    # Include all (no active filter - omit the parameter)
+    all_resp = await client.get("/api/procedures", headers=headers)
     assert all_resp.status_code == 200
     assert len(all_resp.json()) == 3
 

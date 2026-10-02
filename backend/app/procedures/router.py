@@ -55,9 +55,9 @@ def validate_price_value(value: object) -> Decimal:
             raise ValueError("Price must be a valid decimal number") from exc
     elif isinstance(value, (int, float)):
         # JSON numbers come through as int/float - reject for exact decimal safety
-        raise TypeError("Price must be provided as a string for exact decimal representation")
+        raise ValueError("Price must be provided as a string for exact decimal representation")
     else:
-        raise TypeError("Price must be a decimal number")
+        raise ValueError("Price must be a decimal number")
     
     # Check for non-finite values
     if value.is_infinite() or value.is_nan():
@@ -197,13 +197,15 @@ def response(procedure: ProcedureCatalog) -> ProcedureCatalogResponse:
 @router.get("/count", response_model=int)
 async def count_procedures(
     search: str | None = Query(default=None, max_length=100),
-    active_only: bool = Query(default=True),
+    active: bool | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles(*STAFF_ROLES)),
 ) -> int:
     query = select(func.count()).select_from(ProcedureCatalog).where(ProcedureCatalog.clinic_id == user.clinic_id)
-    if active_only:
+    if active is True:
         query = query.where(ProcedureCatalog.is_active.is_(True))
+    elif active is False:
+        query = query.where(ProcedureCatalog.is_active.is_(False))
     if search:
         term = f"%{search.strip()}%"
         query = query.where(
@@ -220,15 +222,17 @@ async def count_procedures(
 @router.get("", response_model=list[ProcedureCatalogResponse])
 async def list_procedures(
     search: str | None = Query(default=None, max_length=100),
-    active_only: bool = Query(default=True),
+    active: bool | None = Query(default=None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles(*STAFF_ROLES)),
 ) -> list[ProcedureCatalogResponse]:
     query = select(ProcedureCatalog).where(ProcedureCatalog.clinic_id == user.clinic_id).order_by(ProcedureCatalog.is_active.desc(), ProcedureCatalog.code).offset(offset).limit(limit)
-    if active_only:
+    if active is True:
         query = query.where(ProcedureCatalog.is_active.is_(True))
+    elif active is False:
+        query = query.where(ProcedureCatalog.is_active.is_(False))
     if search:
         term = f"%{search.strip()}%"
         query = query.where(

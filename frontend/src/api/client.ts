@@ -158,8 +158,8 @@ export async function deactivateStaff(id: string) { return (await api.post<{ sta
 export async function acceptInvitation(token: string, password: string) { return (await api.post<Staff>('/staff/invitations/accept', { password }, { params: { token } })).data; }
 export async function listAppointments() { return (await api.get<Appointment[]>('/appointments')).data; }
 export async function createAppointment(input: Omit<Appointment, 'id' | 'clinic_id' | 'ends_at'>) { return (await api.post<Appointment>('/appointments', input)).data; }
-export async function listProcedures(search?: string, activeOnly?: boolean, limit = 50, offset = 0) { return (await api.get<ProcedureCatalog[]>('/procedures', { params: { ...(search ? { search } : {}), active_only: activeOnly, limit, offset } })).data; }
-export async function countProcedures(search?: string, activeOnly?: boolean) { return (await api.get<number>('/procedures/count', { params: { ...(search ? { search } : {}), active_only: activeOnly } })).data; }
+export async function listProcedures(search?: string, active?: boolean | null, limit = 50, offset = 0) { return (await api.get<ProcedureCatalog[]>('/procedures', { params: { ...(search ? { search } : {}), active, limit, offset } })).data; }
+export async function countProcedures(search?: string, active?: boolean | null) { return (await api.get<number>('/procedures/count', { params: { ...(search ? { search } : {}), active } })).data; }
 export async function getProcedure(id: string) { return (await api.get<ProcedureCatalog>(`/procedures/${id}`)).data; }
 export async function createProcedure(input: Omit<ProcedureCatalog, 'id' | 'clinic_id' | 'created_at' | 'updated_at' | 'is_active' | 'base_price'> & { base_price: string }) { return (await api.post<ProcedureCatalog>('/procedures', input)).data; }
 export async function updateProcedure(id: string, input: Partial<Omit<ProcedureCatalog, 'id' | 'clinic_id' | 'created_at' | 'updated_at'>>) { return (await api.patch<ProcedureCatalog>(`/procedures/${id}`, input)).data; }

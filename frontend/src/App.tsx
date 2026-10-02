@@ -1,7 +1,7 @@
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { acceptInvitation, activateProcedure, apiErrorMessage, Clinic, createAppointment, createInvitation, createPatient, createProcedure, createRoom, countPatients, deactivateProcedure, deactivateStaff, Doctor, getClinic, getPatient, getProcedure, getStaff, Invitation, listAppointments, listDoctors, listInvitations, listPatients, listProcedures, listRooms, listStaff, login, logout, me, Patient, ProcedureCatalog, register, reissueInvitation, revokeInvitation, Room, Staff, updateClinic, updatePatient, updateProcedure, updateRoom, User } from './api/client';
+import { acceptInvitation, activateProcedure, apiErrorMessage, Clinic, countPatients, countProcedures, createAppointment, createInvitation, createPatient, createProcedure, createRoom, deactivateProcedure, deactivateStaff, Doctor, getClinic, getPatient, getProcedure, getStaff, Invitation, listAppointments, listDoctors, listInvitations, listPatients, listProcedures, listRooms, listStaff, login, logout, me, Patient, ProcedureCatalog, register, reissueInvitation, revokeInvitation, Room, Staff, updateClinic, updatePatient, updateProcedure, updateRoom, User } from './api/client';
 
 const managementRoles = ['clinic_manager', 'administrator'];
 const staffRoles = ['clinic_manager', 'doctor', 'assistant', 'reception', 'administrator'];
@@ -201,21 +201,21 @@ function Procedures({ user }: { user: User }) {
   const client = useQueryClient();
   const query = useQuery({
     queryKey: ['procedures', search, activeFilter, page, limit],
-    queryFn: () => listProcedures(search || undefined, activeFilter === 'active', limit, page * limit)
+    queryFn: () => listProcedures(search || undefined, activeFilter === 'all' ? null : activeFilter === 'active', limit, page * limit)
   });
   const countQuery = useQuery({
     queryKey: ['procedures-count', search, activeFilter],
-    queryFn: () => countProcedures(search || undefined, activeFilter === 'active')
+    queryFn: () => countProcedures(search || undefined, activeFilter === 'all' ? null : activeFilter === 'active')
   });
   const activateMutation = useMutation({
     mutationFn: activateProcedure,
-    onSuccess: () => { client.invalidateQueries({ queryKey: ['procedures'] }); },
-    onError: (error) => { client.invalidateQueries({ queryKey: ['procedures'] }); }
+    onSuccess: () => { client.invalidateQueries({ queryKey: ['procedures', 'procedures-count'] }); },
+    onError: (error) => { client.invalidateQueries({ queryKey: ['procedures', 'procedures-count'] }); }
   });
   const deactivateMutation = useMutation({
     mutationFn: deactivateProcedure,
-    onSuccess: () => { client.invalidateQueries({ queryKey: ['procedures'] }); },
-    onError: (error) => { client.invalidateQueries({ queryKey: ['procedures'] }); }
+    onSuccess: () => { client.invalidateQueries({ queryKey: ['procedures', 'procedures-count'] }); },
+    onError: (error) => { client.invalidateQueries({ queryKey: ['procedures', 'procedures-count'] }); }
   });
   const canEdit = managementRoles.includes(user.role);
 
@@ -241,7 +241,7 @@ function Procedures({ user }: { user: User }) {
 
   return <>
     <header><div><p className="eyebrow">PROCEDURE CATALOG</p><h1>Procedure catalog</h1></div>{canEdit && <button onClick={() => { setShowForm(!showForm); setEditing(undefined); }}>{showForm ? 'Close' : 'New procedure'}</button>}</header>
-    {showForm && <ProcedureForm key={editing?.id ?? 'new'} initial={editing} onSaved={() => { setShowForm(false); setEditing(undefined); client.invalidateQueries({ queryKey: ['procedures'] }); }} onCancel={() => { setShowForm(false); setEditing(undefined); }} />}
+    {showForm && <ProcedureForm key={editing?.id ?? 'new'} initial={editing} onSaved={() => { setShowForm(false); setEditing(undefined); client.invalidateQueries({ queryKey: ['procedures', 'procedures-count'] }); }} onCancel={() => { setShowForm(false); setEditing(undefined); }} />}
     <section className="card">
       <label>Search procedures<input placeholder="Code, name, category or description" value={search} onChange={e => setSearch(e.target.value)} /></label>
       <label>Filter:
