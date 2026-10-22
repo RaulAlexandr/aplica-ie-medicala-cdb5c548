@@ -17,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -204,6 +205,129 @@ class ProcedureCatalog(Base):
         UniqueConstraint("clinic_id", "code_lower", name="uq_procedure_catalog_clinic_code"),
         Index("ix_procedure_catalog_clinic_active", "clinic_id", "is_active"),
         Index("ix_procedure_catalog_clinic_name", "clinic_id", "name"),
+    )
+
+
+class PerformedProcedure(Base):
+    __tablename__ = "performed_procedures"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    appointment_id: Mapped[UUID] = mapped_column(ForeignKey("appointments.id"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    procedure_catalog_id: Mapped[UUID] = mapped_column(ForeignKey("procedure_catalog.id"), nullable=False, index=True)
+    executed_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    procedure_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    procedure_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    procedure_base_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    procedure_currency: Mapped[str] = mapped_column(String(3), nullable=False, default="RON")
+    procedure_default_duration: Mapped[int] = mapped_column(Integer, nullable=False)
+    tooth_fdi: Mapped[str | None] = mapped_column(String(3), index=True)
+    tooth_surface: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    current_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    segments: Mapped[list["ProcedureExecutionSegment"]] = relationship(back_populates="performed_procedure", cascade="all, delete-orphan")
+    revisions: Mapped[list["PerformedProcedureRevision"]] = relationship(back_populates="performed_procedure", cascade="all, delete-orphan")
+    __table_args__ = (
+        Index("ix_performed_procedures_appointment", "appointment_id"),
+        Index("ix_performed_procedures_patient", "patient_id"),
+        Index("ix_performed_procedures_executor", "executed_by_id"),
+        Index("ix_performed_procedures_status", "clinic_id", "status"),
+    )
+
+
+class ProcedureExecutionSegment(Base):
+    __tablename__ = "procedure_execution_segments"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    performed_procedure_id: Mapped[UUID] = mapped_column(ForeignKey("performed_procedures.id", ondelete="CASCADE"), nullable=False, index=True)
+    segment_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    performed_procedure: Mapped["PerformedProcedure"] = relationship(back_populates="segments")
+    __table_args__ = (
+        Index("ix_segments_procedure", "performed_procedure_id"),
+        Index("ix_segments_started", "started_at"),
+    )
+
+
+class PerformedProcedureRevision(Base):
+    __tablename__ = "performed_procedure_revisions"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    performed_procedure_id: Mapped[UUID] = mapped_column(ForeignKey("performed_procedures.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    field: Mapped[str] = mapped_column(String(64), nullable=False)
+    previous_value: Mapped[str | None] = mapped_column(Text)
+    new_value: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    performed_procedure: Mapped["PerformedProcedure"] = relationship(back_populates="revisions")
+
+
+class ClinicalNote(Base):
+    __tablename__ = "clinical_notes"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    appointment_id: Mapped[UUID | None] = mapped_column(ForeignKey("appointments.id", ondelete="CASCADE"), index=True)
+    author_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    note_type: Mapped[str] = mapped_column(String(30), nullable=False, default="note")
+    title: Mapped[str | None] = mapped_column(String(200))
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    tooth_fdi: Mapped[str | None] = mapped_column(String(3), index=True)
+    tooth_surface: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    is_alert: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revisions: Mapped[list["ClinicalNoteRevision"]] = relationship(back_populates="note", cascade="all, delete-orphan")
+    __table_args__ = (
+        Index("ix_clinical_notes_patient", "patient_id"),
+        Index("ix_clinical_notes_appointment", "appointment_id"),
+        Index("ix_clinical_notes_author", "author_id"),
+        Index("ix_clinical_notes_clinic_status", "clinic_id", "status"),
+    )
+
+
+class ClinicalNoteRevision(Base):
+    __tablename__ = "clinical_note_revisions"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    clinical_note_id: Mapped[UUID] = mapped_column(ForeignKey("clinical_notes.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    field: Mapped[str] = mapped_column(String(64), nullable=False)
+    previous_value: Mapped[str | None] = mapped_column(Text)
+    new_value: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False, index=True)
+    note: Mapped["ClinicalNote"] = relationship(back_populates="revisions")
+
+
+class PatientTimelineEvent(Base):
+    __tablename__ = "patient_timeline_events"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    entity_type: Mapped[str | None] = mapped_column(String(50))
+    entity_id: Mapped[UUID | None] = mapped_column(UUIDType)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    actor_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id"))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    source: Mapped[str | None] = mapped_column(String(50))
+    metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    __table_args__ = (
+        Index("ix_timeline_patient", "patient_id"),
+        Index("ix_timeline_clinic", "clinic_id"),
+        Index("ix_timeline_occurred", "occurred_at"),
+        Index("ix_timeline_type", "clinic_id", "event_type"),
     )
 
 
