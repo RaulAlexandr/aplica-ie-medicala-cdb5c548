@@ -510,7 +510,7 @@ async def create_performed_procedure(
         appointment_id=appointment.id,
         patient_id=appointment.patient_id,
         procedure_catalog_id=catalog.id,
-        executed_by_id=user.id,
+        executed_by_id=appointment.doctor_id,
         procedure_code=catalog.code,
         procedure_name=catalog.name,
         procedure_base_price=catalog.base_price,
