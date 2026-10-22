@@ -718,35 +718,15 @@ async def get_patient_timeline(
     if not patient:
         raise HTTPException(404, "Patient not found or access denied")
 
-    # Build subquery to filter out clinical note draft events that the user cannot access
-    # First, build the filter conditions for clinical note events
-    clinical_note_filter = or_(
-        # Not a clinical note event
-        PatientTimelineEvent.entity_type != "clinical_note",
-        # Clinical note event is not from clinical_note source
-        PatientTimelineEvent.source != "clinical_note",
-        # Clinical note event that the user can access (finalized or draft by user)
-        and_(
-            PatientTimelineEvent.entity_type == "clinical_note",
-            PatientTimelineEvent.source == "clinical_note",
-            # Either the note is finalized or it's a draft by this user
-            or_(
-                # Note is finalized
-                and_(
-                    PatientTimelineEvent.entity_id == ClinicalNote.id,
-                    ClinicalNote.status != "draft"
-                ),
-                # Note is a draft by this user
-                and_(
-                    PatientTimelineEvent.entity_id == ClinicalNote.id,
-                    ClinicalNote.status == "draft",
-                    ClinicalNote.author_id == user.id
-                )
-            )
-        )
-    )
+    # Build query to filter out clinical note draft events that the user cannot access
+    # We need to recognize clinical note events by entity_type, not just by source
+    # This prevents bypass: entity_type="clinical_note" with different source
 
-    # Build base query with join to ClinicalNote for filtering
+    # For clinical note events, we need to check if the user can access the note
+    # For other events, we can include them as-is
+    # We use an OUTER JOIN to ClinicalNote and filter in the WHERE clause
+
+    # Build base query with LEFT JOIN to ClinicalNote for filtering
     query = select(PatientTimelineEvent).outerjoin(
         ClinicalNote,
         and_(
@@ -756,7 +736,25 @@ async def get_patient_timeline(
     ).where(
         PatientTimelineEvent.patient_id == patient_id,
         PatientTimelineEvent.clinic_id == user.clinic_id,
-        clinical_note_filter
+        # Filter out clinical note drafts that the user cannot access
+        # Include: non-clinical events OR clinical events that are accessible
+        or_(
+            # Not a clinical note event - include all
+            PatientTimelineEvent.entity_type != "clinical_note",
+            # Clinical note event - check access via the joined ClinicalNote
+            and_(
+                PatientTimelineEvent.entity_type == "clinical_note",
+                or_(
+                    # Note is finalized (accessible to all)
+                    ClinicalNote.status != "draft",
+                    # Note is a draft but user is the author
+                    and_(
+                        ClinicalNote.status == "draft",
+                        ClinicalNote.author_id == user.id
+                    )
+                )
+            )
+        )
     )
 
     if event_type and event_type in TIMELINE_EVENT_TYPES:
@@ -866,26 +864,36 @@ async def get_patient_record(
             "updated_at": proc.updated_at.isoformat(),
         })
 
-    # Get timeline
-    timeline_query = select(PatientTimelineEvent).where(
+    # Get timeline - filter clinical note drafts that user cannot access
+    # Use JOIN to filter in SQL to ensure pagination works correctly
+    timeline_query = select(PatientTimelineEvent).outerjoin(
+        ClinicalNote,
+        and_(
+            PatientTimelineEvent.entity_id == ClinicalNote.id,
+            ClinicalNote.clinic_id == user.clinic_id
+        )
+    ).where(
         PatientTimelineEvent.patient_id == patient_id,
-        PatientTimelineEvent.clinic_id == user.clinic_id
+        PatientTimelineEvent.clinic_id == user.clinic_id,
+        # Filter out clinical note drafts that the user cannot access
+        or_(
+            PatientTimelineEvent.entity_type != "clinical_note",
+            and_(
+                PatientTimelineEvent.entity_type == "clinical_note",
+                or_(
+                    ClinicalNote.status != "draft",
+                    and_(
+                        ClinicalNote.status == "draft",
+                        ClinicalNote.author_id == user.id
+                    )
+                )
+            )
+        )
     ).order_by(desc(PatientTimelineEvent.occurred_at))
 
     timeline = (await db.scalars(timeline_query)).all()
     timeline_list = []
     for event in timeline:
-        # Skip clinical note draft events that the user cannot access
-        if event.entity_type == "clinical_note" and event.source == "clinical_note":
-            note = await db.scalar(
-                select(ClinicalNote).where(
-                    ClinicalNote.id == event.entity_id,
-                    ClinicalNote.clinic_id == user.clinic_id
-                )
-            )
-            if note and note.status == "draft" and note.author_id != user.id:
-                continue
-
         actor_name = None
         if event.actor_id:
             actor_name = await _get_user_name(db, event.actor_id)

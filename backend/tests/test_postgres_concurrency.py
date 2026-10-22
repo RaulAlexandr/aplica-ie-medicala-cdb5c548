@@ -544,23 +544,14 @@ async def test_closure_vs_create_concurrent(postgres_context):
     """Test concurrent closure and procedure creation - closure should win if it starts first."""
     client, _sessions, _target_url, _db_name = postgres_context
 
-    # Setup: Create clinic, patient, doctor, appointment
-    clinic_resp = await client.post("/api/clinics", json={
-        "name": "Test Clinic",
-        "address": "Test Address",
-        "phone": "1234567890",
-        "email": "test@clinic.com"
-    })
-    assert clinic_resp.status_code == 201
-
     # Register as clinic manager
     auth_resp = await client.post("/api/auth/register", json={
         "clinic_name": "Test Clinic",
         "full_name": "Manager User",
-        "email": "manager@test.com",
+        "email": "manager_closure_create@test.com",
         "password": "testpass123"
     })
-    assert auth_resp.status_code == 201
+    assert auth_resp.status_code == 201, f"Registration failed: {auth_resp.status_code}"
     tokens = auth_resp.json()
     headers = {"Authorization": f"Bearer {tokens['access_token']}"}
 
@@ -569,16 +560,17 @@ async def test_closure_vs_create_concurrent(postgres_context):
         "first_name": "Test",
         "last_name": "Patient"
     })
-    assert patient_resp.status_code == 201
+    assert patient_resp.status_code == 201, f"Patient creation failed: {patient_resp.status_code}"
     patient_id = patient_resp.json()["id"]
 
     # Get doctor (manager is also a doctor in this context)
     me_resp = await client.get("/api/auth/me", headers=headers)
+    assert me_resp.status_code == 200, f"Get me failed: {me_resp.status_code}"
     doctor_id = me_resp.json()["id"]
 
     # Create room
     room_resp = await client.post("/api/rooms", headers=headers, json={"name": "Room 1"})
-    assert room_resp.status_code == 201
+    assert room_resp.status_code == 201, f"Room creation failed: {room_resp.status_code}"
     room_id = room_resp.json()["id"]
 
     # Create appointment
@@ -590,19 +582,29 @@ async def test_closure_vs_create_concurrent(postgres_context):
         "duration_minutes": 60,
         "appointment_type": "Consultation"
     })
-    assert appt_resp.status_code == 201
+    assert appt_resp.status_code == 201, f"Appointment creation failed: {appt_resp.status_code}"
     appt_id = appt_resp.json()["id"]
 
-    # Create procedure catalog
-    catalog_resp = await client.post("/api/procedure-catalog", headers=headers, json={
+    # Create procedure catalog using the correct endpoint
+    catalog_resp = await client.post("/api/procedures", headers=headers, json={
         "code": "TEST_CLOSURE_CREATE",
         "name": "Test Procedure",
         "base_price": 100.00,
         "currency": "RON",
         "default_duration_minutes": 30
     })
-    assert catalog_resp.status_code == 201
+    assert catalog_resp.status_code == 201, f"Catalog creation failed: {catalog_resp.status_code}, response: {catalog_resp.json()}"
     catalog_id = catalog_resp.json()["id"]
+
+    # Change appointment status to in_progress to allow closing transition
+    # Path: scheduled -> confirmed -> arrived -> in_progress
+    for status in ["confirmed", "arrived", "in_progress"]:
+        status_resp = await client.patch(
+            f"/api/appointments/{appt_id}/status",
+            headers=headers,
+            json={"status": status}
+        )
+        assert status_resp.status_code == 200, f"Status change to {status} failed: {status_resp.status_code}"
 
     # Create two separate clients for concurrent operations
     # Client 1 will try to close the appointment
@@ -667,23 +669,14 @@ async def test_closure_vs_start_concurrent(postgres_context):
     """Test concurrent closure and procedure start - closure should win if it starts first."""
     client, _sessions, _target_url, _db_name = postgres_context
 
-    # Setup: Create clinic, patient, doctor, appointment, procedure
-    clinic_resp = await client.post("/api/clinics", json={
-        "name": "Test Clinic",
-        "address": "Test Address",
-        "phone": "1234567890",
-        "email": "test@clinic.com"
-    })
-    assert clinic_resp.status_code == 201
-
     # Register as clinic manager
     auth_resp = await client.post("/api/auth/register", json={
         "clinic_name": "Test Clinic",
         "full_name": "Manager User",
-        "email": "manager2@test.com",
+        "email": "manager_closure_start@test.com",
         "password": "testpass123"
     })
-    assert auth_resp.status_code == 201
+    assert auth_resp.status_code == 201, f"Registration failed: {auth_resp.status_code}"
     tokens = auth_resp.json()
     headers = {"Authorization": f"Bearer {tokens['access_token']}"}
 
@@ -692,16 +685,17 @@ async def test_closure_vs_start_concurrent(postgres_context):
         "first_name": "Test",
         "last_name": "Patient"
     })
-    assert patient_resp.status_code == 201
+    assert patient_resp.status_code == 201, f"Patient creation failed: {patient_resp.status_code}"
     patient_id = patient_resp.json()["id"]
 
     # Get doctor
     me_resp = await client.get("/api/auth/me", headers=headers)
+    assert me_resp.status_code == 200, f"Get me failed: {me_resp.status_code}"
     doctor_id = me_resp.json()["id"]
 
     # Create room
     room_resp = await client.post("/api/rooms", headers=headers, json={"name": "Room 1"})
-    assert room_resp.status_code == 201
+    assert room_resp.status_code == 201, f"Room creation failed: {room_resp.status_code}"
     room_id = room_resp.json()["id"]
 
     # Create appointment
@@ -713,18 +707,18 @@ async def test_closure_vs_start_concurrent(postgres_context):
         "duration_minutes": 60,
         "appointment_type": "Consultation"
     })
-    assert appt_resp.status_code == 201
+    assert appt_resp.status_code == 201, f"Appointment creation failed: {appt_resp.status_code}"
     appt_id = appt_resp.json()["id"]
 
-    # Create procedure catalog
-    catalog_resp = await client.post("/api/procedure-catalog", headers=headers, json={
+    # Create procedure catalog using the correct endpoint
+    catalog_resp = await client.post("/api/procedures", headers=headers, json={
         "code": "TEST_CLOSURE_START",
         "name": "Test Procedure",
         "base_price": 100.00,
         "currency": "RON",
         "default_duration_minutes": 30
     })
-    assert catalog_resp.status_code == 201
+    assert catalog_resp.status_code == 201, f"Catalog creation failed: {catalog_resp.status_code}, response: {catalog_resp.json()}"
     catalog_id = catalog_resp.json()["id"]
 
     # Create procedure (pending)
@@ -734,6 +728,16 @@ async def test_closure_vs_start_concurrent(postgres_context):
     })
     assert proc_resp.status_code == 201
     proc_id = proc_resp.json()["id"]
+
+    # Change appointment status to in_progress to allow closing transition
+    # Path: scheduled -> confirmed -> arrived -> in_progress
+    for status in ["confirmed", "arrived", "in_progress"]:
+        status_resp = await client.patch(
+            f"/api/appointments/{appt_id}/status",
+            headers=headers,
+            json={"status": status}
+        )
+        assert status_resp.status_code == 200, f"Status change to {status} failed: {status_resp.status_code}"
 
     # Create two separate clients for concurrent operations
     client1 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
@@ -792,23 +796,14 @@ async def test_closure_vs_resume_concurrent(postgres_context):
     """Test concurrent closure and procedure resume - closure should win if it starts first."""
     client, _sessions, _target_url, _db_name = postgres_context
 
-    # Setup: Create clinic, patient, doctor, appointment, procedure
-    clinic_resp = await client.post("/api/clinics", json={
-        "name": "Test Clinic",
-        "address": "Test Address",
-        "phone": "1234567890",
-        "email": "test@clinic.com"
-    })
-    assert clinic_resp.status_code == 201
-
     # Register as clinic manager
     auth_resp = await client.post("/api/auth/register", json={
         "clinic_name": "Test Clinic",
         "full_name": "Manager User",
-        "email": "manager3@test.com",
+        "email": "manager_closure_resume@test.com",
         "password": "testpass123"
     })
-    assert auth_resp.status_code == 201
+    assert auth_resp.status_code == 201, f"Registration failed: {auth_resp.status_code}"
     tokens = auth_resp.json()
     headers = {"Authorization": f"Bearer {tokens['access_token']}"}
 
@@ -817,16 +812,17 @@ async def test_closure_vs_resume_concurrent(postgres_context):
         "first_name": "Test",
         "last_name": "Patient"
     })
-    assert patient_resp.status_code == 201
+    assert patient_resp.status_code == 201, f"Patient creation failed: {patient_resp.status_code}"
     patient_id = patient_resp.json()["id"]
 
     # Get doctor
     me_resp = await client.get("/api/auth/me", headers=headers)
+    assert me_resp.status_code == 200, f"Get me failed: {me_resp.status_code}"
     doctor_id = me_resp.json()["id"]
 
     # Create room
     room_resp = await client.post("/api/rooms", headers=headers, json={"name": "Room 1"})
-    assert room_resp.status_code == 201
+    assert room_resp.status_code == 201, f"Room creation failed: {room_resp.status_code}"
     room_id = room_resp.json()["id"]
 
     # Create appointment
@@ -838,18 +834,18 @@ async def test_closure_vs_resume_concurrent(postgres_context):
         "duration_minutes": 60,
         "appointment_type": "Consultation"
     })
-    assert appt_resp.status_code == 201
+    assert appt_resp.status_code == 201, f"Appointment creation failed: {appt_resp.status_code}"
     appt_id = appt_resp.json()["id"]
 
-    # Create procedure catalog
-    catalog_resp = await client.post("/api/procedure-catalog", headers=headers, json={
+    # Create procedure catalog using the correct endpoint
+    catalog_resp = await client.post("/api/procedures", headers=headers, json={
         "code": "TEST_CLOSURE_RESUME",
         "name": "Test Procedure",
         "base_price": 100.00,
         "currency": "RON",
         "default_duration_minutes": 30
     })
-    assert catalog_resp.status_code == 201
+    assert catalog_resp.status_code == 201, f"Catalog creation failed: {catalog_resp.status_code}, response: {catalog_resp.json()}"
     catalog_id = catalog_resp.json()["id"]
 
     # Create procedure (pending)
@@ -865,6 +861,16 @@ async def test_closure_vs_resume_concurrent(postgres_context):
     assert start_resp.status_code == 200
     pause_resp = await client.post(f"/api/performed-procedures/{proc_id}/pause", headers=headers)
     assert pause_resp.status_code == 200
+
+    # Change appointment status to in_progress to allow closing transition
+    # Path: scheduled -> confirmed -> arrived -> in_progress
+    for status in ["confirmed", "arrived", "in_progress"]:
+        status_resp = await client.patch(
+            f"/api/appointments/{appt_id}/status",
+            headers=headers,
+            json={"status": status}
+        )
+        assert status_resp.status_code == 200, f"Status change to {status} failed: {status_resp.status_code}"
 
     # Create two separate clients for concurrent operations
     client1 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
