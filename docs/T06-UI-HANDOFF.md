@@ -25,7 +25,20 @@ Scenariul demonstrativ pornește cu 1.6 selectat și o constatare existentă. Se
 
 `Odontogram` este componentă de prezentare controlată. Primește `teeth`, `findings`, `history`, `selectedToothId` și callback-urile `onToothSelect`, `onFindingCreate`, `onFindingCorrect`, `onToothStatusChange`. Tipurile sunt exportate din `src/odontogram/index.ts`.
 
-Acesta este un contract de integrare propus pentru T05; nu reprezintă un API backend existent. Înregistrările au identificatori stabili (`id`), iar callback-ul de creare primește datele clinice fără identitatea și metadatele generate la salvare. Părintele care va integra T05 va deține datele și va mapa răspunsurile backend la aceste tipuri.
+Acesta este un **contract propus** pentru integrare; nu reprezintă un API backend existent:
+
+- `OdontogramTooth`: `id: ToothId`, `status: ToothStatus` (`present`, `missing`, `unevaluated`).
+- `ClinicalFinding`: `id` stabil, `toothId`, `kind`, `description`, `surfaces`, `observedAt`, `author`.
+- `ToothHistoryEvent`: `id` stabil, `toothId`, `occurredAt`, `author`, `kind`, `summary`, cu `previousValue`/`currentValue` pentru corecții și schimbări de stare.
+- `OdontogramProps`: cele trei colecții de mai sus, `selectedToothId` și callback-uri tipizate. Callback-urile de scriere primesc ID-ul dintelui/constatării și datele schimbate; pot întoarce `Promise<void>`.
+
+`ToothId` folosește codul FDI cu două cifre, pentru cadranele permanente adulte 1–4 și pozițiile 1–8. `ToothSurface` folosește identificatorii `mesial`, `distal`, `buccal`, `lingual`, `palatal`, `occlusal`, `incisal`, `vestibular`, `labial`, `approximal`, `interproximal`. Diagrama emite `vestibular` pentru suprafața spre obraz/buze și etichetează suprafața centrală `incisal` la anteriori, `occlusal` la posteriori.
+
+Starea descrie dintele; constatarea descrie o observație clinică; evenimentul istoric descrie o schimbare. Acestea nu sunt tratamente planificate sau manopere efectuate.
+
+Modulul cere părintelui să furnizeze lista de dinți și stările lor curente, constatările cu ID-uri și autor/data, evenimentele de istoric cu ID-uri și selecția curentă. Nu presupune endpointuri sau modele T05. Pentru integrare, părintele va mapa dosarul și istoricul T05 la aceste tipuri după stabilirea contractului real.
+
+În demonstrație callback-ul actualizează imediat stare React locală; aceasta nu este confirmare de persistență. În integrarea viitoare, callback-ul asincron trebuie să se rezolve după confirmarea operației T05 și după ce părintele actualizează props-urile din răspunsul confirmat. La respingerea unui callback asincron, componenta păstrează ciorna și afișează eroarea. Corecția cere o valoare editată explicit și trimite în callback identificatorul constatării existente.
 
 Datele și actualizările demonstrației sunt separate în `demoData.ts` și `useOdontogramDemo.ts`. Componenta reutilizabilă nu importă niciun client HTTP și nu importă datele demo.
 
@@ -44,21 +57,38 @@ Constatarea este o observație clinică, starea descrie dintele, tratamentul pla
 ## Integrare ulterioară
 
 - **T05:** alimentarea props-urilor cu dosarul pacientului și reviziile persistente; maparea ID-urilor și a câmpurilor backend va necesita acord asupra contractului real T05.
-- **T07:** legarea unei constatări de dinte/suprafețe de fluxurile de creare a manoperei, păstrând identitatea și regulile manoperei T04. Selectarea dintelui în acest modul nu declanșează T04.
 - **Perspectivă:** etapa curentă oferă perspectiva pacientului; o perspectivă alternativă nu este implementată.
+
+**T07 este separat de finalizarea T06.** T07 va lega intrările din manoperă și dinte; nu este dependență pentru completarea T06.
 
 ## Verificări
 
 Testele modulului folosesc Vitest și `react-test-renderer`, deja incluse în frontend.
 
-- `npm test -- --reporter=verbose` — trecut: 3 fișiere, 15 teste.
+- `npm test -- --reporter=verbose` — trecut la 23 octombrie 2026: 3 fișiere, 18 teste.
 - `npm run build` — trecut: `tsc -b` și Vite production build.
 - `git diff --check` — trecut.
-- Browser — neverificat. Pornirea Vite pentru browser a fost blocată de sandbox: `Error: listen EPERM: operation not permitted 127.0.0.1:5173`. Inventarul CUA nu a raportat un browser disponibil; nu a fost capturată o imagine.
-- Instalarea standard `npm ci` a fost blocată în scriptul postinstall esbuild: `spawnSync .../node_modules/esbuild/bin/esbuild EPERM`. `npm ci --ignore-scripts` pe Node 22 a instalat dependențele din lockfile și a permis testele și build-ul.
+- Browser — neverificat la 23 octombrie 2026. Inventarul CUA a raportat `apps: []`, `browsers: []`; Vite a eșuat la pornire cu `Error: listen EPERM: operation not permitted 127.0.0.1:5173`. Nu a fost capturată o imagine.
+- Dependențele erau deja instalate în acest worktree la verificarea curentă. La instalarea anterioară, `npm ci` standard a fost blocată de sandbox în postinstall esbuild cu `spawnSync .../node_modules/esbuild/bin/esbuild EPERM`; `npm ci --ignore-scripts` pe Node 22 a permis atunci testele și build-ul.
+
+## Pași manuali pentru browser
+
+Din directorul `frontend`, cu Node 22 local:
+
+```sh
+PATH="/home/raul/Projects/dentacare-tools/node/bin:$PATH" npm run dev -- --host 127.0.0.1
+```
+
+Deschide `http://127.0.0.1:5173/t06-demo.html` și verifică:
+
+1. 1.6 este selectat și are constatarea existentă.
+2. Selectează 1.7, adaugă o constatare de carie și alege suprafețe; revino la 1.6, apoi la 1.7 și confirmă că datele rămân la dintele lor.
+3. Selectează 1.8 marcat lipsă și consultă istoricul; selectează dinții cu Tab/Enter și săgețile și urmărește indicatorul vizibil de focus.
+4. Repetă la lățime îngustă (320–375 px) și verifică faptul că numerele dinților și comenzile rămân utilizabile.
 
 ## Limite rămase
 
 - Este doar T06 UI etapa 1, izolată de T04/T05 și nu declară T06 complet.
-- Nu există persistență, integrare de dosar, vizualizări alternative sau dentiție temporară.
+- Nu există integrarea în dosarul pacientului, persistență, istoric/audit real, acceptanță browser sau vizualizări alternative. Dentiția temporară nu este inclusă în această etapă.
 - Stările clinice și vocabularul constatărilor sunt demonstrative; validarea clinică și contractul backend necesită confirmare în taskurile de integrare.
+- **T07 rămâne task separat** pentru legătura fluxurilor de manoperă cu dinții; nu este necesar pentru completarea T06.

@@ -1,5 +1,6 @@
 import type { OdontogramTooth, ToothId } from './types';
 import { ADULT_TOOTH_IDS, formatFdi } from './types';
+import { useRef } from 'react';
 
 interface ToothChartProps {
   teeth: OdontogramTooth[];
@@ -7,7 +8,7 @@ interface ToothChartProps {
   onToothSelect: (toothId: ToothId) => void;
 }
 
-function ToothButton({ tooth, selected, onSelect }: { tooth: OdontogramTooth; selected: boolean; onSelect: (id: ToothId) => void }) {
+function ToothButton({ tooth, selected, onSelect, focusTooth }: { tooth: OdontogramTooth; selected: boolean; onSelect: (id: ToothId) => void; focusTooth: (id: ToothId) => void }) {
   const missing = tooth.status === 'missing';
   return <button type="button" className={`og-tooth${selected ? ' is-selected' : ''}${missing ? ' is-missing' : ''}`}
     aria-pressed={selected} aria-current={selected ? 'true' : undefined}
@@ -24,8 +25,7 @@ function ToothButton({ tooth, selected, onSelect }: { tooth: OdontogramTooth; se
       else return;
       event.preventDefault();
       const nextId = ordered[nextIndex];
-      const nextButton = typeof document === 'undefined' ? null : document.querySelector<HTMLButtonElement>(`button[data-tooth-id="${nextId}"]`);
-      nextButton?.focus();
+      focusTooth(nextId);
       onSelect(nextId);
     }}>
     <svg aria-hidden="true" viewBox="0 0 44 52" className="og-tooth-shape">
@@ -38,27 +38,29 @@ function ToothButton({ tooth, selected, onSelect }: { tooth: OdontogramTooth; se
   </button>;
 }
 
-function arch(teeth: OdontogramTooth[], selected: ToothId, onSelect: (id: ToothId) => void, ids: readonly ToothId[]) {
+function arch(teeth: OdontogramTooth[], selected: ToothId, onSelect: (id: ToothId) => void, focusTooth: (id: ToothId) => void, ids: readonly ToothId[]) {
   return ids.map((id) => {
     const tooth = teeth.find((item) => item.id === id) ?? { id, status: 'unevaluated' as const };
-    return <ToothButton key={id} tooth={tooth} selected={selected === id} onSelect={onSelect} />;
+    return <ToothButton key={id} tooth={tooth} selected={selected === id} onSelect={onSelect} focusTooth={focusTooth} />;
   });
 }
 
 export function ToothChart({ teeth, selectedToothId, onToothSelect }: ToothChartProps) {
+  const chartRef = useRef<HTMLElement>(null);
+  const focusTooth = (id: ToothId) => chartRef.current?.querySelector<HTMLButtonElement>(`button[data-tooth-id="${id}"]`)?.focus();
   const upperLeft = ADULT_TOOTH_IDS.slice(0, 8), upperRight = ADULT_TOOTH_IDS.slice(8, 16);
   const lowerLeft = ADULT_TOOTH_IDS.slice(16, 24), lowerRight = ADULT_TOOTH_IDS.slice(24, 32);
-  return <section className="og-chart" aria-labelledby="og-chart-title">
+  return <section ref={chartRef} className="og-chart" aria-labelledby="og-chart-title">
     <div className="og-chart-heading"><div><p className="og-kicker">DENTIȚIE PERMANENTĂ</p><h2 id="og-chart-title">Odontogramă</h2></div>
       <p className="og-perspective">Orientare: <strong>din perspectiva pacientului</strong></p></div>
     <div className="og-orientation"><span>Dreapta pacientului</span><span>Linia mediană</span><span>Stânga pacientului</span></div>
-    <div className="og-arch og-arch--upper" aria-label="Arcada superioară">
-      <span className="og-arch-name">SUPERIOARĂ</span><div className="og-arch-side">{arch(teeth, selectedToothId, onToothSelect, upperLeft)}</div>
-      <div className="og-midline" aria-hidden="true"/><div className="og-arch-side">{arch(teeth, selectedToothId, onToothSelect, upperRight)}</div>
+    <div className="og-arch og-arch--upper" role="group" aria-label="Arcada superioară">
+      <span className="og-arch-name">SUPERIOARĂ</span><div className="og-arch-side">{arch(teeth, selectedToothId, onToothSelect, focusTooth, upperLeft)}</div>
+      <div className="og-midline" aria-hidden="true"/><div className="og-arch-side">{arch(teeth, selectedToothId, onToothSelect, focusTooth, upperRight)}</div>
     </div>
-    <div className="og-arch og-arch--lower" aria-label="Arcada inferioară">
-      <span className="og-arch-name">INFERIOARĂ</span><div className="og-arch-side">{arch(teeth, selectedToothId, onToothSelect, lowerLeft)}</div>
-      <div className="og-midline" aria-hidden="true"/><div className="og-arch-side">{arch(teeth, selectedToothId, onToothSelect, lowerRight)}</div>
+    <div className="og-arch og-arch--lower" role="group" aria-label="Arcada inferioară">
+      <span className="og-arch-name">INFERIOARĂ</span><div className="og-arch-side">{arch(teeth, selectedToothId, onToothSelect, focusTooth, lowerLeft)}</div>
+      <div className="og-midline" aria-hidden="true"/><div className="og-arch-side">{arch(teeth, selectedToothId, onToothSelect, focusTooth, lowerRight)}</div>
     </div>
     <div className="og-status-legend"><span><i className="og-dot og-dot--present"/>Prezent</span><span><i className="og-dot og-dot--missing"/>Lipsă</span><span><i className="og-dot og-dot--selected"/>Selectat</span></div>
   </section>;

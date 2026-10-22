@@ -48,9 +48,12 @@ export interface OdontogramProps {
   history: ToothHistoryEvent[];
   selectedToothId: ToothId;
   onToothSelect: (toothId: ToothId) => void;
-  onFindingCreate: (finding: Omit<ClinicalFinding, 'id' | 'observedAt' | 'author'>) => void;
-  onFindingCorrect: (findingId: string, replacement: Pick<ClinicalFinding, 'kind' | 'description' | 'surfaces'>) => void;
-  onToothStatusChange: (toothId: ToothId, status: ToothStatus) => void;
+  /** Resolve after the parent accepts the local update or confirms persistence. */
+  onFindingCreate: (finding: Omit<ClinicalFinding, 'id' | 'observedAt' | 'author'>) => void | Promise<void>;
+  /** Resolve after the parent accepts the correction or confirms persistence. */
+  onFindingCorrect: (findingId: string, replacement: Pick<ClinicalFinding, 'kind' | 'description' | 'surfaces'>) => void | Promise<void>;
+  /** Resolve after the parent accepts the status change or confirms persistence. */
+  onToothStatusChange: (toothId: ToothId, status: ToothStatus) => void | Promise<void>;
 }
 
 export const ADULT_TOOTH_IDS: readonly ToothId[] = [

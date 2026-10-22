@@ -19,12 +19,10 @@ describe('odontograma adultă', () => {
   it('expune exact cele 32 poziții FDI fără duplicate', () => {
     expect(ADULT_TOOTH_IDS).toHaveLength(32);
     expect(new Set(ADULT_TOOTH_IDS).size).toBe(32);
-    expect(new Set(ADULT_TOOTH_IDS)).toEqual(new Set([
-      ...Array.from({ length: 8 }, (_, index) => `1${index + 1}`),
-      ...Array.from({ length: 8 }, (_, index) => `2${index + 1}`),
-      ...Array.from({ length: 8 }, (_, index) => `3${index + 1}`),
-      ...Array.from({ length: 8 }, (_, index) => `4${index + 1}`),
-    ]));
+    expect(ADULT_TOOTH_IDS).toEqual([
+      '18', '17', '16', '15', '14', '13', '12', '11', '21', '22', '23', '24', '25', '26', '27', '28',
+      '48', '47', '46', '45', '44', '43', '42', '41', '31', '32', '33', '34', '35', '36', '37', '38',
+    ]);
   });
 
   it('selectează dintele, actualizează panoul și navighează cu săgețile', () => {
@@ -49,6 +47,14 @@ describe('odontograma adultă', () => {
     expect(missing).toBeTruthy();
     act(() => missing.props.onClick());
     expect(select).toHaveBeenCalledWith('18');
+  });
+
+  it('trimite schimbarea stării cu ID-ul dintelui selectat', () => {
+    const onToothStatusChange = vi.fn();
+    const renderer = render(<Odontogram teeth={demoTeeth} findings={demoFindings} history={demoHistory} selectedToothId="17" onToothSelect={vi.fn()}
+      onFindingCreate={vi.fn()} onFindingCorrect={vi.fn()} onToothStatusChange={onToothStatusChange} />);
+    act(() => renderer.root.findByProps({ 'aria-label': 'Starea dintelui 1.7' }).props.onChange({ target: { value: 'missing' } }));
+    expect(onToothStatusChange).toHaveBeenCalledWith('17', 'missing');
   });
 
   it('trimite dintele și suprafețele selectate fără să înlocuiască constatările', () => {
@@ -85,19 +91,61 @@ describe('odontograma adultă', () => {
     expect(renderer.root.findAll((node) => node.props['data-finding-id'] && node.findAllByType('p').some((paragraph) => paragraph.children.join('').includes('Carie ocluzală de verificat.')))).toHaveLength(1);
   });
 
-  it('corecția demonstrativă păstrează valoarea anterioară în istoric și notifică părintele corect', () => {
+  it('ține ciornele separate pe dinte și trimite fiecare constatare la poziția corectă', () => {
+    const renderer = render(<DemoApp />);
+    act(() => renderer.root.findByType('textarea').props.onChange({ target: { value: 'Ciornă pentru dintele 1.6.' } }));
+    act(() => renderer.root.findByProps({ 'aria-label': 'Mezială (mesial)' }).props.onClick());
+    act(() => buttonByLabel(renderer, 'Dinte 1.7, prezent').props.onClick());
+
+    expect(renderer.root.findByType('textarea').props.value).toBe('');
+    expect(renderer.root.findByProps({ 'aria-label': 'Mezială (mesial)' }).props['aria-pressed']).toBe(false);
+    act(() => renderer.root.findByType('textarea').props.onChange({ target: { value: 'Carie pe dintele 1.7.' } }));
+    act(() => renderer.root.findByProps({ 'aria-label': 'Ocluzală (occlusal)' }).props.onClick());
+    act(() => renderer.root.findByType('form').props.onSubmit({ preventDefault: vi.fn() }));
+    act(() => buttonByLabel(renderer, 'Dinte 1.6, prezent').props.onClick());
+
+    expect(renderer.root.findByType('textarea').props.value).toBe('Ciornă pentru dintele 1.6.');
+    expect(renderer.root.findByProps({ 'aria-label': 'Mezială (mesial)' }).props['aria-pressed']).toBe(true);
+    act(() => renderer.root.findByType('form').props.onSubmit({ preventDefault: vi.fn() }));
+    expect(renderer.root.findAll((node) => node.props['data-finding-id'] && node.findAllByType('p').some((paragraph) => paragraph.children.join('').includes('Ciornă pentru dintele 1.6.')))).toHaveLength(1);
+
+    act(() => buttonByLabel(renderer, 'Dinte 1.7, prezent').props.onClick());
+    expect(renderer.root.findByType('textarea').props.value).toBe('');
+    expect(renderer.root.findAll((node) => node.props['data-finding-id'] && node.findAllByType('p').some((paragraph) => paragraph.children.join('').includes('Carie pe dintele 1.7.')))).toHaveLength(1);
+  });
+
+  it('păstrează ciorna dacă părintele nu confirmă salvarea', async () => {
+    const onFindingCreate = vi.fn(() => Promise.reject(new Error('offline')));
+    const renderer = render(<Odontogram teeth={demoTeeth} findings={demoFindings} history={demoHistory} selectedToothId="16" onToothSelect={vi.fn()}
+      onFindingCreate={onFindingCreate} onFindingCorrect={vi.fn()} onToothStatusChange={vi.fn()} />);
+    act(() => renderer.root.findByType('textarea').props.onChange({ target: { value: 'Constatare păstrată local.' } }));
+    await act(async () => {
+      renderer.root.findByType('form').props.onSubmit({ preventDefault: vi.fn() });
+      await Promise.resolve();
+    });
+    expect(renderer.root.findByType('textarea').props.value).toBe('Constatare păstrată local.');
+    expect(renderer.root.findByProps({ role: 'alert' }).children.join('')).toContain('Ciorna a fost păstrată');
+  });
+
+  it('corecția trimite valoarea editată și identificatorul stabil al constatării', () => {
     const onFindingCorrect = vi.fn();
     const renderer = render(<Odontogram teeth={demoTeeth} findings={demoFindings} history={demoHistory} selectedToothId="16" onToothSelect={vi.fn()}
       onFindingCreate={vi.fn()} onFindingCorrect={onFindingCorrect} onToothStatusChange={vi.fn()} />);
-    act(() => renderer.root.findByProps({ children: 'Corectează demonstrativ' }).props.onClick());
-    expect(onFindingCorrect).toHaveBeenCalledWith('finding-demo-1601', expect.objectContaining({ description: expect.stringContaining('(corectat după verificare)'), surfaces: ['occlusal', 'mesial'] }));
+    act(() => renderer.root.findByProps({ children: 'Corectează constatarea' }).props.onClick());
+    const textarea = renderer.root.findByProps({ 'aria-label': 'Descriere corectată pentru constatarea finding-demo-1601' });
+    act(() => textarea.props.onChange({ target: { value: 'Marginea restaurării este netedă.' } }));
+    act(() => renderer.root.findByProps({ 'data-correction-id': 'finding-demo-1601' }).props.onSubmit({ preventDefault: vi.fn() }));
+    expect(onFindingCorrect).toHaveBeenCalledWith('finding-demo-1601', { kind: 'Obturație existentă', description: 'Marginea restaurării este netedă.', surfaces: ['occlusal', 'mesial'] });
   });
 
   it('afișează versiunea veche și cea curentă după o corecție în demonstrație', () => {
     const renderer = render(<DemoApp />);
-    act(() => renderer.root.findByProps({ children: 'Corectează demonstrativ' }).props.onClick());
+    act(() => renderer.root.findByProps({ children: 'Corectează constatarea' }).props.onClick());
+    const textarea = renderer.root.findByProps({ 'aria-label': 'Descriere corectată pentru constatarea finding-demo-1601' });
+    act(() => textarea.props.onChange({ target: { value: 'Marginea restaurării este netedă după verificare.' } }));
+    act(() => renderer.root.findByProps({ 'data-correction-id': 'finding-demo-1601' }).props.onSubmit({ preventDefault: vi.fn() }));
     expect(renderer.root.findAllByType('strong').some((node) => node.children.join('').includes('Constatare corectată demonstrativ'))).toBe(true);
     expect(renderer.root.findAll((node) => node.type === 'p' && node.children.join('').includes('Anterior: Obturație existentă: Restaurare veche'))).toHaveLength(1);
-    expect(renderer.root.findAll((node) => node.type === 'p' && node.children.join('').includes('Valoare curentă: Obturație existentă: Restaurare veche'))).toHaveLength(1);
+    expect(renderer.root.findAll((node) => node.type === 'p' && node.children.join('').includes('Valoare curentă: Obturație existentă: Marginea restaurării este netedă după verificare.'))).toHaveLength(1);
   });
 });
