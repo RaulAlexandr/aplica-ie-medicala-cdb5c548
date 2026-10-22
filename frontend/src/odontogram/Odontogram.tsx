@@ -9,19 +9,25 @@ import './odontogram.css';
 const STATUS_LABELS: Record<ToothStatus, string> = { present: 'Prezent', missing: 'Lipsă', unevaluated: 'Neevaluat' };
 const dateLabel = (value: string) => new Intl.DateTimeFormat('ro-RO', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 
-function FindingCard({ finding, onCorrect, pending }: { finding: ClinicalFinding; onCorrect: (replacement: Pick<ClinicalFinding, 'kind' | 'description' | 'surfaces'>, onSaved: () => void) => void; pending: boolean }) {
-  const [editing, setEditing] = useState(false);
-  const [description, setDescription] = useState(finding.description);
+function FindingCard({ finding, onCorrect, pending, correctionDraft, onCorrectionDraftChange }: {
+  finding: ClinicalFinding;
+  onCorrect: (replacement: Pick<ClinicalFinding, 'kind' | 'description' | 'surfaces'>, onSaved: () => void) => void;
+  pending: boolean;
+  correctionDraft?: string;
+  onCorrectionDraftChange: (findingId: string, description: string | undefined) => void;
+}) {
+  const editing = correctionDraft !== undefined;
+  const description = correctionDraft ?? finding.description;
   return <article className="og-finding" data-finding-id={finding.id}>
     <div className="og-finding-top"><div><span className="og-finding-kind">{finding.kind}</span><p>{finding.description}</p></div>
-      <button type="button" className="og-text-button" disabled={pending} onClick={() => { setDescription(finding.description); setEditing((value) => !value); }}>{editing ? 'Renunță la corecție' : 'Corectează constatarea'}</button></div>
+      <button type="button" className="og-text-button" disabled={pending} onClick={() => onCorrectionDraftChange(finding.id, editing ? undefined : finding.description)}>{editing ? 'Renunță la corecție' : 'Corectează constatarea'}</button></div>
     {editing && <form className="og-correction-form" data-correction-id={finding.id} onSubmit={(event) => {
       event.preventDefault();
       const corrected = description.trim();
       if (!corrected || corrected === finding.description) return;
-      onCorrect({ kind: finding.kind, description: corrected, surfaces: [...finding.surfaces] }, () => setEditing(false));
+      onCorrect({ kind: finding.kind, description: corrected, surfaces: [...finding.surfaces] }, () => onCorrectionDraftChange(finding.id, undefined));
     }}>
-      <label>Descriere corectată<textarea aria-label={`Descriere corectată pentru constatarea ${finding.id}`} value={description} disabled={pending} onChange={(event) => setDescription(event.target.value)} required rows={2} /></label>
+      <label>Descriere corectată<textarea aria-label={`Descriere corectată pentru constatarea ${finding.id}`} value={description} disabled={pending} onChange={(event) => onCorrectionDraftChange(finding.id, event.target.value)} required rows={2} /></label>
       <button className="og-text-button" type="submit" disabled={pending || !description.trim() || description.trim() === finding.description}>{pending ? 'Se confirmă…' : 'Salvează corecția'}</button>
     </form>}
     <div className="og-finding-meta"><span>{finding.surfaces.length ? finding.surfaces.join(', ') : 'Fără suprafață asociată'}</span><span>{finding.author} · {dateLabel(finding.observedAt)}</span></div>
@@ -35,6 +41,7 @@ export function Odontogram(props: OdontogramProps) {
   const toothFindings = findings.filter((finding) => finding.toothId === selectedToothId);
   const toothHistory = history.filter((event) => event.toothId === selectedToothId).slice().sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
   const [drafts, setDrafts] = useState<Partial<Record<ToothId, { kind: string; description: string; surfaces: ToothSurface[] }>>>({});
+  const [correctionDrafts, setCorrectionDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const [callbackError, setCallbackError] = useState('');
   const draft = drafts[selectedToothId] ?? { kind: 'Carie', description: '', surfaces: [] };
@@ -67,7 +74,7 @@ export function Odontogram(props: OdontogramProps) {
     runCallback(
       () => onFindingCreate({ toothId, kind: draft.kind, description: text, surfaces: [...draft.surfaces] }),
       () => setDrafts((current) => ({ ...current, [toothId]: { ...draft, description: '', surfaces: [] } })),
-      'Modificarea nu a fost confirmată. Ciorna a fost păstrată; încearcă din nou.',
+      `Salvarea pentru dintele ${formatFdi(toothId)} nu a fost confirmată. Ciorna acelui dinte a fost păstrată; încearcă din nou.`,
     );
   }
 
@@ -76,7 +83,7 @@ export function Odontogram(props: OdontogramProps) {
     runCallback(
       () => onFindingCorrect(finding.id, replacement),
       onSaved,
-      'Corecția nu a fost confirmată. Constatarea afișată a rămas neschimbată.',
+      `Corecția constatării ${finding.id} de pe dintele ${formatFdi(finding.toothId)} nu a fost confirmată. Valoarea editată a fost păstrată.`,
     );
   }
 
@@ -85,7 +92,7 @@ export function Odontogram(props: OdontogramProps) {
     runCallback(
       () => onToothStatusChange(selectedToothId, status),
       () => undefined,
-      'Schimbarea stării nu a fost confirmată. Starea afișată rămâne cea primită din date.',
+      `Schimbarea stării pentru dintele ${formatFdi(selectedToothId)} nu a fost confirmată. Starea afișată rămâne cea primită din date.`,
     );
   }
 
@@ -99,7 +106,11 @@ export function Odontogram(props: OdontogramProps) {
         {callbackError && <p className="og-callback-error" role="alert">{callbackError}</p>}
         {tooth.status === 'missing' && <p className="og-missing-note" role="status">Dinte marcat lipsă. Poate fi selectat pentru consultarea istoricului.</p>}
         <section className="og-detail-section"><div className="og-section-title"><h3>Constatări existente</h3><span className="og-count">{toothFindings.length}</span></div>
-          {toothFindings.length ? <div className="og-finding-list">{toothFindings.map((finding) => <FindingCard key={finding.id} finding={finding} onCorrect={(replacement, onSaved) => correctFinding(finding, replacement, onSaved)} pending={pending} />)}</div> : <p className="og-empty">Nu există constatări demonstrative pentru acest dinte.</p>}</section>
+          {toothFindings.length ? <div className="og-finding-list">{toothFindings.map((finding) => <FindingCard key={finding.id} finding={finding} onCorrect={(replacement, onSaved) => correctFinding(finding, replacement, onSaved)} pending={pending} correctionDraft={correctionDrafts[finding.id]} onCorrectionDraftChange={(findingId, description) => setCorrectionDrafts((current) => {
+            const next = { ...current };
+            if (description === undefined) delete next[findingId]; else next[findingId] = description;
+            return next;
+          })} />)}</div> : <p className="og-empty">Nu există constatări demonstrative pentru acest dinte.</p>}</section>
         <form className="og-new-finding" onSubmit={submitFinding}><div className="og-section-title"><div><p className="og-kicker">ÎNREGISTRARE NOUĂ</p><h3>Constatare clinică</h3></div></div>
           <label htmlFor={`${formId}-kind`}>Tipul constatării<select id={`${formId}-kind`} value={draft.kind} disabled={pending} onChange={(event) => updateDraft({ kind: event.target.value })}><option>Carie</option><option>Fractură</option><option>Uzură</option><option>Discromie</option><option>Altă constatare</option></select></label>
           <label htmlFor={`${formId}-description`}>Descriere<textarea id={`${formId}-description`} value={draft.description} disabled={pending} onChange={(event) => updateDraft({ description: event.target.value })} placeholder="Descrie observația clinică" rows={2} required /></label>
