@@ -651,11 +651,12 @@ async def test_closure_vs_create_concurrent(postgres_context):
         close_resp, create_resp = await asyncio.gather(close_task, create_task, return_exceptions=False)
 
         # One should succeed, one should fail
+        # Control both orders: closure wins OR create wins
 
-        # If closure succeeds, create should fail
+        # If closure succeeds (200), create must have been rejected (409)
         if close_resp.status_code == 200:
             assert create_resp.status_code == 409, f"Create should fail when closure succeeds, got {create_resp.status_code}"
-        # If create succeeds, closure should fail
+        # If create succeeds (201), closure must have been rejected (409)
         elif create_resp.status_code == 201:
             assert close_resp.status_code == 409, f"Closure should fail when create succeeds, got {close_resp.status_code}"
         else:
@@ -668,12 +669,16 @@ async def test_closure_vs_create_concurrent(postgres_context):
         appt_status = appt_check["status"]
 
         if appt_status == "completed":
-            # Closure won - no procedures should be created
+            # Closure won - no procedures should have been created
             procedures = await get_appointment_procedures(client, headers, appt_id)
             assert len(procedures) == 0, "No procedures should exist if closure succeeded"
         else:
-            # Create won - appointment should not be completed
+            # Create won - appointment should remain in_progress (not completed)
             assert appt_status != "completed", "Appointment should not be completed if create succeeded"
+            # Verify the procedure was created and is pending
+            procedures = await get_appointment_procedures(client, headers, appt_id)
+            assert len(procedures) == 1, f"Expected 1 procedure, got {len(procedures)}"
+            assert procedures[0]["status"] == "pending"
 
     finally:
         await client1.aclose()
@@ -776,32 +781,28 @@ async def test_closure_vs_start_concurrent(postgres_context):
 
         close_resp, start_resp = await asyncio.gather(close_task, start_task, return_exceptions=False)
 
-        # One should succeed, one should fail
+        # Closure MUST always fail because there's already a pending procedure
+        # The application checks for unresolved procedures (pending/running/paused) before allowing closure
+        assert close_resp.status_code == 409, f"Closure should always fail with pending procedure, got {close_resp.status_code}"
+        assert "unresolved procedures exist" in close_resp.json().get("detail", "").lower()
 
-        # If closure succeeds, start should fail
-        if close_resp.status_code == 200:
-            assert start_resp.status_code == 409, f"Start should fail when closure succeeds, got {start_resp.status_code}"
-        # If start succeeds, closure should fail
-        elif start_resp.status_code == 200:
-            assert close_resp.status_code == 409, f"Closure should fail when start succeeds, got {close_resp.status_code}"
+        # Start can either succeed or fail independently
+        if start_resp.status_code == 200:
+            # Start succeeded - procedure should be running
+            proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
+            assert proc_check.json()["status"] == "running"
+            # Appointment should remain in_progress (not completed)
+            appt_check = await get_appointment(client, headers, appt_id)
+            assert appt_check["status"] != "completed"
+        elif start_resp.status_code == 409:
+            # Start failed (e.g., due to unique timer per doctor) - procedure remains pending
+            proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
+            assert proc_check.json()["status"] == "pending"
+            # Appointment should remain in_progress
+            appt_check = await get_appointment(client, headers, appt_id)
+            assert appt_check["status"] == "in_progress"
         else:
-            # Both failed or unexpected status
-            assert False, f"Unexpected statuses: close={close_resp.status_code}, start={start_resp.status_code}"
-
-        # Verify final state consistency
-        appt_check = await get_appointment(client, headers, appt_id)
-        assert appt_check is not None, f"Appointment {appt_id} not found"
-        appt_status = appt_check["status"]
-        proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
-        proc_status = proc_check.json()["status"]
-
-        if appt_status == "completed":
-            # Closure won - procedure should still be pending (not started)
-            assert proc_status == "pending", f"Procedure should be pending if closure succeeded, got {proc_status}"
-        else:
-            # Start won - appointment should not be completed
-            assert appt_status != "completed", "Appointment should not be completed if start succeeded"
-            assert proc_status == "running", f"Procedure should be running if start succeeded, got {proc_status}"
+            assert False, f"Unexpected start status: {start_resp.status_code}"
 
     finally:
         await client1.aclose()
@@ -910,32 +911,34 @@ async def test_closure_vs_resume_concurrent(postgres_context):
 
         close_resp, resume_resp = await asyncio.gather(close_task, resume_task, return_exceptions=False)
 
-        # One should succeed, one should fail
+        # Closure MUST always fail because there's already a paused procedure
+        # The application checks for unresolved procedures (pending/running/paused) before allowing closure
+        assert close_resp.status_code == 409, f"Closure should always fail with paused procedure, got {close_resp.status_code}"
+        assert "unresolved procedures exist" in close_resp.json().get("detail", "").lower()
 
-        # If closure succeeds, resume should fail
-        if close_resp.status_code == 200:
-            assert resume_resp.status_code == 409, f"Resume should fail when closure succeeds, got {resume_resp.status_code}"
-        # If resume succeeds, closure should fail
-        elif resume_resp.status_code == 200:
-            assert close_resp.status_code == 409, f"Closure should fail when resume succeeds, got {close_resp.status_code}"
+        # Resume can either succeed or fail independently
+        if resume_resp.status_code == 200:
+            # Resume succeeded - procedure should be running
+            proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
+            assert proc_check.json()["status"] == "running"
+            # Appointment should remain in_progress (not completed)
+            appt_check = await get_appointment(client, headers, appt_id)
+            assert appt_check["status"] != "completed"
+            # Verify exactly one active run segment
+            segments_resp = await client.get(f"/api/performed-procedures/{proc_id}/segments", headers=headers)
+            assert segments_resp.status_code == 200
+            segments = segments_resp.json()
+            run_segments = [s for s in segments if s["segment_type"] == "run" and s["ended_at"] is None]
+            assert len(run_segments) == 1, f"Expected exactly 1 active run segment, got {len(run_segments)}"
+        elif resume_resp.status_code == 409:
+            # Resume failed (e.g., due to unique timer per doctor) - procedure remains paused
+            proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
+            assert proc_check.json()["status"] == "paused"
+            # Appointment should remain in_progress
+            appt_check = await get_appointment(client, headers, appt_id)
+            assert appt_check["status"] == "in_progress"
         else:
-            # Both failed or unexpected status
-            assert False, f"Unexpected statuses: close={close_resp.status_code}, resume={resume_resp.status_code}"
-
-        # Verify final state consistency
-        appt_check = await get_appointment(client, headers, appt_id)
-        assert appt_check is not None, f"Appointment {appt_id} not found"
-        appt_status = appt_check["status"]
-        proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
-        proc_status = proc_check.json()["status"]
-
-        if appt_status == "completed":
-            # Closure won - procedure should still be paused (not resumed)
-            assert proc_status == "paused", f"Procedure should be paused if closure succeeded, got {proc_status}"
-        else:
-            # Resume won - appointment should not be completed
-            assert appt_status != "completed", "Appointment should not be completed if resume succeeded"
-            assert proc_status == "running", f"Procedure should be running if resume succeeded, got {proc_status}"
+            assert False, f"Unexpected resume status: {resume_resp.status_code}"
 
     finally:
         await client1.aclose()

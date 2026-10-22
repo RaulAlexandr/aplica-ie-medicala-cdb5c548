@@ -91,23 +91,41 @@ async def invite_and_accept_user(client, headers, email, full_name, role, passwo
 @pytest.mark.asyncio
 async def test_draft_note_only_visible_to_author(client):
     """Test that draft notes are only visible to the author, not to other doctors or managers."""
-    # Register author (doctor1)
-    tokens1 = await register(client, email="doctor1@test.com", role="doctor")
+    # Register manager (creates clinic)
+    manager_tokens = await register(client, email="manager@test.com", role="clinic_manager")
+    headers_manager = {"Authorization": f"Bearer {manager_tokens['access_token']}"}
+
+    # Verify manager role and clinic
+    me_mgr = await client.get("/api/auth/me", headers=headers_manager)
+    assert me_mgr.status_code == 200
+    manager_clinic_id = me_mgr.json()["clinic_id"]
+
+    # Invite and accept author (doctor1) to same clinic
+    tokens1 = await invite_and_accept_user(client, headers_manager, "doctor1@test.com", "Doctor One", "doctor")
     headers1 = {"Authorization": f"Bearer {tokens1['access_token']}"}
 
-    # Register another doctor (doctor2)
-    tokens2 = await register(client, email="doctor2@test.com", role="doctor")
+    # Verify doctor1 role and same clinic
+    me1 = await client.get("/api/auth/me", headers=headers1)
+    assert me1.status_code == 200
+    assert me1.json()["clinic_id"] == manager_clinic_id
+    assert me1.json()["role"] == "doctor"
+
+    # Invite and accept another doctor (doctor2) to same clinic
+    tokens2 = await invite_and_accept_user(client, headers_manager, "doctor2@test.com", "Doctor Two", "doctor")
     headers2 = {"Authorization": f"Bearer {tokens2['access_token']}"}
 
-    # Register manager
-    tokens_mgr = await register(client, email="manager@test.com", role="clinic_manager")
-    headers_mgr = {"Authorization": f"Bearer {tokens_mgr['access_token']}"}
+    # Verify doctor2 role and same clinic
+    me2 = await client.get("/api/auth/me", headers=headers2)
+    assert me2.status_code == 200
+    assert me2.json()["clinic_id"] == manager_clinic_id
+    assert me2.json()["role"] == "doctor"
 
-    # Create patient
+    # Create patient in the clinic
     patient = await client.post("/api/patients", headers=headers1, json={
         "first_name": "Test",
         "last_name": "Patient"
     })
+    assert patient.status_code == 201
     patient_id = patient.json()["id"]
 
     # Doctor1 creates a draft note
@@ -125,43 +143,67 @@ async def test_draft_note_only_visible_to_author(client):
     assert get_note.status_code == 200
     assert get_note.json()["title"] == "Doctor1 Draft"
 
+    # Doctor1 can update their own draft note
+    update_note = await client.patch(
+        f"/api/clinical-notes/{note_id}",
+        headers=headers1,
+        json={"title": "Updated by author"}
+    )
+    assert update_note.status_code == 200
+    assert update_note.json()["title"] == "Updated by author"
+    assert update_note.json()["status"] == "draft"
+
     # Doctor2 cannot see doctor1's draft note
     get_note_d2 = await client.get(f"/api/clinical-notes/{note_id}", headers=headers2)
     assert get_note_d2.status_code == 404
 
     # Manager cannot see doctor1's draft note
-    get_note_mgr = await client.get(f"/api/clinical-notes/{note_id}", headers=headers_mgr)
+    get_note_mgr = await client.get(f"/api/clinical-notes/{note_id}", headers=headers_manager)
     assert get_note_mgr.status_code == 404
 
     # Doctor2 cannot update doctor1's draft note
-    update_note = await client.patch(
+    update_note_d2 = await client.patch(
         f"/api/clinical-notes/{note_id}",
         headers=headers2,
         json={"title": "Updated by doctor2"}
     )
-    assert update_note.status_code == 404
+    assert update_note_d2.status_code == 404
 
     # Manager cannot update doctor1's draft note
     update_note_mgr = await client.patch(
         f"/api/clinical-notes/{note_id}",
-        headers=headers_mgr,
+        headers=headers_manager,
         json={"title": "Updated by manager"}
     )
     assert update_note_mgr.status_code == 404
 
     # Doctor2 cannot finalize doctor1's draft note
-    finalize_note = await client.post(
+    finalize_note_d2 = await client.post(
         f"/api/clinical-notes/{note_id}/finalize",
         headers=headers2
     )
-    assert finalize_note.status_code == 404
+    assert finalize_note_d2.status_code == 404
 
     # Manager cannot finalize doctor1's draft note
     finalize_note_mgr = await client.post(
         f"/api/clinical-notes/{note_id}/finalize",
-        headers=headers_mgr
+        headers=headers_manager
     )
     assert finalize_note_mgr.status_code == 404
+
+    # After all rejections, author re-reads the note: content and draft status unchanged
+    get_note_final = await client.get(f"/api/clinical-notes/{note_id}", headers=headers1)
+    assert get_note_final.status_code == 200
+    assert get_note_final.json()["title"] == "Updated by author"
+    assert get_note_final.json()["content"] == "This is a draft by doctor1"
+    assert get_note_final.json()["status"] == "draft"
+
+    # Verify no revisions were added for rejected modifications
+    revisions = await client.get(f"/api/clinical-notes/{note_id}/revisions", headers=headers1)
+    assert revisions.status_code == 200
+    # Only the author's update should have created a revision
+    assert len(revisions.json()) == 1
+    assert revisions.json()[0]["field"] == "title"
 
 
 @pytest.mark.asyncio
@@ -1090,14 +1132,24 @@ async def test_create_procedure_fails_for_completed_appointment(client):
     catalog_id = catalog.json()["id"]
 
     # Try to create procedure for completed appointment - should fail
-    # Note: This might not be implemented yet, but we test the expected behavior
-    await client.post("/api/performed-procedures", headers=headers, json={
+    proc_resp = await client.post("/api/performed-procedures", headers=headers, json={
         "appointment_id": appt_id,
         "procedure_catalog_id": catalog_id
     })
-    # For now, this might succeed (not implemented yet)
-    # The task says to verify this behavior, so we document it
-    # assert proc.status_code == 409
+    assert proc_resp.status_code == 409, f"Expected 409 for completed appointment, got {proc_resp.status_code}: {proc_resp.text}"
+
+    # Verify appointment remains completed
+    appts = await client.get("/api/appointments", headers=headers)
+    assert appts.status_code == 200
+    appt_check = next((a for a in appts.json() if str(a["id"]) == str(appt_id)), None)
+    assert appt_check is not None, f"Appointment {appt_id} not found in list"
+    assert appt_check["status"] == "completed"
+
+    # Verify no procedure was created for this appointment
+    procs = await client.get("/api/performed-procedures", headers=headers)
+    assert procs.status_code == 200
+    appt_procs = [p for p in procs.json() if str(p["appointment_id"]) == str(appt_id)]
+    assert len(appt_procs) == 0, f"No procedures should be created for completed appointment, found {len(appt_procs)}"
 
 
 # ============================================================================
