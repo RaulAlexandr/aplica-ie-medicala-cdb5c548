@@ -60,7 +60,7 @@ async def postgres_context():
         check=True
     )
     if result.returncode != 0:
-        pytest.skip(f"Alembic upgrade failed: {result.stderr}")
+        raise RuntimeError(f"Alembic upgrade failed: {result.stderr}")
 
     # Setup engine and session
     engine = create_async_engine(target_url, pool_pre_ping=True)
@@ -182,6 +182,23 @@ async def get_manager_info(client, headers):
     me = await client.get("/api/auth/me", headers=headers)
     assert me.status_code == 200
     return me.json()
+
+
+async def get_appointment(client, headers, appointment_id):
+    """Get an appointment by ID from the list endpoint."""
+    appts = await client.get("/api/appointments", headers=headers)
+    assert appts.status_code == 200, f"Failed to list appointments: {appts.status_code}"
+    for appt in appts.json():
+        if str(appt["id"]) == str(appointment_id):
+            return appt
+    return None
+
+
+async def get_appointment_procedures(client, headers, appointment_id):
+    """Get all procedures for an appointment from the performed-procedures endpoint."""
+    procs = await client.get("/api/performed-procedures", headers=headers)
+    assert procs.status_code == 200, f"Failed to list procedures: {procs.status_code}"
+    return [p for p in procs.json() if str(p["appointment_id"]) == str(appointment_id)]
 
 
 # Test 1: Two concurrent start attempts for the same doctor
@@ -549,7 +566,7 @@ async def test_closure_vs_create_concurrent(postgres_context):
         "clinic_name": "Test Clinic",
         "full_name": "Manager User",
         "email": "manager_closure_create@test.com",
-        "password": "testpass123"
+        "password": "testpass1234"
     })
     assert auth_resp.status_code == 201, f"Registration failed: {auth_resp.status_code}"
     tokens = auth_resp.json()
@@ -589,7 +606,7 @@ async def test_closure_vs_create_concurrent(postgres_context):
     catalog_resp = await client.post("/api/procedures", headers=headers, json={
         "code": "TEST_CLOSURE_CREATE",
         "name": "Test Procedure",
-        "base_price": 100.00,
+        "base_price": "100.00",
         "currency": "RON",
         "default_duration_minutes": 30
     })
@@ -646,13 +663,13 @@ async def test_closure_vs_create_concurrent(postgres_context):
             assert False, f"Unexpected statuses: close={close_resp.status_code}, create={create_resp.status_code}"
 
         # Verify final state consistency
-        appt_check = await client.get(f"/api/appointments/{appt_id}", headers=headers)
-        appt_status = appt_check.json()["status"]
+        appt_check = await get_appointment(client, headers, appt_id)
+        assert appt_check is not None, f"Appointment {appt_id} not found"
+        appt_status = appt_check["status"]
 
         if appt_status == "completed":
             # Closure won - no procedures should be created
-            proc_list = await client.get(f"/api/appointments/{appt_id}/procedures", headers=headers)
-            procedures = proc_list.json()
+            procedures = await get_appointment_procedures(client, headers, appt_id)
             assert len(procedures) == 0, "No procedures should exist if closure succeeded"
         else:
             # Create won - appointment should not be completed
@@ -674,7 +691,7 @@ async def test_closure_vs_start_concurrent(postgres_context):
         "clinic_name": "Test Clinic",
         "full_name": "Manager User",
         "email": "manager_closure_start@test.com",
-        "password": "testpass123"
+        "password": "testpass1234"
     })
     assert auth_resp.status_code == 201, f"Registration failed: {auth_resp.status_code}"
     tokens = auth_resp.json()
@@ -714,7 +731,7 @@ async def test_closure_vs_start_concurrent(postgres_context):
     catalog_resp = await client.post("/api/procedures", headers=headers, json={
         "code": "TEST_CLOSURE_START",
         "name": "Test Procedure",
-        "base_price": 100.00,
+        "base_price": "100.00",
         "currency": "RON",
         "default_duration_minutes": 30
     })
@@ -772,8 +789,9 @@ async def test_closure_vs_start_concurrent(postgres_context):
             assert False, f"Unexpected statuses: close={close_resp.status_code}, start={start_resp.status_code}"
 
         # Verify final state consistency
-        appt_check = await client.get(f"/api/appointments/{appt_id}", headers=headers)
-        appt_status = appt_check.json()["status"]
+        appt_check = await get_appointment(client, headers, appt_id)
+        assert appt_check is not None, f"Appointment {appt_id} not found"
+        appt_status = appt_check["status"]
         proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
         proc_status = proc_check.json()["status"]
 
@@ -801,7 +819,7 @@ async def test_closure_vs_resume_concurrent(postgres_context):
         "clinic_name": "Test Clinic",
         "full_name": "Manager User",
         "email": "manager_closure_resume@test.com",
-        "password": "testpass123"
+        "password": "testpass1234"
     })
     assert auth_resp.status_code == 201, f"Registration failed: {auth_resp.status_code}"
     tokens = auth_resp.json()
@@ -841,7 +859,7 @@ async def test_closure_vs_resume_concurrent(postgres_context):
     catalog_resp = await client.post("/api/procedures", headers=headers, json={
         "code": "TEST_CLOSURE_RESUME",
         "name": "Test Procedure",
-        "base_price": 100.00,
+        "base_price": "100.00",
         "currency": "RON",
         "default_duration_minutes": 30
     })
@@ -905,8 +923,9 @@ async def test_closure_vs_resume_concurrent(postgres_context):
             assert False, f"Unexpected statuses: close={close_resp.status_code}, resume={resume_resp.status_code}"
 
         # Verify final state consistency
-        appt_check = await client.get(f"/api/appointments/{appt_id}", headers=headers)
-        appt_status = appt_check.json()["status"]
+        appt_check = await get_appointment(client, headers, appt_id)
+        assert appt_check is not None, f"Appointment {appt_id} not found"
+        appt_status = appt_check["status"]
         proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
         proc_status = proc_check.json()["status"]
 

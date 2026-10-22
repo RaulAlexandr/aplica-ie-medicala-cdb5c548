@@ -981,8 +981,8 @@ async def refresh_timeline(
             )
             db.add(event)
 
-        # From clinical notes - filter drafts and sanitize all fields
-        # Only include notes that the user can access
+        # From clinical notes - include all notes (drafts will be filtered at query time)
+        # Sanitize all fields in the events
         all_notes = await db.scalars(
             select(ClinicalNote).where(
                 ClinicalNote.patient_id == patient_id,
@@ -991,13 +991,9 @@ async def refresh_timeline(
         )
 
         for note in all_notes:
-            # Skip drafts for non-authors
-            if note.status == "draft" and note.author_id != user.id:
-                continue
-
             # For clinical notes, only include metadata in timeline, not content
             # This prevents exposure of clinical content to unauthorized roles
-            # Remove title to avoid exposing clinical information
+            # Note: All notes (including drafts) are added as events; filtering happens at query time
             event = PatientTimelineEvent(
                 clinic_id=user.clinic_id,
                 patient_id=patient_id,
