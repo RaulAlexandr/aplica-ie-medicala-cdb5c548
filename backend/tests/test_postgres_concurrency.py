@@ -61,20 +61,31 @@ async def _install_lock_gate(target_url, winner_role):
     previous_overrides = app.dependency_overrides.copy()
 
     class GatedSession(AsyncSession):
-        async def execute(self, statement, *args, **kwargs):
+        async def _gate_after_lock(self, statement, role):
             nonlocal gate_seen
-            is_lock = _appointment_lock(statement)
-            role = _request_role.get()
-            if is_lock and role != winner_role:
-                contender_at_lock.set()
-            result = await super().execute(statement, *args, **kwargs)
-            if is_lock and role == winner_role and not gate_seen:
+            if _appointment_lock(statement) and role == winner_role and not gate_seen:
                 gate_seen = True
                 acquired.set()
                 try:
                     await asyncio.wait_for(release.wait(), SYNC_TIMEOUT)
                 except TimeoutError as exc:
                     raise AssertionError("Timed out at winner appointment-lock gate") from exc
+
+        async def execute(self, statement, *args, **kwargs):
+            is_lock = _appointment_lock(statement)
+            role = _request_role.get()
+            if is_lock and role != winner_role:
+                contender_at_lock.set()
+            result = await super().execute(statement, *args, **kwargs)
+            await self._gate_after_lock(statement, role)
+            return result
+
+        async def scalar(self, statement, *args, **kwargs):
+            role = _request_role.get()
+            if _appointment_lock(statement) and role != winner_role:
+                contender_at_lock.set()
+            result = await super().scalar(statement, *args, **kwargs)
+            await self._gate_after_lock(statement, role)
             return result
 
     gated_engine = create_async_engine(target_url, pool_pre_ping=True)
