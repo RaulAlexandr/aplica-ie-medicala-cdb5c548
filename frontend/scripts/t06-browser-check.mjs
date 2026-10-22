@@ -147,6 +147,8 @@ try {
   const viewportChecks = [];
   for (const width of [1440, 375, 320]) {
     await page.setViewportSize({ width, height: 900 });
+    const descriptionBox = await page.getByLabel('Descriere', { exact: true }).boundingBox();
+    assert.ok(descriptionBox, `Accessible description field is missing at ${width}px`);
     const metrics = await page.evaluate(() => {
       const rect = (selector) => {
         const element = document.querySelector(selector);
@@ -163,11 +165,18 @@ try {
         documentWidth: document.documentElement.scrollWidth,
         chart: rect('.og-chart'),
         selectedDetail: rect('.og-detail-heading'),
-        textarea: rect('textarea[aria-label="Descriere"]'),
         submit: rect('.og-primary-button'),
         teeth,
       };
     });
+    metrics.textarea = {
+      left: descriptionBox.x,
+      right: descriptionBox.x + descriptionBox.width,
+      top: descriptionBox.y,
+      bottom: descriptionBox.y + descriptionBox.height,
+      width: descriptionBox.width,
+      height: descriptionBox.height,
+    };
     assert.ok(metrics.documentWidth <= width, `Horizontal overflow at ${width}px: ${metrics.documentWidth}px`);
     for (const selector of ['chart', 'selectedDetail', 'textarea', 'submit']) {
       const box = metrics[selector];

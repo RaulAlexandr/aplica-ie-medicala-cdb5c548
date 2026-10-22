@@ -93,7 +93,7 @@ Scriptul acoperă scenariile: A) 1.6 → 1.7 → 1.6, adăugare cu suprafețe ș
 - `npm run build` — trecut: `tsc -b` și build-ul standard Vite.
 - `./node_modules/.bin/vite build --config vite.t06.config.ts` — trecut; pagina și resursele build-uite există în `dist-t06`. Manifestul SHA-256 al fișierelor din `dist` a rămas identic înainte și după build-ul T06.
 - `node --check scripts/t06-browser-check.mjs` — trecut.
-- Browser — neexecutat. Pornirea preview-ului pe `127.0.0.1:5176` a eșuat în sandbox cu `Error: listen EPERM: operation not permitted 127.0.0.1:5176` (stack Node: `Server.setupListenHandle`, `listenInCluster`). Nu au fost create capturi și nu există rezultate browser. Testele React și build-urile nu înlocuiesc această acceptanță.
+- Browser — neexecutat. După corectarea scriptului ca să găsească câmpul „Descriere” prin label-ul HTML asociat și să-l măsoare cu bounding box, preview-ul a fost încercat din nou pe `127.0.0.1:5176`; sandboxul a răspuns `Error: listen EPERM: operation not permitted 127.0.0.1:5176` (stack Node: `Server.setupListenHandle`, `listenInCluster`). Nu au fost create capturi și nu există rezultate browser. Testele React și build-urile nu înlocuiesc această acceptanță.
 - `git diff --check` — trecut.
 
 ### Pașii browser pentru Raul
