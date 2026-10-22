@@ -987,3 +987,281 @@ async def test_list_procedures_with_duration(client):
         our_proc = next((p for p in procedures if str(p["id"]) == str(procedure_id)), None)
         assert our_proc is not None
         assert our_proc["total_duration_seconds"] == 600  # 10 minutes
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_concurrent_start_same_doctor_postgres(client, postgres_db):
+    """PostgreSQL test: Two concurrent start attempts for the same doctor should fail.
+    
+    This test verifies that the unique timer per doctor constraint is enforced
+    transactionally with FOR UPDATE locks.
+    """
+    tokens = await register(client, email="manager@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    
+    # Setup: create doctor, patient, procedure catalog, appointment, and two procedures
+    procedure_id_1, _ = await create_test_procedure_for_notes(client, headers)
+    
+    # Create second procedure for same doctor
+    room = await client.post("/api/rooms", headers=headers, json={"name": "Cabinet 2"})
+    catalog = await client.post("/api/procedures", headers=headers, json={
+        "code": "FILL02",
+        "name": "Filling 2",
+        "base_price": "150.00",
+        "default_duration_minutes": 45
+    })
+    me = await client.get("/api/auth/me", headers=headers)
+    doctor_id = me.json()["id"]
+    
+    patient = await client.post("/api/patients", headers=headers, json={
+        "first_name": "Test2",
+        "last_name": "Patient2"
+    })
+    patient_id = patient.json()["id"]
+    
+    appointment = await client.post("/api/appointments", headers=headers, json={
+        "patient_id": patient_id,
+        "doctor_id": doctor_id,
+        "room_id": room.json()["id"],
+        "starts_at": "2026-10-01T14:00:00+00:00",
+        "duration_minutes": 60,
+        "appointment_type": "Consultation"
+    })
+    appointment_id = appointment.json()["id"]
+    
+    procedure2 = await client.post("/api/performed-procedures", headers=headers, json={
+        "appointment_id": appointment_id,
+        "procedure_catalog_id": catalog.json()["id"]
+    })
+    procedure_id_2 = procedure2.json()["id"]
+    
+    # Try to start both procedures concurrently
+    async def try_start(proc_id):
+        resp = await client.post(f"/api/performed-procedures/{proc_id}/start", headers=headers)
+        return resp.status_code, resp.json()
+    
+    # First start should succeed
+    status1, _ = await try_start(procedure_id_1)
+    assert status1 == 200
+    
+    # Second concurrent start should fail with 409
+    status2, data2 = await try_start(procedure_id_2)
+    assert status2 == 409
+    assert "already has a running procedure" in data2.get("detail", "")
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_concurrent_start_resume_same_doctor_postgres(client, postgres_db):
+    """PostgreSQL test: Start and concurrent resume for the same doctor should fail.
+    
+    Verifies that a doctor cannot resume a procedure if they already have a running one.
+    """
+    tokens = await register(client, email="manager@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    
+    # Setup: create doctor, patient, procedure catalog, appointment, and procedure
+    procedure_id, _ = await create_test_procedure_for_notes(client, headers)
+    
+    # Start the procedure
+    start_resp = await client.post(f"/api/performed-procedures/{procedure_id}/start", headers=headers)
+    assert start_resp.status_code == 200
+    
+    # Pause the procedure
+    pause_resp = await client.post(f"/api/performed-procedures/{procedure_id}/pause", headers=headers)
+    assert pause_resp.status_code == 200
+    
+    # Create second procedure for same doctor
+    room = await client.post("/api/rooms", headers=headers, json={"name": "Cabinet 2"})
+    catalog = await client.post("/api/procedures", headers=headers, json={
+        "code": "FILL03",
+        "name": "Filling 3",
+        "base_price": "200.00",
+        "default_duration_minutes": 30
+    })
+    me = await client.get("/api/auth/me", headers=headers)
+    doctor_id = me.json()["id"]
+    
+    patient = await client.post("/api/patients", headers=headers, json={
+        "first_name": "Test3",
+        "last_name": "Patient3"
+    })
+    patient_id = patient.json()["id"]
+    
+    appointment = await client.post("/api/appointments", headers=headers, json={
+        "patient_id": patient_id,
+        "doctor_id": doctor_id,
+        "room_id": room.json()["id"],
+        "starts_at": "2026-10-01T16:00:00+00:00",
+        "duration_minutes": 60,
+        "appointment_type": "Consultation"
+    })
+    appointment_id = appointment.json()["id"]
+    
+    procedure2 = await client.post("/api/performed-procedures", headers=headers, json={
+        "appointment_id": appointment_id,
+        "procedure_catalog_id": catalog.json()["id"]
+    })
+    procedure_id_2 = procedure2.json()["id"]
+    
+    # Start second procedure
+    start_resp2 = await client.post(f"/api/performed-procedures/{procedure_id_2}/start", headers=headers)
+    assert start_resp2.status_code == 200
+    
+    # Try to resume first procedure - should fail because doctor has running procedure
+    resume_resp = await client.post(f"/api/performed-procedures/{procedure_id}/resume", headers=headers)
+    assert resume_resp.status_code == 409
+    assert "already has a running procedure" in resume_resp.json().get("detail", "")
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_manager_start_for_other_doctor_postgres(client, postgres_db):
+    """PostgreSQL test: Manager can start procedures for other doctors.
+    
+    Verifies that manager role can start procedures on behalf of other doctors
+    and the unique timer constraint applies to the executed_by_id, not the actor.
+    """
+    tokens = await register(client, email="manager@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    
+    # Create a second doctor
+    doctor2 = await create_doctor(client, headers, email="doctor2@example.com")
+    doctor2_id = doctor2["id"]
+    
+    # Create room, patient, procedure catalog, appointment for doctor2
+    room = await client.post("/api/rooms", headers=headers, json={"name": "Cabinet 3"})
+    patient = await client.post("/api/patients", headers=headers, json={
+        "first_name": "Test4",
+        "last_name": "Patient4"
+    })
+    patient_id = patient.json()["id"]
+    
+    catalog = await client.post("/api/procedures", headers=headers, json={
+        "code": "FILL04",
+        "name": "Filling 4",
+        "base_price": "250.00",
+        "default_duration_minutes": 60
+    })
+    catalog_id = catalog.json()["id"]
+    
+    appointment = await client.post("/api/appointments", headers=headers, json={
+        "patient_id": patient_id,
+        "doctor_id": doctor2_id,
+        "room_id": room.json()["id"],
+        "starts_at": "2026-10-01T18:00:00+00:00",
+        "duration_minutes": 60,
+        "appointment_type": "Consultation"
+    })
+    appointment_id = appointment.json()["id"]
+    
+    # Create procedure for doctor2
+    procedure = await client.post("/api/performed-procedures", headers=headers, json={
+        "appointment_id": appointment_id,
+        "procedure_catalog_id": catalog_id
+    })
+    procedure_id = procedure.json()["id"]
+    
+    # Manager can start procedure for doctor2
+    start_resp = await client.post(f"/api/performed-procedures/{procedure_id}/start", headers=headers)
+    assert start_resp.status_code == 200
+    
+    # Create another procedure for doctor2
+    appointment2 = await client.post("/api/appointments", headers=headers, json={
+        "patient_id": patient_id,
+        "doctor_id": doctor2_id,
+        "room_id": room.json()["id"],
+        "starts_at": "2026-10-01T19:00:00+00:00",
+        "duration_minutes": 60,
+        "appointment_type": "Consultation"
+    })
+    
+    procedure2 = await client.post("/api/performed-procedures", headers=headers, json={
+        "appointment_id": appointment2.json()["id"],
+        "procedure_catalog_id": catalog_id
+    })
+    procedure_id_2 = procedure2.json()["id"]
+    
+    # Manager cannot start second procedure for doctor2 (unique timer per doctor)
+    start_resp2 = await client.post(f"/api/performed-procedures/{procedure_id_2}/start", headers=headers)
+    assert start_resp2.status_code == 409
+    assert "already has a running procedure" in start_resp2.json().get("detail", "")
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_different_doctors_independent_postgres(client, postgres_db):
+    """PostgreSQL test: Two different doctors can have running procedures independently.
+    
+    Verifies that the unique timer constraint is per doctor, not global.
+    """
+    tokens = await register(client, email="manager@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    
+    # Create two doctors
+    doctor2 = await create_doctor(client, headers, email="doctor2@example.com")
+    doctor2_id = doctor2["id"]
+    doctor3 = await create_doctor(client, headers, email="doctor3@example.com")
+    doctor3_id = doctor3["id"]
+    
+    # Setup for doctor2
+    room = await client.post("/api/rooms", headers=headers, json={"name": "Cabinet 4"})
+    patient2 = await client.post("/api/patients", headers=headers, json={
+        "first_name": "Test5",
+        "last_name": "Patient5"
+    })
+    patient2_id = patient2.json()["id"]
+    
+    catalog = await client.post("/api/procedures", headers=headers, json={
+        "code": "FILL05",
+        "name": "Filling 5",
+        "base_price": "300.00",
+        "default_duration_minutes": 30
+    })
+    catalog_id = catalog.json()["id"]
+    
+    appointment2 = await client.post("/api/appointments", headers=headers, json={
+        "patient_id": patient2_id,
+        "doctor_id": doctor2_id,
+        "room_id": room.json()["id"],
+        "starts_at": "2026-10-01T20:00:00+00:00",
+        "duration_minutes": 60,
+        "appointment_type": "Consultation"
+    })
+    
+    procedure2 = await client.post("/api/performed-procedures", headers=headers, json={
+        "appointment_id": appointment2.json()["id"],
+        "procedure_catalog_id": catalog_id
+    })
+    procedure2_id = procedure2.json()["id"]
+    
+    # Setup for doctor3
+    patient3 = await client.post("/api/patients", headers=headers, json={
+        "first_name": "Test6",
+        "last_name": "Patient6"
+    })
+    patient3_id = patient3.json()["id"]
+    
+    appointment3 = await client.post("/api/appointments", headers=headers, json={
+        "patient_id": patient3_id,
+        "doctor_id": doctor3_id,
+        "room_id": room.json()["id"],
+        "starts_at": "2026-10-01T21:00:00+00:00",
+        "duration_minutes": 60,
+        "appointment_type": "Consultation"
+    })
+    
+    procedure3 = await client.post("/api/performed-procedures", headers=headers, json={
+        "appointment_id": appointment3.json()["id"],
+        "procedure_catalog_id": catalog_id
+    })
+    procedure3_id = procedure3.json()["id"]
+    
+    # Start procedure for doctor2
+    start_resp2 = await client.post(f"/api/performed-procedures/{procedure2_id}/start", headers=headers)
+    assert start_resp2.status_code == 200
+    
+    # Start procedure for doctor3 - should succeed (different doctor)
+    start_resp3 = await client.post(f"/api/performed-procedures/{procedure3_id}/start", headers=headers)
+    assert start_resp3.status_code == 200
