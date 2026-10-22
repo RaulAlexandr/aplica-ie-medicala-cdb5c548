@@ -10,7 +10,7 @@ Patient PATCH requests use a dedicated partial schema: omitted fields are unchan
 
 Appointments validate clinic ownership for every referenced resource, enforce role policy, validate status transitions, reject reactivation conflicts, and use PostgreSQL GiST exclusion constraints for doctor, room, and assigned-assistant overlap protection under concurrent requests. Intervals are half-open, so a booking ending at the exact start of another booking is allowed. Assistants can view appointments but cannot transition their status.
 
-The staff UI includes login/registration, session refresh and sign-out, overview statistics using a server-side patient count, patient search/list, patient creation, patient detail/edit, appointment creation/list, clinic settings, room administration, staff invitation/list/deactivation, and invitation acceptance workflows with loading, empty, validation, and server-error states.
+The staff UI includes login/registration, session refresh and sign-out, overview statistics using a server-side patient count, patient search/list, patient creation, patient detail/edit, an operational daily/weekly appointment calendar, server-side calendar filters, appointment details/edit/status/reschedule actions, clinic settings, room administration, staff invitation/list/deactivation, and invitation acceptance workflows with loading, empty, validation, and server-error states.
 
 ## Role policy
 
@@ -58,6 +58,8 @@ The staff UI is available at `http://localhost:5173`; the API health check is `h
 
 Application startup does not call `create_all` or mutate the schema. Apply migrations with `alembic upgrade head`. Revision `0002_integrity_and_history` adds patient revision history, aligned indexes, a trigger-maintained `appointments.ends_at` column, and PostgreSQL scheduling guards. It enables `btree_gist` and adds exclusion constraints for doctor, room, and non-null assigned-assistant time ranges without putting duration/time-zone calculations in index expressions. Before adding constraints, the migration detects existing active overlaps and aborts the transaction with an operator-actionable error; it never deletes records. Existing deployments must run the normal upgrade path; tables are not dropped or recreated.
 
+Revision `0004_operational_calendar` adds recurring clinic working hours, resource unavailability, and append-only appointment history for create/edit/status/reschedule actions. The calendar accepts clinic-local `local_start` values and returns both UTC instants and clinic-local `local_start`/`local_end` values. Nonexistent DST times are rejected; ambiguous DST times require `timezone_fold` 0 or 1. If no working-hours rows are configured, the existing permissive behavior is retained; once configured, bookings must fit one configured interval on the clinic-local day. Unavailability is tenant-scoped and checked for doctors, assistants, and rooms. Calendar queries support day/week boundaries, room/doctor/assistant/status/type/patient filters, and always derive boundaries from the clinic IANA timezone. Cancelled/no-show appointments do not block active bookings; reactivation revalidates all resources.
+
 A subsequent revision can be generated with:
 
 ```bash
@@ -82,6 +84,9 @@ npm run build
 ```
 
 The fast backend suite, Ruff, Python compilation, Alembic head inspection, and frontend production build are runnable locally. The real-database checks are reproducible with `DATABASE_URL=postgresql+asyncpg://... alembic upgrade head` followed by `TEST_DATABASE_URL=postgresql+asyncpg://... pytest -q tests/test_postgres_integrity.py -m postgres`; CI runs these against PostgreSQL 16.
+
+## T02 verification
+From `backend`, run `ruff check app tests alembic && python3 -m compileall -q app alembic && pytest -q -m 'not postgres'`. From `frontend`, run `npm test -- --run && npm run build`. PostgreSQL migration and exclusion-constraint/concurrency tests require PostgreSQL 16 and are not represented by SQLite tests. The browser acceptance journey requires a running API/database and browser environment; synthetic API behavior is covered by `tests/test_task_t02.py`.
 
 ## Remaining limitations
 

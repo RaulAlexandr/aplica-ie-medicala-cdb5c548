@@ -158,8 +158,12 @@ async def _migration_database(overlapping: bool, start_revision: str = "0001_ini
     await asyncio.to_thread(subprocess.run, ["alembic", "upgrade", start_revision], cwd=os.path.dirname(__file__) + "/..", env=env, check=True, capture_output=True, text=True)
     connection = await asyncpg.connect(_postgres_dsn(target, name))
     clinic_id, doctor_id, room_id, patient_id = [str(uuid4()) for _ in range(4)]
-    await connection.execute("INSERT INTO clinics (id, name, created_at) VALUES ($1, 'Legacy clinic', now())", clinic_id)
-    await connection.execute("INSERT INTO users (id, clinic_id, email, password_hash, full_name, role, is_active) VALUES ($1, $2, $3, 'hash', 'Legacy doctor', 'doctor', true)", doctor_id, clinic_id, f"{doctor_id}@example.com")
+    if start_revision == "0003_clinic_setup":
+        await connection.execute("INSERT INTO clinics (id, name, timezone, created_at, updated_at) VALUES ($1, 'Legacy clinic', 'Europe/Bucharest', now(), now())", clinic_id)
+        await connection.execute("INSERT INTO users (id, clinic_id, email, password_hash, full_name, role, is_active, created_at, updated_at) VALUES ($1, $2, $3, 'hash', 'Legacy doctor', 'doctor', true, now(), now())", doctor_id, clinic_id, f"{doctor_id}@example.com")
+    else:
+        await connection.execute("INSERT INTO clinics (id, name, created_at) VALUES ($1, 'Legacy clinic', now())", clinic_id)
+        await connection.execute("INSERT INTO users (id, clinic_id, email, password_hash, full_name, role, is_active) VALUES ($1, $2, $3, 'hash', 'Legacy doctor', 'doctor', true)", doctor_id, clinic_id, f"{doctor_id}@example.com")
     await connection.execute("INSERT INTO rooms (id, clinic_id, name, is_active) VALUES ($1, $2, 'Legacy room', true)", room_id, clinic_id)
     await connection.execute("INSERT INTO patients (id, clinic_id, first_name, last_name, created_at, updated_at) VALUES ($1, $2, 'Legacy', 'Patient', now(), now())", patient_id, clinic_id)
     if start_revision == "0002_integrity_and_history":
@@ -188,7 +192,7 @@ async def test_postgresql_upgrade_from_0001_preserves_valid_records():
     try:
         assert returncode == 0
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0004_operational_calendar"
         assert await connection.fetchval("SELECT count(*) FROM patients") == 1
         assert await connection.fetchval("SELECT count(*) FROM patient_revisions") == 0
         assert await connection.fetchval("SELECT count(*) FROM users WHERE created_at IS NULL OR updated_at IS NULL") == 0
@@ -208,7 +212,7 @@ async def test_postgresql_upgrade_from_0002_preserves_clinical_history():
     try:
         assert returncode == 0
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0004_operational_calendar"
         assert await connection.fetchval("SELECT count(*) FROM clinics") == 1
         assert await connection.fetchval("SELECT count(*) FROM users") == 1
         assert await connection.fetchval("SELECT count(*) FROM rooms") == 1
@@ -216,6 +220,30 @@ async def test_postgresql_upgrade_from_0002_preserves_clinical_history():
         assert await connection.fetchval("SELECT count(*) FROM appointments") == 1
         assert await connection.fetchval("SELECT count(*) FROM patient_revisions") == 1
         assert await connection.fetchval("SELECT count(*) FROM users WHERE created_at IS NULL OR updated_at IS NULL") == 0
+        await connection.close()
+    finally:
+        await _drop_migration_database(source, name)
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_postgresql_upgrade_from_populated_0003_preserves_operational_records():
+    source = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
+    if not source or not source.startswith("postgresql+"):
+        pytest.skip("TEST_DATABASE_URL must point to PostgreSQL")
+    target, name, returncode = await _migration_database(overlapping=False, start_revision="0003_clinic_setup")
+    try:
+        assert returncode == 0
+        connection = await asyncpg.connect(_postgres_dsn(target, name))
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0004_operational_calendar"
+        assert await connection.fetchval("SELECT name FROM clinics") == "Legacy clinic"
+        assert await connection.fetchval("SELECT full_name FROM users") == "Legacy doctor"
+        assert await connection.fetchval("SELECT name FROM rooms") == "Legacy room"
+        assert await connection.fetchval("SELECT first_name || ' ' || last_name FROM patients") == "Legacy Patient"
+        assert await connection.fetchval("SELECT count(*) FROM appointments") == 1
+        assert await connection.fetchval("SELECT count(*) FROM working_hours") == 0
+        assert await connection.fetchval("SELECT count(*) FROM resource_unavailability") == 0
+        assert await connection.fetchval("SELECT count(*) FROM appointment_history") == 0
         await connection.close()
     finally:
         await _drop_migration_database(source, name)
@@ -255,7 +283,7 @@ async def test_postgresql_empty_database_upgrade_reaches_corrected_head():
         result = await asyncio.to_thread(subprocess.run, ["alembic", "upgrade", "head"], cwd=os.path.dirname(__file__) + "/..", env=env, capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0003_clinic_setup"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "0004_operational_calendar"
         assert await connection.fetchval("SELECT count(*) FROM information_schema.columns WHERE table_name = 'users' AND column_name IN ('created_at', 'updated_at')") == 2
         await connection.close()
     finally:
