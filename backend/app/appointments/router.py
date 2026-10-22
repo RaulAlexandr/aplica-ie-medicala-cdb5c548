@@ -157,28 +157,22 @@ async def update_status(appointment_id: UUID, payload: AppointmentStatus, db: As
         raise HTTPException(409, f"Invalid appointment transition: {item.status} -> {payload.status}")
 
     # Check for unresolved performed procedures when closing appointment
-    # Per T04 spec: cannot close visit if there are running or paused procedures
+    # Per T04 spec: cannot close visit if there are pending, running or paused procedures
+    # "Manoperele pending trebuie finalizate sau anulate explicit"
     if payload.status == "completed" and payload.status != item.status:
         from app.database import PerformedProcedure
-        has_unresolved = await db.scalar(
-            select(PerformedProcedure.id).where(
+        unresolved = await db.execute(
+            select(PerformedProcedure.id, PerformedProcedure.procedure_name, PerformedProcedure.status)
+            .where(
                 PerformedProcedure.appointment_id == appointment_id,
                 PerformedProcedure.clinic_id == user.clinic_id,
-                PerformedProcedure.status.in_(["running", "paused"])
+                PerformedProcedure.status.in_(["pending", "running", "paused"])
             )
         )
-        if has_unresolved:
-            # Get details of unresolved procedures for error message
-            unresolved = await db.execute(
-                select(PerformedProcedure.id, PerformedProcedure.procedure_name, PerformedProcedure.status)
-                .where(
-                    PerformedProcedure.appointment_id == appointment_id,
-                    PerformedProcedure.clinic_id == user.clinic_id,
-                    PerformedProcedure.status.in_(["running", "paused"])
-                )
-            )
-            unresolved_list = unresolved.scalars().all()
-            procedure_details = [f"{p.procedure_name} ({p.status})" for p in unresolved_list]
+        unresolved_list = unresolved.all()
+        if unresolved_list:
+            # unresolved_list contains tuples of (id, procedure_name, status)
+            procedure_details = [f"{proc_name} ({status})" for _, proc_name, status in unresolved_list]
             raise HTTPException(
                 409,
                 f"Cannot close appointment: {len(unresolved_list)} unresolved procedure(s): {', '.join(procedure_details)}"

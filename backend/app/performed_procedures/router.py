@@ -94,18 +94,18 @@ def validate_price_value(value: object) -> Decimal:
         raise TypeError("Price must be provided as a string for exact decimal representation")
     else:
         raise TypeError("Price must be a decimal number")
-    
+
     if value.is_infinite() or value.is_nan():
         raise ValueError("Price must be a finite number")
-    
+
     if value < Decimal("0.00"):
         raise ValueError("Price must be at least 0.00")
     if value > Decimal("999999999.99"):
         raise ValueError("Price must be at most 999999999.99")
-    
+
     if value.as_tuple().exponent < -2:
         raise ValueError("Price must have at most 2 decimal places")
-    
+
     return value
 
 
@@ -217,7 +217,7 @@ def _response(procedure: PerformedProcedure, segments: list | None = None) -> Pe
         total_duration = _calculate_total_duration(segments)
     else:
         total_duration = None
-    
+
     return PerformedProcedureResponse.model_validate(
         {
             **procedure.__dict__,
@@ -271,7 +271,7 @@ async def _get_performed_procedure(
     db: AsyncSession, procedure_id: UUID, user: User, for_update: bool = False
 ) -> PerformedProcedure | None:
     """Get a performed procedure by ID.
-    
+
     Note: Does NOT load segments to avoid lazy loading issues.
     Use _get_active_segments separately or load explicitly in the caller.
     Lock order: User row (for doctor) -> PerformedProcedure row.
@@ -282,7 +282,7 @@ async def _get_performed_procedure(
     )
     if for_update:
         query = query.with_for_update()
-    
+
     result = await db.execute(query)
     return result.unique().scalar_one_or_none()
 
@@ -291,7 +291,7 @@ async def _get_performed_procedure_with_segments(
     db: AsyncSession, procedure_id: UUID, user: User, for_update: bool = False
 ) -> tuple[PerformedProcedure | None, list[ProcedureExecutionSegment]]:
     """Get a performed procedure with its segments.
-    
+
     Safe alternative to joinedload that avoids lazy loading issues.
     """
     procedure = await _get_performed_procedure(db, procedure_id, user, for_update)
@@ -328,11 +328,11 @@ async def _check_doctor_has_running_procedure(
     db: AsyncSession, doctor_id: UUID, clinic_id: UUID, exclude_procedure_id: UUID | None = None
 ) -> bool:
     """Check if doctor already has a running procedure.
-    
+
     Lock order (to prevent deadlocks):
     1. Lock the User row for the executing doctor (prevents concurrent start/resume for same doctor)
     2. Check for existing running procedures
-    
+
     This ensures that two concurrent start/resume operations for the same doctor
     will be serialized by the lock on the User row.
     """
@@ -343,7 +343,7 @@ async def _check_doctor_has_running_procedure(
             User.clinic_id == clinic_id
         ).with_for_update()
     )
-    
+
     # Then check for existing running procedures
     query = select(PerformedProcedure.id).where(
         PerformedProcedure.clinic_id == clinic_id,
@@ -394,17 +394,17 @@ async def list_performed_procedures(
     query = select(PerformedProcedure).where(
         PerformedProcedure.clinic_id == user.clinic_id
     ).order_by(PerformedProcedure.created_at.desc()).offset(offset).limit(limit)
-    
+
     if appointment_id:
         query = query.where(PerformedProcedure.appointment_id == appointment_id)
     if patient_id:
         query = query.where(PerformedProcedure.patient_id == patient_id)
     if status and status in PROCEDURE_STATUSES:
         query = query.where(PerformedProcedure.status == status)
-    
+
     result = await db.execute(query)
     procedures = result.unique().scalars().all()
-    
+
     # Eager load segments for all procedures in a single query to avoid N+1
     procedure_ids = [p.id for p in procedures]
     if procedure_ids:
@@ -418,7 +418,7 @@ async def list_performed_procedures(
             if seg.performed_procedure_id not in segments_by_proc:
                 segments_by_proc[seg.performed_procedure_id] = []
             segments_by_proc[seg.performed_procedure_id].append(seg)
-        
+
         responses = []
         for p in procedures:
             p_segments = segments_by_proc.get(p.id, [])
@@ -449,7 +449,7 @@ async def get_procedure_segments(
     procedure = await _get_performed_procedure(db, procedure_id, user)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    
+
     segments = await _get_active_segments(db, procedure_id)
     return [_segment_response(s) for s in segments]
 
@@ -463,7 +463,7 @@ async def get_procedure_revisions(
     procedure = await _get_performed_procedure(db, procedure_id, user)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    
+
     revisions = await db.scalars(
         select(PerformedProcedureRevision)
         .where(PerformedProcedureRevision.performed_procedure_id == procedure_id)
@@ -487,11 +487,16 @@ async def create_performed_procedure(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles(*DOCTORS, *MANAGERS)),
 ) -> PerformedProcedureResponse:
-    # Validate appointment exists and belongs to clinic
-    appointment = await _validate_appointment_access(db, payload.appointment_id, user)
+    # Validate appointment exists and belongs to clinic, with lock for consistency
+    appointment = await db.scalar(
+        select(Appointment).where(
+            Appointment.id == payload.appointment_id,
+            Appointment.clinic_id == user.clinic_id
+        ).with_for_update()
+    )
     if not appointment:
         raise HTTPException(422, "Appointment not found or access denied")
-    
+
     # Prevent creating procedures for closed appointments
     # Per T04 spec: "Respingerea operațiilor incompatibile cu programări închise/anulate"
     if appointment.status in ("completed", "cancelled", "no_show"):
@@ -504,14 +509,14 @@ async def create_performed_procedure(
     catalog = await _validate_procedure_catalog_access(db, payload.procedure_catalog_id, user)
     if not catalog:
         raise HTTPException(422, "Procedure catalog not found or access denied")
-    
+
     # Check if appointment patient matches
     patient = await db.scalar(
         select(Patient).where(Patient.id == appointment.patient_id, Patient.clinic_id == user.clinic_id)
     )
     if not patient:
         raise HTTPException(422, "Patient not found or access denied")
-    
+
     # Create the performed procedure with snapshot of catalog data
     procedure = PerformedProcedure(
         clinic_id=user.clinic_id,
@@ -530,10 +535,10 @@ async def create_performed_procedure(
         current_price=catalog.base_price,
         notes=payload.notes,
     )
-    
+
     db.add(procedure)
     await db.flush()
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -541,10 +546,10 @@ async def create_performed_procedure(
         entity_id=procedure.id,
         action="created"
     ))
-    
+
     await db.commit()
     await db.refresh(procedure)
-    
+
     return _response(procedure)
 
 
@@ -557,28 +562,32 @@ async def start_procedure(
     procedure = await _get_performed_procedure(db, procedure_id, user, for_update=True)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    
+
     # Prevent starting procedures for closed appointments
     # Per T04 spec: "Respingerea operațiilor incompatibile cu programări închise/anulate"
-    appointment = await db.get(Appointment, procedure.appointment_id)
+    # Lock appointment for consistency with closure operations
+    appointment = await db.scalar(
+        select(Appointment).where(
+            Appointment.id == procedure.appointment_id,
+            Appointment.clinic_id == user.clinic_id
+        ).with_for_update()
+    )
     if not appointment:
-        raise HTTPException(404, "Appointment not found")
+        raise HTTPException(404, "Appointment not found or access denied")
     if appointment.status in ("completed", "cancelled", "no_show"):
         raise HTTPException(
             409,
             f"Cannot start procedure: appointment has status {appointment.status}"
         )
-    if appointment.clinic_id != user.clinic_id:
-        raise HTTPException(403, "Appointment does not belong to your clinic")
 
     # Check ownership - only the executing doctor or manager can start
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can start this procedure")
-    
+
     # Validate transition
     if procedure.status not in PROCEDURE_TRANSITIONS or "running" not in PROCEDURE_TRANSITIONS[procedure.status]:
         raise HTTPException(409, f"Cannot start procedure from status: {procedure.status}")
-    
+
     # Check if executed_by doctor already has a running procedure
     has_running = await _check_doctor_has_running_procedure(db, procedure.executed_by_id, user.clinic_id, procedure_id)
     if has_running:
@@ -586,7 +595,7 @@ async def start_procedure(
             409,
             "Doctor already has a running procedure. Only one timer per doctor is allowed."
         )
-    
+
     # Check if any other procedure is running for this appointment (with FOR UPDATE)
     existing_running = await db.scalar(
         select(PerformedProcedure.id).where(
@@ -601,7 +610,7 @@ async def start_procedure(
             409,
             "Another procedure is already running for this appointment"
         )
-    
+
     # Create start segment
     now = utcnow()
     segment = ProcedureExecutionSegment(
@@ -612,11 +621,11 @@ async def start_procedure(
         duration_seconds=None,
     )
     db.add(segment)
-    
+
     # Update procedure status
     procedure.status = "running"
     procedure.updated_at = now
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -624,10 +633,10 @@ async def start_procedure(
         entity_id=procedure.id,
         action="started"
     ))
-    
+
     await db.commit()
     await db.refresh(procedure)
-    
+
     # Load segments after commit
     segments = await _get_active_segments(db, procedure_id)
     return _response(procedure, segments=segments)
@@ -642,22 +651,22 @@ async def pause_procedure(
     procedure = await _get_performed_procedure(db, procedure_id, user, for_update=True)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    
+
     # Check ownership
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can pause this procedure")
-    
+
     # Validate transition
     if procedure.status not in PROCEDURE_TRANSITIONS or "paused" not in PROCEDURE_TRANSITIONS[procedure.status]:
         raise HTTPException(409, f"Cannot pause procedure from status: {procedure.status}")
-    
+
     # Get last segment and close it
     last_segment = await _get_last_segment(db, procedure_id)
     if last_segment and last_segment.segment_type == SegmentType.RUN and last_segment.ended_at is None:
         last_segment.ended_at = utcnow()
         duration = (_normalize_dt(last_segment.ended_at) - _normalize_dt(last_segment.started_at)).total_seconds()
         last_segment.duration_seconds = int(duration)
-    
+
     # Create pause segment
     now = utcnow()
     pause_segment = ProcedureExecutionSegment(
@@ -668,11 +677,11 @@ async def pause_procedure(
         duration_seconds=None,
     )
     db.add(pause_segment)
-    
+
     # Update procedure status
     procedure.status = "paused"
     procedure.updated_at = now
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -680,10 +689,10 @@ async def pause_procedure(
         entity_id=procedure.id,
         action="paused"
     ))
-    
+
     await db.commit()
     await db.refresh(procedure)
-    
+
     segments = await _get_active_segments(db, procedure_id)
     return _response(procedure, segments=segments)
 
@@ -697,15 +706,32 @@ async def resume_procedure(
     procedure = await _get_performed_procedure(db, procedure_id, user, for_update=True)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    
+
+    # Prevent resuming procedures for closed appointments
+    # Per T04 spec: "Respingerea operațiilor incompatibile cu programări închise/anulate"
+    # Lock appointment for consistency with closure operations
+    appointment = await db.scalar(
+        select(Appointment).where(
+            Appointment.id == procedure.appointment_id,
+            Appointment.clinic_id == user.clinic_id
+        ).with_for_update()
+    )
+    if not appointment:
+        raise HTTPException(404, "Appointment not found or access denied")
+    if appointment.status in ("completed", "cancelled", "no_show"):
+        raise HTTPException(
+            409,
+            f"Cannot resume procedure: appointment has status {appointment.status}"
+        )
+
     # Check ownership
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can resume this procedure")
-    
+
     # Validate transition
     if procedure.status not in PROCEDURE_TRANSITIONS or "running" not in PROCEDURE_TRANSITIONS[procedure.status]:
         raise HTTPException(409, f"Cannot resume procedure from status: {procedure.status}")
-    
+
     # Check if executed_by doctor already has a running procedure
     has_running = await _check_doctor_has_running_procedure(db, procedure.executed_by_id, user.clinic_id, procedure_id)
     if has_running:
@@ -713,14 +739,14 @@ async def resume_procedure(
             409,
             "Doctor already has a running procedure. Only one timer per doctor is allowed."
         )
-    
+
     # Close the pause segment
     last_segment = await _get_last_segment(db, procedure_id)
     if last_segment and last_segment.segment_type == SegmentType.PAUSE and last_segment.ended_at is None:
         last_segment.ended_at = utcnow()
         duration = (_normalize_dt(last_segment.ended_at) - _normalize_dt(last_segment.started_at)).total_seconds()
         last_segment.duration_seconds = int(duration)
-    
+
     # Create new run segment
     now = utcnow()
     run_segment = ProcedureExecutionSegment(
@@ -731,11 +757,11 @@ async def resume_procedure(
         duration_seconds=None,
     )
     db.add(run_segment)
-    
+
     # Update procedure status
     procedure.status = "running"
     procedure.updated_at = now
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -743,10 +769,10 @@ async def resume_procedure(
         entity_id=procedure.id,
         action="resumed"
     ))
-    
+
     await db.commit()
     await db.refresh(procedure)
-    
+
     segments = await _get_active_segments(db, procedure_id)
     return _response(procedure, segments=segments)
 
@@ -760,27 +786,27 @@ async def complete_procedure(
     procedure = await _get_performed_procedure(db, procedure_id, user, for_update=True)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    
+
     # Check ownership
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can complete this procedure")
-    
+
     # Validate transition
     if procedure.status not in PROCEDURE_TRANSITIONS or "completed" not in PROCEDURE_TRANSITIONS[procedure.status]:
         raise HTTPException(409, f"Cannot complete procedure from status: {procedure.status}")
-    
+
     # Close the last segment
     last_segment = await _get_last_segment(db, procedure_id)
     if last_segment and last_segment.ended_at is None:
         last_segment.ended_at = utcnow()
         duration = (_normalize_dt(last_segment.ended_at) - _normalize_dt(last_segment.started_at)).total_seconds()
         last_segment.duration_seconds = int(duration)
-    
+
     # Update procedure status
     now = utcnow()
     procedure.status = "completed"
     procedure.updated_at = now
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -788,10 +814,10 @@ async def complete_procedure(
         entity_id=procedure.id,
         action="completed"
     ))
-    
+
     await db.commit()
     await db.refresh(procedure)
-    
+
     segments = await _get_active_segments(db, procedure_id)
     return _response(procedure, segments=segments)
 
@@ -806,27 +832,27 @@ async def cancel_procedure(
     procedure = await _get_performed_procedure(db, procedure_id, user, for_update=True)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    
+
     # Check ownership - doctor or manager can cancel
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can cancel this procedure")
-    
+
     # Validate transition
     if procedure.status not in PROCEDURE_TRANSITIONS or "cancelled" not in PROCEDURE_TRANSITIONS[procedure.status]:
         raise HTTPException(409, f"Cannot cancel procedure from status: {procedure.status}")
-    
+
     # Close the last segment if running or paused
     last_segment = await _get_last_segment(db, procedure_id)
     if last_segment and last_segment.ended_at is None:
         last_segment.ended_at = utcnow()
         duration = (_normalize_dt(last_segment.ended_at) - _normalize_dt(last_segment.started_at)).total_seconds()
         last_segment.duration_seconds = int(duration)
-    
+
     # Update procedure status
     now = utcnow()
     procedure.status = "cancelled"
     procedure.updated_at = now
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -834,7 +860,7 @@ async def cancel_procedure(
         entity_id=procedure.id,
         action="cancelled"
     ))
-    
+
     if payload.notes:
         db.add(PerformedProcedureRevision(
             clinic_id=user.clinic_id,
@@ -846,10 +872,10 @@ async def cancel_procedure(
             reason=payload.notes,
             occurred_at=now
         ))
-    
+
     await db.commit()
     await db.refresh(procedure)
-    
+
     segments = await _get_active_segments(db, procedure_id)
     return _response(procedure, segments=segments)
 
@@ -864,11 +890,11 @@ async def override_duration(
     procedure = await _get_performed_procedure(db, procedure_id, user, for_update=True)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    
+
     # Only manager or the executing doctor can override duration
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can override duration")
-    
+
     # Record the manual duration override in revisions
     now = utcnow()
     db.add(PerformedProcedureRevision(
@@ -881,16 +907,16 @@ async def override_duration(
         reason=payload.reason,
         occurred_at=now
     ))
-    
+
     # Update notes to include manual duration info
     manual_note = f"Manual duration override: {payload.duration_seconds}s - {payload.reason}"
     if procedure.notes:
         procedure.notes = f"{procedure.notes}\n{manual_note}"
     else:
         procedure.notes = manual_note
-    
+
     procedure.updated_at = now
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -898,10 +924,10 @@ async def override_duration(
         entity_id=procedure.id,
         action="duration_override"
     ))
-    
+
     await db.commit()
     await db.refresh(procedure)
-    
+
     segments = await _get_active_segments(db, procedure_id)
     return _response(procedure, segments=segments)
 
@@ -916,14 +942,14 @@ async def override_price(
     procedure = await _get_performed_procedure(db, procedure_id, user, for_update=True)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    
+
     # Only manager can override price
     if user.role not in MANAGERS:
         raise HTTPException(403, "Only manager can override price")
-    
+
     old_price = procedure.current_price
     now = utcnow()
-    
+
     # Record the price change in revisions
     db.add(PerformedProcedureRevision(
         clinic_id=user.clinic_id,
@@ -935,11 +961,11 @@ async def override_price(
         reason=payload.reason,
         occurred_at=now
     ))
-    
+
     # Update the price
     procedure.current_price = payload.new_price
     procedure.updated_at = now
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -947,10 +973,10 @@ async def override_price(
         entity_id=procedure.id,
         action="price_override"
     ))
-    
+
     await db.commit()
     await db.refresh(procedure)
-    
+
     segments = await _get_active_segments(db, procedure_id)
     return _response(procedure, segments=segments)
 
@@ -965,14 +991,14 @@ async def get_visit_summary(
     appointment = await _validate_appointment_access(db, appointment_id, user)
     if not appointment:
         raise HTTPException(404, "Appointment not found or access denied")
-    
+
     # Get patient
     patient = await db.scalar(
         select(Patient).where(Patient.id == appointment.patient_id, Patient.clinic_id == user.clinic_id)
     )
     if not patient:
         raise HTTPException(404, "Patient not found")
-    
+
     # Get all performed procedures for this appointment
     result = await db.execute(
         select(PerformedProcedure).where(
@@ -981,7 +1007,7 @@ async def get_visit_summary(
         ).order_by(PerformedProcedure.created_at)
     )
     procedures = result.unique().scalars().all()
-    
+
     # Load all segments for these procedures
     procedure_ids = [p.id for p in procedures]
     segments_by_proc = {}
@@ -995,19 +1021,19 @@ async def get_visit_summary(
             if seg.performed_procedure_id not in segments_by_proc:
                 segments_by_proc[seg.performed_procedure_id] = []
             segments_by_proc[seg.performed_procedure_id].append(seg)
-    
+
     procedure_responses = []
     for p in procedures:
         p_segments = segments_by_proc.get(p.id, [])
         procedure_responses.append(_response(p, segments=p_segments))
-    
-    # Check for unresolved procedures (running or paused only, not pending)
+
+    # Check for unresolved procedures (pending, running or paused)
     # Per T04 spec: "nu completa vizita cât timp există manopere running sau paused"
-    # "Manoperele pending trebuie finalizate sau anulate explicit" (do not block closure)
+    # "Manoperele pending trebuie finalizate sau anulate explicit"
     unresolved = []
     can_close = True
     for p in procedure_responses:
-        if p.status in ("running", "paused"):
+        if p.status in ("pending", "running", "paused"):
             can_close = False
             unresolved.append({
                 "id": str(p.id),
@@ -1015,7 +1041,7 @@ async def get_visit_summary(
                 "status": p.status,
                 "executed_by": str(p.executed_by_id)
             })
-    
+
     return VisitSummaryResponse(
         appointment_id=appointment.id,
         patient_id=appointment.patient_id,
@@ -1038,16 +1064,16 @@ async def update_procedure_notes(
     procedure = await _get_performed_procedure(db, procedure_id, user, for_update=True)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    
+
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can update notes")
-    
+
     old_notes = procedure.notes
     now = utcnow()
-    
+
     procedure.notes = payload.notes
     procedure.updated_at = now
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -1055,7 +1081,7 @@ async def update_procedure_notes(
         entity_id=procedure.id,
         action="notes_updated"
     ))
-    
+
     if old_notes != payload.notes:
         db.add(PerformedProcedureRevision(
             clinic_id=user.clinic_id,
@@ -1067,9 +1093,9 @@ async def update_procedure_notes(
             reason="Notes updated",
             occurred_at=now
         ))
-    
+
     await db.commit()
     await db.refresh(procedure)
-    
+
     segments = await _get_active_segments(db, procedure_id)
     return _response(procedure, segments=segments)

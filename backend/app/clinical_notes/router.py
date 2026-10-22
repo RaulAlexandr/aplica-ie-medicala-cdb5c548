@@ -212,16 +212,57 @@ def _note_response(note: ClinicalNote, author_name: str) -> ClinicalNoteResponse
     )
 
 
-def _timeline_event_response(event: PatientTimelineEvent, actor_name: str | None = None) -> TimelineEventResponse:
-    return TimelineEventResponse.model_validate(
-        {
-            **event.__dict__,
-            "actor_name": actor_name,
-            "occurred_at": event.occurred_at.isoformat(),
-            "recorded_at": event.recorded_at.isoformat(),
-        },
-        from_attributes=True,
-    )
+def _sanitize_timeline_event(event: PatientTimelineEvent, user: User) -> dict:
+    """Sanitize timeline event to protect clinical data.
+
+    For clinical_note events:
+    - If note is draft and user is not author, filter it out (caller should skip)
+    - Remove title/content that could expose clinical information
+    - Keep metadata for authorized users
+    """
+    result = {
+        "id": event.id,
+        "clinic_id": event.clinic_id,
+        "patient_id": event.patient_id,
+        "event_type": event.event_type,
+        "entity_type": event.entity_type,
+        "entity_id": event.entity_id,
+        "actor_id": event.actor_id,
+        "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
+        "recorded_at": event.recorded_at.isoformat() if event.recorded_at else None,
+        "source": event.source,
+        "metadata": event.metadata or {},
+    }
+
+    # Sanitize title and description for clinical notes
+    if event.entity_type == "clinical_note":
+        # Remove potentially sensitive title/description
+        # Keep generic information only
+        result["title"] = f"{event.metadata.get('type', 'note')} note" if event.metadata else "clinical note"
+        result["description"] = f"{event.metadata.get('type', 'note')} note" if event.metadata else "clinical note"
+    else:
+        # For other event types, keep the original fields
+        result["title"] = event.title or ""
+        result["description"] = event.description or ""
+
+    return result
+
+
+def _timeline_event_response(event: PatientTimelineEvent, actor_name: str | None = None, user: User | None = None) -> TimelineEventResponse:
+    event_dict = _sanitize_timeline_event(event, user) if user else {
+        **event.__dict__,
+        "occurred_at": event.occurred_at.isoformat(),
+        "recorded_at": event.recorded_at.isoformat(),
+    }
+    event_dict["actor_name"] = actor_name
+    return TimelineEventResponse.model_validate(event_dict, from_attributes=True)
+
+
+def _can_access_draft(note: ClinicalNote, user: User) -> bool:
+    """Check if user can access a draft note. Only the author can access drafts."""
+    if note.status != "draft":
+        return True
+    return note.author_id == user.id
 
 
 async def _get_clinical_note(
@@ -279,27 +320,35 @@ async def list_patient_notes(
     patient = await _validate_patient_access(db, patient_id, user)
     if not patient:
         raise HTTPException(404, "Patient not found or access denied")
-    
+
     query = select(ClinicalNote).where(
         ClinicalNote.patient_id == patient_id,
         ClinicalNote.clinic_id == user.clinic_id
-    ).order_by(desc(ClinicalNote.created_at)).offset(offset).limit(limit)
-    
+    ).order_by(desc(ClinicalNote.created_at))
+
     if note_type:
         query = query.where(ClinicalNote.note_type == note_type)
     if status and status in NOTE_STATUSES:
         query = query.where(ClinicalNote.status == status)
     if is_alert is not None:
         query = query.where(ClinicalNote.is_alert.is_(is_alert))
-    
+
+    # Apply draft filtering: non-authors cannot see drafts
+    if user.role not in DOCTORS + MANAGERS:
+        # Staff roles (assistant, reception) should not see any drafts
+        query = query.where(ClinicalNote.status != "draft")
+
     notes = (await db.scalars(query)).all()
-    
+
     # Get author names
     results = []
     for note in notes:
+        # Even for doctors/managers, filter out drafts they didn't author
+        if not _can_access_draft(note, user):
+            continue
         author_name = await _get_user_name(db, note.author_id)
         results.append(_note_response(note, author_name))
-    
+
     return results
 
 
@@ -313,7 +362,11 @@ async def get_clinical_note(
     note = await _get_clinical_note(db, note_id, user)
     if not note:
         raise HTTPException(404, "Clinical note not found or access denied")
-    
+
+    # Check draft access
+    if not _can_access_draft(note, user):
+        raise HTTPException(404, "Clinical note not found or access denied")
+
     author_name = await _get_user_name(db, note.author_id)
     return _note_response(note, author_name)
 
@@ -329,7 +382,7 @@ async def create_clinical_note(
     patient = await _validate_patient_access(db, payload.patient_id, user)
     if not patient:
         raise HTTPException(422, "Patient not found or access denied")
-    
+
     # Validate appointment if provided
     if payload.appointment_id:
         appointment = await _validate_appointment_access(db, payload.appointment_id, user)
@@ -337,7 +390,7 @@ async def create_clinical_note(
             raise HTTPException(422, "Appointment not found or access denied")
         if appointment.patient_id != payload.patient_id:
             raise HTTPException(422, "Appointment patient does not match note patient")
-    
+
     # Create the note
     note = ClinicalNote(
         clinic_id=user.clinic_id,
@@ -352,10 +405,10 @@ async def create_clinical_note(
         status="draft",
         is_alert=payload.is_alert,
     )
-    
+
     db.add(note)
     await db.flush()
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -363,10 +416,10 @@ async def create_clinical_note(
         entity_id=note.id,
         action="created"
     ))
-    
+
     await db.commit()
     await db.refresh(note)
-    
+
     author_name = await _get_user_name(db, user.id)
     return _note_response(note, author_name)
 
@@ -382,23 +435,23 @@ async def update_clinical_note(
     note = await _get_clinical_note(db, note_id, user, for_update=True)
     if not note:
         raise HTTPException(404, "Clinical note not found or access denied")
-    
+
     # Only author or manager can update
     if note.author_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the author or manager can update this note")
-    
+
     # Cannot update finalized note
     if note.status == "finalized":
         raise HTTPException(409, "Cannot update a finalized note. Create an addendum instead.")
-    
+
     changes = payload.model_dump(exclude_unset=True)
     old_values = {}
     for key, value in changes.items():
         old_values[key] = getattr(note, key)
         setattr(note, key, value)
-    
+
     note.updated_at = utcnow()
-    
+
     # Record changes in revisions
     for key, old_value in old_values.items():
         new_value = getattr(note, key)
@@ -413,7 +466,7 @@ async def update_clinical_note(
                 reason="Note updated while in draft",
                 occurred_at=utcnow()
             ))
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -421,10 +474,10 @@ async def update_clinical_note(
         entity_id=note.id,
         action="updated"
     ))
-    
+
     await db.commit()
     await db.refresh(note)
-    
+
     author_name = await _get_user_name(db, note.author_id)
     return _note_response(note, author_name)
 
@@ -440,19 +493,19 @@ async def finalize_clinical_note(
     note = await _get_clinical_note(db, note_id, user, for_update=True)
     if not note:
         raise HTTPException(404, "Clinical note not found or access denied")
-    
+
     # Only author or manager can finalize
     if note.author_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the author or manager can finalize this note")
-    
+
     # Cannot finalize if already finalized
     if note.status == "finalized":
         raise HTTPException(409, "Note is already finalized")
-    
+
     note.status = "finalized"
     note.finalized_at = utcnow()
     note.updated_at = utcnow()
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -460,7 +513,7 @@ async def finalize_clinical_note(
         entity_id=note.id,
         action="finalized"
     ))
-    
+
     if payload and payload.version_notes:
         db.add(ClinicalNoteRevision(
             clinic_id=user.clinic_id,
@@ -472,10 +525,10 @@ async def finalize_clinical_note(
             reason=payload.version_notes,
             occurred_at=utcnow()
         ))
-    
+
     await db.commit()
     await db.refresh(note)
-    
+
     author_name = await _get_user_name(db, note.author_id)
     return _note_response(note, author_name)
 
@@ -491,20 +544,20 @@ async def add_clinical_note_addendum(
     note = await _get_clinical_note(db, note_id, user, for_update=True)
     if not note:
         raise HTTPException(404, "Clinical note not found or access denied")
-    
+
     # Can only add addendum to finalized notes
     if note.status != "finalized":
         raise HTTPException(409, "Can only add addendum to finalized notes")
-    
+
     # Only author or manager can add addendum
     if note.author_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the author or manager can add an addendum")
-    
+
     # Append addendum to content
     old_content = note.content
     note.content = f"{old_content}\n\n---\nAddendum ({utcnow().isoformat()}): {payload.addendum_content}"
     note.updated_at = utcnow()
-    
+
     db.add(ClinicalNoteRevision(
         clinic_id=user.clinic_id,
         clinical_note_id=note.id,
@@ -515,7 +568,7 @@ async def add_clinical_note_addendum(
         reason=payload.reason,
         occurred_at=utcnow()
     ))
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -523,10 +576,10 @@ async def add_clinical_note_addendum(
         entity_id=note.id,
         action="addendum_added"
     ))
-    
+
     await db.commit()
     await db.refresh(note)
-    
+
     author_name = await _get_user_name(db, note.author_id)
     return _note_response(note, author_name)
 
@@ -541,13 +594,17 @@ async def get_note_revisions(
     note = await _get_clinical_note(db, note_id, user)
     if not note:
         raise HTTPException(404, "Clinical note not found or access denied")
-    
+
+    # Check draft access
+    if not _can_access_draft(note, user):
+        raise HTTPException(404, "Clinical note not found or access denied")
+
     revisions = await db.scalars(
         select(ClinicalNoteRevision)
         .where(ClinicalNoteRevision.clinical_note_id == note_id)
         .order_by(ClinicalNoteRevision.occurred_at.desc())
     )
-    
+
     results = []
     for rev in revisions:
         actor_name = await _get_user_name(db, rev.actor_id)
@@ -559,7 +616,7 @@ async def get_note_revisions(
             },
             from_attributes=True,
         ))
-    
+
     return results
 
 
@@ -579,29 +636,42 @@ async def get_patient_timeline(
     patient = await _validate_patient_access(db, patient_id, user)
     if not patient:
         raise HTTPException(404, "Patient not found or access denied")
-    
+
     query = select(PatientTimelineEvent).where(
         PatientTimelineEvent.patient_id == patient_id,
         PatientTimelineEvent.clinic_id == user.clinic_id
     ).order_by(desc(PatientTimelineEvent.occurred_at), desc(PatientTimelineEvent.recorded_at)).offset(offset).limit(limit)
-    
+
     if event_type and event_type in TIMELINE_EVENT_TYPES:
         query = query.where(PatientTimelineEvent.event_type == event_type)
-    
+
     if start_date:
         query = query.where(PatientTimelineEvent.occurred_at >= start_date)
     if end_date:
         query = query.where(PatientTimelineEvent.occurred_at <= end_date)
-    
+
     events = (await db.scalars(query)).all()
-    
+
     results = []
     for event in events:
+        # Skip clinical note draft events that the user cannot access
+        if event.entity_type == "clinical_note" and event.source == "clinical_note":
+            # Fetch the note to check access
+            note = await db.scalar(
+                select(ClinicalNote).where(
+                    ClinicalNote.id == event.entity_id,
+                    ClinicalNote.clinic_id == user.clinic_id
+                )
+            )
+            if note and note.status == "draft" and note.author_id != user.id:
+                # Skip this event - user cannot access this draft
+                continue
+
         actor_name = None
         if event.actor_id:
             actor_name = await _get_user_name(db, event.actor_id)
-        results.append(_timeline_event_response(event, actor_name))
-    
+        results.append(_timeline_event_response(event, actor_name, user))
+
     return results
 
 
@@ -615,7 +685,7 @@ async def get_patient_record(
     patient = await _validate_patient_access(db, patient_id, user)
     if not patient:
         raise HTTPException(404, "Patient not found or access denied")
-    
+
     # Get patient data
     patient_data = {
         "id": str(patient.id),
@@ -633,39 +703,43 @@ async def get_patient_record(
         "medical_alerts": patient.medical_alerts,
         "relevant_medical_conditions": patient.relevant_medical_conditions,
     }
-    
-    # Get alerts (notes with is_alert=True)
+
+    # Get alerts (notes with is_alert=True) - only finalized
     alerts_query = select(ClinicalNote).where(
         ClinicalNote.patient_id == patient_id,
         ClinicalNote.clinic_id == user.clinic_id,
         ClinicalNote.is_alert.is_(True),
         ClinicalNote.status == "finalized"
     ).order_by(desc(ClinicalNote.created_at))
-    
+
     alerts = (await db.scalars(alerts_query)).all()
     alert_list = []
     for alert in alerts:
-        author_name = await _get_user_name(db, alert.author_id)
-        alert_list.append(_note_response(alert, author_name).model_dump())
-    
+        # Alerts are finalized, but still check access
+        if _can_access_draft(alert, user):
+            author_name = await _get_user_name(db, alert.author_id)
+            alert_list.append(_note_response(alert, author_name).model_dump())
+
     # Get clinical notes
     notes_query = select(ClinicalNote).where(
         ClinicalNote.patient_id == patient_id,
         ClinicalNote.clinic_id == user.clinic_id
     ).order_by(desc(ClinicalNote.created_at))
-    
+
     notes = (await db.scalars(notes_query)).all()
     notes_list = []
     for note in notes:
+        if not _can_access_draft(note, user):
+            continue
         author_name = await _get_user_name(db, note.author_id)
         notes_list.append(_note_response(note, author_name))
-    
+
     # Get performed procedures
     procedures_query = select(PerformedProcedure).where(
         PerformedProcedure.patient_id == patient_id,
         PerformedProcedure.clinic_id == user.clinic_id
     ).order_by(desc(PerformedProcedure.created_at))
-    
+
     procedures = (await db.scalars(procedures_query)).all()
     procedures_list = []
     for proc in procedures:
@@ -680,21 +754,32 @@ async def get_patient_record(
             "created_at": proc.created_at.isoformat(),
             "updated_at": proc.updated_at.isoformat(),
         })
-    
+
     # Get timeline
     timeline_query = select(PatientTimelineEvent).where(
         PatientTimelineEvent.patient_id == patient_id,
         PatientTimelineEvent.clinic_id == user.clinic_id
     ).order_by(desc(PatientTimelineEvent.occurred_at))
-    
+
     timeline = (await db.scalars(timeline_query)).all()
     timeline_list = []
     for event in timeline:
+        # Skip clinical note draft events that the user cannot access
+        if event.entity_type == "clinical_note" and event.source == "clinical_note":
+            note = await db.scalar(
+                select(ClinicalNote).where(
+                    ClinicalNote.id == event.entity_id,
+                    ClinicalNote.clinic_id == user.clinic_id
+                )
+            )
+            if note and note.status == "draft" and note.author_id != user.id:
+                continue
+
         actor_name = None
         if event.actor_id:
             actor_name = await _get_user_name(db, event.actor_id)
-        timeline_list.append(_timeline_event_response(event, actor_name))
-    
+        timeline_list.append(_timeline_event_response(event, actor_name, user))
+
     return PatientRecordResponse(
         patient=patient_data,
         alerts=alert_list,
@@ -707,25 +792,26 @@ async def get_patient_record(
 @router.post("/timeline/refresh", status_code=status.HTTP_200_OK)
 async def refresh_timeline(
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_roles(*STAFF_ROLES)),
+    user: User = Depends(require_roles(*MANAGERS)),
 ) -> dict:
     """Trigger timeline refresh for all patients in clinic.
-    
+
     This endpoint regenerates timeline events from existing data.
+    Restricted to managers/administrators only.
     Useful after bulk imports or when timeline gets out of sync.
     """
     # Get all patients in clinic
     patients = await db.scalars(
         select(Patient.id).where(Patient.clinic_id == user.clinic_id)
     )
-    
+
     # Clear existing timeline events for this clinic
     await db.execute(
         PatientTimelineEvent.__table__.delete().where(
             PatientTimelineEvent.clinic_id == user.clinic_id
         )
     )
-    
+
     # Rebuild timeline events from various sources
     for patient_id in patients:
         # From appointments
@@ -735,7 +821,7 @@ async def refresh_timeline(
                 Appointment.clinic_id == user.clinic_id
             ).order_by(Appointment.starts_at)
         )
-        
+
         for appt in appointments:
             event = PatientTimelineEvent(
                 clinic_id=user.clinic_id,
@@ -752,7 +838,7 @@ async def refresh_timeline(
                 metadata={"status": appt.status, "type": appt.appointment_type}
             )
             db.add(event)
-        
+
         # From performed procedures
         procedures = await db.scalars(
             select(PerformedProcedure).where(
@@ -760,7 +846,7 @@ async def refresh_timeline(
                 PerformedProcedure.clinic_id == user.clinic_id
             ).order_by(PerformedProcedure.created_at)
         )
-        
+
         for proc in procedures:
             event = PatientTimelineEvent(
                 clinic_id=user.clinic_id,
@@ -777,26 +863,31 @@ async def refresh_timeline(
                 metadata={"status": proc.status, "code": proc.procedure_code}
             )
             db.add(event)
-        
-        # From clinical notes - skip drafts to protect clinical data
-        notes = await db.scalars(
+
+        # From clinical notes - filter drafts and sanitize all fields
+        # Only include notes that the user can access
+        all_notes = await db.scalars(
             select(ClinicalNote).where(
                 ClinicalNote.patient_id == patient_id,
-                ClinicalNote.clinic_id == user.clinic_id,
-                ClinicalNote.status != "draft"
+                ClinicalNote.clinic_id == user.clinic_id
             ).order_by(ClinicalNote.created_at)
         )
-        
-        for note in notes:
+
+        for note in all_notes:
+            # Skip drafts for non-authors
+            if note.status == "draft" and note.author_id != user.id:
+                continue
+
             # For clinical notes, only include metadata in timeline, not content
             # This prevents exposure of clinical content to unauthorized roles
+            # Remove title to avoid exposing clinical information
             event = PatientTimelineEvent(
                 clinic_id=user.clinic_id,
                 patient_id=patient_id,
                 event_type="clinical_note",
                 entity_type="clinical_note",
                 entity_id=note.id,
-                title=f"Note: {note.title or note.note_type}",
+                title=f"{note.note_type} note",
                 description=f"{note.note_type} note",
                 actor_id=note.author_id,
                 occurred_at=note.created_at,
@@ -805,7 +896,7 @@ async def refresh_timeline(
                 metadata={"type": note.note_type, "status": note.status, "is_alert": note.is_alert}
             )
             db.add(event)
-    
+
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
@@ -813,7 +904,7 @@ async def refresh_timeline(
         entity_id=user.clinic_id,
         action="refreshed"
     ))
-    
+
     await db.commit()
-    
+
     return {"status": "ok", "message": "Timeline refreshed successfully"}
