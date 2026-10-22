@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { clinicDate, clinicTime, Details, Form } from './Calendar';
 import * as client from './api/client';
+import { clinicLocalToUtc } from './timezone';
 
 const patient = { id: 'patient-101', clinic_id: 'clinic', first_name: 'Beyond', last_name: 'Page', date_of_birth: null, sex: null, phone: null, email: 'beyond@example.com', address: null, emergency_contact: null, occupation: null, allergies: null, medications: null, chronic_diseases: null, pregnancy_status: null, smoking_status: null, previous_surgeries: null, relevant_medical_conditions: null, medical_alerts: null, notes: null, created_at: '2027-01-01T00:00:00Z', updated_at: '2027-01-01T00:00:00Z' };
 const appointment = { id: 'appointment-1', clinic_id: 'clinic', patient_id: patient.id, doctor_id: 'doctor', assistant_id: 'assistant', room_id: 'room', starts_at: '2027-01-04T23:30:00Z', ends_at: '2027-01-05T00:00:00Z', local_start: '2027-01-05T01:30:00+02:00', local_end: '2027-01-05T03:00:00+02:00', timezone: 'Europe/Bucharest', duration_minutes: 90, appointment_type: 'Consultation', status: 'scheduled', notes: null, patient_name: 'Beyond Page', doctor_name: 'Doctor', assistant_name: 'Assistant', room_name: 'Room' };
@@ -12,6 +13,11 @@ function provider(child: React.ReactElement) { return <QueryClientProvider clien
 afterEach(() => vi.restoreAllMocks());
 describe('calendar timezone and permissions', () => {
   it('uses the clinic timezone at a browser date boundary', () => { expect(clinicDate('2027-01-04T23:30:00Z', 'Europe/Bucharest')).toBe('2027-01-05'); expect(clinicTime('2027-01-04T23:30:00Z', 'Europe/Bucharest')).toBe('01:30'); });
+  it('rejects nonexistent and ambiguous clinic-local times explicitly', () => {
+    expect(() => clinicLocalToUtc('2027-03-28T03:30', 'Europe/Bucharest')).toThrow(/does not exist/);
+    expect(() => clinicLocalToUtc('2027-10-31T03:30', 'Europe/Bucharest')).toThrow(/ambiguous/);
+    expect(clinicLocalToUtc('2027-10-31T03:30', 'Europe/Bucharest', 0)).not.toBe(clinicLocalToUtc('2027-10-31T03:30', 'Europe/Bucharest', 1));
+  });
   it('does not render mutation controls for assistants', () => { const renderer = TestRenderer.create(provider(<Details appointment={appointment} canManage={false} onChanged={vi.fn()} />)); const buttons = renderer.root.findAllByType('button').map(button => text(button)); expect(buttons).not.toContain('Edit'); expect(buttons).not.toContain('Reschedule'); expect(buttons).not.toContain('Cancel'); expect(buttons).not.toContain('No-show'); expect(buttons).not.toContain('Reactivate'); });
   it('loads an edited patient outside the first page and searches beyond it', async () => {
     vi.spyOn(client, 'listPatients').mockImplementation(async (search) => search ? [patient] : []);

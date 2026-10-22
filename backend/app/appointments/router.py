@@ -55,8 +55,18 @@ class AppointmentCreate(BaseModel):
         return self
 class AppointmentUpdate(BaseModel):
     patient_id: UUID | None = None; doctor_id: UUID | None = None; assistant_id: UUID | None = None; room_id: UUID | None = None; starts_at: datetime | None = None; local_start: datetime | None = None; timezone_fold: int | None = Field(default=None, ge=0, le=1); duration_minutes: int | None = Field(default=None, ge=5, le=24 * 60); appointment_type: str | None = Field(default=None, min_length=1, max_length=100); notes: str | None = Field(default=None, max_length=5000)
+    @model_validator(mode="after")
+    def has_one_start(self) -> AppointmentUpdate:
+        if self.starts_at is not None and self.local_start is not None:
+            raise ValueError("Provide only one of starts_at or local_start")
+        return self
 class RescheduleRequest(BaseModel):
     local_start: datetime | None = None; starts_at: datetime | None = None; timezone_fold: int | None = Field(default=None, ge=0, le=1); duration_minutes: int | None = Field(default=None, ge=5, le=24 * 60); doctor_id: UUID | None = None; assistant_id: UUID | None = None; room_id: UUID | None = None; reason: str | None = Field(default=None, max_length=500)
+    @model_validator(mode="after")
+    def has_one_start(self) -> RescheduleRequest:
+        if self.starts_at is not None and self.local_start is not None:
+            raise ValueError("Provide only one of starts_at or local_start")
+        return self
 class AppointmentStatus(BaseModel): status: str
 class AppointmentResponse(BaseModel):
     id: UUID; clinic_id: UUID; patient_id: UUID; doctor_id: UUID; assistant_id: UUID | None; room_id: UUID; starts_at: datetime; ends_at: datetime; local_start: datetime; local_end: datetime; timezone: str; duration_minutes: int; status: str; appointment_type: str; notes: str | None; patient_name: str | None = None; doctor_name: str | None = None; assistant_name: str | None = None; room_name: str | None = None

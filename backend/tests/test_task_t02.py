@@ -103,3 +103,29 @@ async def test_dst_occurrence_is_selected_through_creation(client):
     second = await client.post("/api/appointments", headers=headers, json={**payload, "timezone_fold": 1})
     assert first.status_code == 201 and second.status_code == 201
     assert first.json()["starts_at"] != second.json()["starts_at"]
+
+
+@pytest.mark.asyncio
+async def test_edit_and_reschedule_reject_two_time_representations(client):
+    headers, manager, patient, room = await setup(client, "exclusive-time@example.com")
+    created = await client.post(
+        "/api/appointments",
+        headers=headers,
+        json={
+            "patient_id": patient["id"],
+            "doctor_id": manager["id"],
+            "room_id": room["id"],
+            "local_start": "2027-04-05T10:00",
+            "duration_minutes": 30,
+            "appointment_type": "Review",
+        },
+    )
+    assert created.status_code == 201
+    appointment_id = created.json()["id"]
+    both = {"starts_at": "2027-04-05T08:00:00Z", "local_start": "2027-04-05T11:00"}
+    updated = await client.patch(f"/api/appointments/{appointment_id}", headers=headers, json=both)
+    rescheduled = await client.post(f"/api/appointments/{appointment_id}/reschedule", headers=headers, json=both)
+    assert updated.status_code == 422
+    assert rescheduled.status_code == 422
+    assert "only one" in updated.json()["detail"][0]["msg"]
+    assert "only one" in rescheduled.json()["detail"][0]["msg"]
