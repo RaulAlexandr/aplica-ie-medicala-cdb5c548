@@ -530,3 +530,388 @@ async def test_race_condition_start_resume_same_doctor(postgres_context):
     procedures = list_resp.json()
     running_procs = [p for p in procedures if p["status"] == "running"]
     assert len(running_procs) == 1, f"Expected exactly 1 running procedure, got {len(running_procs)}"
+
+
+# ============================================================================
+# CLOSURE CONCURRENCY TESTS
+# Test race conditions between closure and procedure create/start/resume
+# ============================================================================
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_closure_vs_create_concurrent(postgres_context):
+    """Test concurrent closure and procedure creation - closure should win if it starts first."""
+    client, _sessions, _target_url, _db_name = postgres_context
+
+    # Setup: Create clinic, patient, doctor, appointment
+    clinic_resp = await client.post("/api/clinics", json={
+        "name": "Test Clinic",
+        "address": "Test Address",
+        "phone": "1234567890",
+        "email": "test@clinic.com"
+    })
+    assert clinic_resp.status_code == 201
+
+    # Register as clinic manager
+    auth_resp = await client.post("/api/auth/register", json={
+        "clinic_name": "Test Clinic",
+        "full_name": "Manager User",
+        "email": "manager@test.com",
+        "password": "testpass123"
+    })
+    assert auth_resp.status_code == 201
+    tokens = auth_resp.json()
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    # Create patient
+    patient_resp = await client.post("/api/patients", headers=headers, json={
+        "first_name": "Test",
+        "last_name": "Patient"
+    })
+    assert patient_resp.status_code == 201
+    patient_id = patient_resp.json()["id"]
+
+    # Get doctor (manager is also a doctor in this context)
+    me_resp = await client.get("/api/auth/me", headers=headers)
+    doctor_id = me_resp.json()["id"]
+
+    # Create room
+    room_resp = await client.post("/api/rooms", headers=headers, json={"name": "Room 1"})
+    assert room_resp.status_code == 201
+    room_id = room_resp.json()["id"]
+
+    # Create appointment
+    appt_resp = await client.post("/api/appointments", headers=headers, json={
+        "patient_id": patient_id,
+        "doctor_id": doctor_id,
+        "room_id": room_id,
+        "starts_at": "2026-10-01T10:00:00+00:00",
+        "duration_minutes": 60,
+        "appointment_type": "Consultation"
+    })
+    assert appt_resp.status_code == 201
+    appt_id = appt_resp.json()["id"]
+
+    # Create procedure catalog
+    catalog_resp = await client.post("/api/procedure-catalog", headers=headers, json={
+        "code": "TEST_CLOSURE_CREATE",
+        "name": "Test Procedure",
+        "base_price": 100.00,
+        "currency": "RON",
+        "default_duration_minutes": 30
+    })
+    assert catalog_resp.status_code == 201
+    catalog_id = catalog_resp.json()["id"]
+
+    # Create two separate clients for concurrent operations
+    # Client 1 will try to close the appointment
+    client1 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    headers1 = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    # Client 2 will try to create a procedure
+    client2 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    headers2 = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    try:
+        # Execute concurrently
+        close_task = client1.patch(
+            f"/api/appointments/{appt_id}/status",
+            headers=headers1,
+            json={"status": "completed"}
+        )
+        create_task = client2.post(
+            "/api/performed-procedures",
+            headers=headers2,
+            json={
+                "appointment_id": appt_id,
+                "procedure_catalog_id": catalog_id
+            }
+        )
+
+        close_resp, create_resp = await asyncio.gather(close_task, create_task, return_exceptions=False)
+
+        # One should succeed, one should fail
+
+        # If closure succeeds, create should fail
+        if close_resp.status_code == 200:
+            assert create_resp.status_code == 409, f"Create should fail when closure succeeds, got {create_resp.status_code}"
+        # If create succeeds, closure should fail
+        elif create_resp.status_code == 201:
+            assert close_resp.status_code == 409, f"Closure should fail when create succeeds, got {close_resp.status_code}"
+        else:
+            # Both failed or unexpected status
+            assert False, f"Unexpected statuses: close={close_resp.status_code}, create={create_resp.status_code}"
+
+        # Verify final state consistency
+        appt_check = await client.get(f"/api/appointments/{appt_id}", headers=headers)
+        appt_status = appt_check.json()["status"]
+
+        if appt_status == "completed":
+            # Closure won - no procedures should be created
+            proc_list = await client.get(f"/api/appointments/{appt_id}/procedures", headers=headers)
+            procedures = proc_list.json()
+            assert len(procedures) == 0, "No procedures should exist if closure succeeded"
+        else:
+            # Create won - appointment should not be completed
+            assert appt_status != "completed", "Appointment should not be completed if create succeeded"
+
+    finally:
+        await client1.aclose()
+        await client2.aclose()
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_closure_vs_start_concurrent(postgres_context):
+    """Test concurrent closure and procedure start - closure should win if it starts first."""
+    client, _sessions, _target_url, _db_name = postgres_context
+
+    # Setup: Create clinic, patient, doctor, appointment, procedure
+    clinic_resp = await client.post("/api/clinics", json={
+        "name": "Test Clinic",
+        "address": "Test Address",
+        "phone": "1234567890",
+        "email": "test@clinic.com"
+    })
+    assert clinic_resp.status_code == 201
+
+    # Register as clinic manager
+    auth_resp = await client.post("/api/auth/register", json={
+        "clinic_name": "Test Clinic",
+        "full_name": "Manager User",
+        "email": "manager2@test.com",
+        "password": "testpass123"
+    })
+    assert auth_resp.status_code == 201
+    tokens = auth_resp.json()
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    # Create patient
+    patient_resp = await client.post("/api/patients", headers=headers, json={
+        "first_name": "Test",
+        "last_name": "Patient"
+    })
+    assert patient_resp.status_code == 201
+    patient_id = patient_resp.json()["id"]
+
+    # Get doctor
+    me_resp = await client.get("/api/auth/me", headers=headers)
+    doctor_id = me_resp.json()["id"]
+
+    # Create room
+    room_resp = await client.post("/api/rooms", headers=headers, json={"name": "Room 1"})
+    assert room_resp.status_code == 201
+    room_id = room_resp.json()["id"]
+
+    # Create appointment
+    appt_resp = await client.post("/api/appointments", headers=headers, json={
+        "patient_id": patient_id,
+        "doctor_id": doctor_id,
+        "room_id": room_id,
+        "starts_at": "2026-10-01T10:00:00+00:00",
+        "duration_minutes": 60,
+        "appointment_type": "Consultation"
+    })
+    assert appt_resp.status_code == 201
+    appt_id = appt_resp.json()["id"]
+
+    # Create procedure catalog
+    catalog_resp = await client.post("/api/procedure-catalog", headers=headers, json={
+        "code": "TEST_CLOSURE_START",
+        "name": "Test Procedure",
+        "base_price": 100.00,
+        "currency": "RON",
+        "default_duration_minutes": 30
+    })
+    assert catalog_resp.status_code == 201
+    catalog_id = catalog_resp.json()["id"]
+
+    # Create procedure (pending)
+    proc_resp = await client.post("/api/performed-procedures", headers=headers, json={
+        "appointment_id": appt_id,
+        "procedure_catalog_id": catalog_id
+    })
+    assert proc_resp.status_code == 201
+    proc_id = proc_resp.json()["id"]
+
+    # Create two separate clients for concurrent operations
+    client1 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    headers1 = {"Authorization": f"Bearer {tokens['access_token']}"}
+    client2 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    headers2 = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    try:
+        # Execute concurrently
+        close_task = client1.patch(
+            f"/api/appointments/{appt_id}/status",
+            headers=headers1,
+            json={"status": "completed"}
+        )
+        start_task = client2.post(
+            f"/api/performed-procedures/{proc_id}/start",
+            headers=headers2
+        )
+
+        close_resp, start_resp = await asyncio.gather(close_task, start_task, return_exceptions=False)
+
+        # One should succeed, one should fail
+
+        # If closure succeeds, start should fail
+        if close_resp.status_code == 200:
+            assert start_resp.status_code == 409, f"Start should fail when closure succeeds, got {start_resp.status_code}"
+        # If start succeeds, closure should fail
+        elif start_resp.status_code == 200:
+            assert close_resp.status_code == 409, f"Closure should fail when start succeeds, got {close_resp.status_code}"
+        else:
+            # Both failed or unexpected status
+            assert False, f"Unexpected statuses: close={close_resp.status_code}, start={start_resp.status_code}"
+
+        # Verify final state consistency
+        appt_check = await client.get(f"/api/appointments/{appt_id}", headers=headers)
+        appt_status = appt_check.json()["status"]
+        proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
+        proc_status = proc_check.json()["status"]
+
+        if appt_status == "completed":
+            # Closure won - procedure should still be pending (not started)
+            assert proc_status == "pending", f"Procedure should be pending if closure succeeded, got {proc_status}"
+        else:
+            # Start won - appointment should not be completed
+            assert appt_status != "completed", "Appointment should not be completed if start succeeded"
+            assert proc_status == "running", f"Procedure should be running if start succeeded, got {proc_status}"
+
+    finally:
+        await client1.aclose()
+        await client2.aclose()
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_closure_vs_resume_concurrent(postgres_context):
+    """Test concurrent closure and procedure resume - closure should win if it starts first."""
+    client, _sessions, _target_url, _db_name = postgres_context
+
+    # Setup: Create clinic, patient, doctor, appointment, procedure
+    clinic_resp = await client.post("/api/clinics", json={
+        "name": "Test Clinic",
+        "address": "Test Address",
+        "phone": "1234567890",
+        "email": "test@clinic.com"
+    })
+    assert clinic_resp.status_code == 201
+
+    # Register as clinic manager
+    auth_resp = await client.post("/api/auth/register", json={
+        "clinic_name": "Test Clinic",
+        "full_name": "Manager User",
+        "email": "manager3@test.com",
+        "password": "testpass123"
+    })
+    assert auth_resp.status_code == 201
+    tokens = auth_resp.json()
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    # Create patient
+    patient_resp = await client.post("/api/patients", headers=headers, json={
+        "first_name": "Test",
+        "last_name": "Patient"
+    })
+    assert patient_resp.status_code == 201
+    patient_id = patient_resp.json()["id"]
+
+    # Get doctor
+    me_resp = await client.get("/api/auth/me", headers=headers)
+    doctor_id = me_resp.json()["id"]
+
+    # Create room
+    room_resp = await client.post("/api/rooms", headers=headers, json={"name": "Room 1"})
+    assert room_resp.status_code == 201
+    room_id = room_resp.json()["id"]
+
+    # Create appointment
+    appt_resp = await client.post("/api/appointments", headers=headers, json={
+        "patient_id": patient_id,
+        "doctor_id": doctor_id,
+        "room_id": room_id,
+        "starts_at": "2026-10-01T10:00:00+00:00",
+        "duration_minutes": 60,
+        "appointment_type": "Consultation"
+    })
+    assert appt_resp.status_code == 201
+    appt_id = appt_resp.json()["id"]
+
+    # Create procedure catalog
+    catalog_resp = await client.post("/api/procedure-catalog", headers=headers, json={
+        "code": "TEST_CLOSURE_RESUME",
+        "name": "Test Procedure",
+        "base_price": 100.00,
+        "currency": "RON",
+        "default_duration_minutes": 30
+    })
+    assert catalog_resp.status_code == 201
+    catalog_id = catalog_resp.json()["id"]
+
+    # Create procedure (pending)
+    proc_resp = await client.post("/api/performed-procedures", headers=headers, json={
+        "appointment_id": appt_id,
+        "procedure_catalog_id": catalog_id
+    })
+    assert proc_resp.status_code == 201
+    proc_id = proc_resp.json()["id"]
+
+    # Start and pause procedure
+    start_resp = await client.post(f"/api/performed-procedures/{proc_id}/start", headers=headers)
+    assert start_resp.status_code == 200
+    pause_resp = await client.post(f"/api/performed-procedures/{proc_id}/pause", headers=headers)
+    assert pause_resp.status_code == 200
+
+    # Create two separate clients for concurrent operations
+    client1 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    headers1 = {"Authorization": f"Bearer {tokens['access_token']}"}
+    client2 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    headers2 = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    try:
+        # Execute concurrently
+        close_task = client1.patch(
+            f"/api/appointments/{appt_id}/status",
+            headers=headers1,
+            json={"status": "completed"}
+        )
+        resume_task = client2.post(
+            f"/api/performed-procedures/{proc_id}/resume",
+            headers=headers2
+        )
+
+        close_resp, resume_resp = await asyncio.gather(close_task, resume_task, return_exceptions=False)
+
+        # One should succeed, one should fail
+
+        # If closure succeeds, resume should fail
+        if close_resp.status_code == 200:
+            assert resume_resp.status_code == 409, f"Resume should fail when closure succeeds, got {resume_resp.status_code}"
+        # If resume succeeds, closure should fail
+        elif resume_resp.status_code == 200:
+            assert close_resp.status_code == 409, f"Closure should fail when resume succeeds, got {close_resp.status_code}"
+        else:
+            # Both failed or unexpected status
+            assert False, f"Unexpected statuses: close={close_resp.status_code}, resume={resume_resp.status_code}"
+
+        # Verify final state consistency
+        appt_check = await client.get(f"/api/appointments/{appt_id}", headers=headers)
+        appt_status = appt_check.json()["status"]
+        proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
+        proc_status = proc_check.json()["status"]
+
+        if appt_status == "completed":
+            # Closure won - procedure should still be paused (not resumed)
+            assert proc_status == "paused", f"Procedure should be paused if closure succeeded, got {proc_status}"
+        else:
+            # Resume won - appointment should not be completed
+            assert appt_status != "completed", "Appointment should not be completed if resume succeeded"
+            assert proc_status == "running", f"Procedure should be running if resume succeeded, got {proc_status}"
+
+    finally:
+        await client1.aclose()
+        await client2.aclose()

@@ -171,11 +171,11 @@ async def update_status(appointment_id: UUID, payload: AppointmentStatus, db: As
         )
         unresolved_list = unresolved.all()
         if unresolved_list:
-            # unresolved_list contains tuples of (id, procedure_name, status)
-            procedure_details = [f"{proc_name} ({status})" for _, proc_name, status in unresolved_list]
+            # Use generic message to avoid exposing clinical details to non-clinical roles
+            # reception role can call this endpoint but should not see procedure details
             raise HTTPException(
                 409,
-                f"Cannot close appointment: {len(unresolved_list)} unresolved procedure(s): {', '.join(procedure_details)}"
+                "Cannot close appointment: unresolved procedures exist. Please resolve all procedures before closing."
             )
 
     if payload.status in ACTIVE_STATUSES and item.status not in ACTIVE_STATUSES:

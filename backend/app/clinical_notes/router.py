@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import desc, select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.service import require_roles
@@ -212,13 +212,15 @@ def _note_response(note: ClinicalNote, author_name: str) -> ClinicalNoteResponse
     )
 
 
-def _sanitize_timeline_event(event: PatientTimelineEvent, user: User) -> dict:
+def _sanitize_timeline_event(event: PatientTimelineEvent, user: User, db: AsyncSession = None) -> dict:
     """Sanitize timeline event to protect clinical data.
 
-    For clinical_note events:
-    - If note is draft and user is not author, filter it out (caller should skip)
-    - Remove title/content that could expose clinical information
-    - Keep metadata for authorized users
+    Applies role-based access control:
+    - Clinical notes: always sanitized (title, description, metadata)
+    - Performed procedures: sanitized for non-clinical roles (assistant, reception)
+    - Appointments: can be exposed as they contain less sensitive information
+
+    For all events, only explicitly allowed fields are exposed in metadata.
     """
     result = {
         "id": event.id,
@@ -231,19 +233,82 @@ def _sanitize_timeline_event(event: PatientTimelineEvent, user: User) -> dict:
         "occurred_at": event.occurred_at.isoformat() if event.occurred_at else None,
         "recorded_at": event.recorded_at.isoformat() if event.recorded_at else None,
         "source": event.source,
-        "metadata": event.metadata or {},
+        "metadata": {},
     }
 
-    # Sanitize title and description for clinical notes
+    # Define which roles can access clinical information
+    # Clinical roles: doctors, managers, administrators
+    # Non-clinical roles: assistant, reception
+    CLINICAL_ROLES = {"clinic_manager", "doctor", "administrator"}
+    is_clinical_role = user.role in CLINICAL_ROLES
+
+    # Sanitize based on entity type
     if event.entity_type == "clinical_note":
-        # Remove potentially sensitive title/description
-        # Keep generic information only
-        result["title"] = f"{event.metadata.get('type', 'note')} note" if event.metadata else "clinical note"
-        result["description"] = f"{event.metadata.get('type', 'note')} note" if event.metadata else "clinical note"
-    else:
-        # For other event types, keep the original fields
+        # Always sanitize clinical note events - use generic text
+        note_type = event.metadata.get('type', 'note') if event.metadata else "note"
+        result["title"] = f"{note_type} note"
+        result["description"] = f"{note_type} note"
+
+        # Filter metadata to only include safe fields
+        if event.metadata:
+            safe_metadata = {}
+            # These fields are safe to expose
+            safe_fields = {"type", "status", "is_alert"}
+            for field in safe_fields:
+                if field in event.metadata:
+                    safe_metadata[field] = event.metadata[field]
+            result["metadata"] = safe_metadata
+    elif event.entity_type == "performed_procedure":
+        # Sanitize performed procedure events based on role
+        if is_clinical_role:
+            # Clinical roles can see procedure details
+            result["title"] = event.title or ""
+            result["description"] = event.description or ""
+            # Filter metadata to only include safe fields
+            if event.metadata:
+                safe_metadata = {}
+                # These fields are safe for clinical roles
+                safe_fields = {"status", "code"}
+                for field in safe_fields:
+                    if field in event.metadata:
+                        safe_metadata[field] = event.metadata[field]
+                result["metadata"] = safe_metadata
+        else:
+            # Non-clinical roles (assistant, reception) get generic info only
+            result["title"] = "procedure"
+            result["description"] = "procedure"
+            # Only expose status, not code or name
+            if event.metadata and "status" in event.metadata:
+                result["metadata"] = {"status": event.metadata["status"]}
+    elif event.entity_type == "appointment":
+        # Appointment events can be exposed with basic info
         result["title"] = event.title or ""
         result["description"] = event.description or ""
+        # Filter metadata to only include safe fields
+        if event.metadata:
+            safe_metadata = {}
+            # These fields are safe to expose
+            safe_fields = {"status", "type"}
+            for field in safe_fields:
+                if field in event.metadata:
+                    safe_metadata[field] = event.metadata[field]
+            result["metadata"] = safe_metadata
+    else:
+        # For other event types, keep original fields but filter metadata
+        result["title"] = event.title or ""
+        result["description"] = event.description or ""
+        # Filter metadata to only include explicitly allowed fields
+        # By default, only expose simple non-sensitive fields
+        if event.metadata:
+            safe_metadata = {}
+            # Only expose fields that are explicitly safe
+            safe_fields = {"status", "type", "action"}
+            for field in safe_fields:
+                if field in event.metadata:
+                    safe_metadata[field] = event.metadata[field]
+            result["metadata"] = safe_metadata
+
+    return result
 
     return result
 
@@ -333,19 +398,23 @@ async def list_patient_notes(
     if is_alert is not None:
         query = query.where(ClinicalNote.is_alert.is_(is_alert))
 
-    # Apply draft filtering: non-authors cannot see drafts
-    if user.role not in DOCTORS + MANAGERS:
-        # Staff roles (assistant, reception) should not see any drafts
-        query = query.where(ClinicalNote.status != "draft")
+    # Apply draft filtering in SQL: only finalized notes OR drafts by this author
+    # This ensures pagination works correctly with access control
+    query = query.where(
+        or_(
+            ClinicalNote.status != "draft",
+            (ClinicalNote.status == "draft") & (ClinicalNote.author_id == user.id)
+        )
+    )
+
+    # Apply pagination at database level
+    query = query.offset(offset).limit(limit)
 
     notes = (await db.scalars(query)).all()
 
     # Get author names
     results = []
     for note in notes:
-        # Even for doctors/managers, filter out drafts they didn't author
-        if not _can_access_draft(note, user):
-            continue
         author_name = await _get_user_name(db, note.author_id)
         results.append(_note_response(note, author_name))
 
@@ -436,13 +505,17 @@ async def update_clinical_note(
     if not note:
         raise HTTPException(404, "Clinical note not found or access denied")
 
-    # Only author or manager can update
-    if note.author_id != user.id and user.role not in MANAGERS:
-        raise HTTPException(403, "Only the author or manager can update this note")
+    # Check draft access - only author can access drafts
+    if not _can_access_draft(note, user):
+        raise HTTPException(404, "Clinical note not found or access denied")
 
     # Cannot update finalized note
     if note.status == "finalized":
         raise HTTPException(409, "Cannot update a finalized note. Create an addendum instead.")
+
+    # Only author can update drafts
+    if note.author_id != user.id:
+        raise HTTPException(403, "Only the author can update this draft note")
 
     changes = payload.model_dump(exclude_unset=True)
     old_values = {}
@@ -494,13 +567,17 @@ async def finalize_clinical_note(
     if not note:
         raise HTTPException(404, "Clinical note not found or access denied")
 
-    # Only author or manager can finalize
-    if note.author_id != user.id and user.role not in MANAGERS:
-        raise HTTPException(403, "Only the author or manager can finalize this note")
+    # Check draft access - only author can access drafts
+    if not _can_access_draft(note, user):
+        raise HTTPException(404, "Clinical note not found or access denied")
 
     # Cannot finalize if already finalized
     if note.status == "finalized":
         raise HTTPException(409, "Note is already finalized")
+
+    # Only author can finalize drafts
+    if note.author_id != user.id:
+        raise HTTPException(403, "Only the author can finalize this draft note")
 
     note.status = "finalized"
     note.finalized_at = utcnow()
@@ -543,6 +620,10 @@ async def add_clinical_note_addendum(
     """Add an addendum to a finalized clinical note."""
     note = await _get_clinical_note(db, note_id, user, for_update=True)
     if not note:
+        raise HTTPException(404, "Clinical note not found or access denied")
+
+    # Check draft access - only author can access drafts, no exception for managers
+    if not _can_access_draft(note, user):
         raise HTTPException(404, "Clinical note not found or access denied")
 
     # Can only add addendum to finalized notes
@@ -637,10 +718,46 @@ async def get_patient_timeline(
     if not patient:
         raise HTTPException(404, "Patient not found or access denied")
 
-    query = select(PatientTimelineEvent).where(
+    # Build subquery to filter out clinical note draft events that the user cannot access
+    # First, build the filter conditions for clinical note events
+    clinical_note_filter = or_(
+        # Not a clinical note event
+        PatientTimelineEvent.entity_type != "clinical_note",
+        # Clinical note event is not from clinical_note source
+        PatientTimelineEvent.source != "clinical_note",
+        # Clinical note event that the user can access (finalized or draft by user)
+        and_(
+            PatientTimelineEvent.entity_type == "clinical_note",
+            PatientTimelineEvent.source == "clinical_note",
+            # Either the note is finalized or it's a draft by this user
+            or_(
+                # Note is finalized
+                and_(
+                    PatientTimelineEvent.entity_id == ClinicalNote.id,
+                    ClinicalNote.status != "draft"
+                ),
+                # Note is a draft by this user
+                and_(
+                    PatientTimelineEvent.entity_id == ClinicalNote.id,
+                    ClinicalNote.status == "draft",
+                    ClinicalNote.author_id == user.id
+                )
+            )
+        )
+    )
+
+    # Build base query with join to ClinicalNote for filtering
+    query = select(PatientTimelineEvent).outerjoin(
+        ClinicalNote,
+        and_(
+            PatientTimelineEvent.entity_id == ClinicalNote.id,
+            ClinicalNote.clinic_id == user.clinic_id
+        )
+    ).where(
         PatientTimelineEvent.patient_id == patient_id,
-        PatientTimelineEvent.clinic_id == user.clinic_id
-    ).order_by(desc(PatientTimelineEvent.occurred_at), desc(PatientTimelineEvent.recorded_at)).offset(offset).limit(limit)
+        PatientTimelineEvent.clinic_id == user.clinic_id,
+        clinical_note_filter
+    )
 
     if event_type and event_type in TIMELINE_EVENT_TYPES:
         query = query.where(PatientTimelineEvent.event_type == event_type)
@@ -650,23 +767,17 @@ async def get_patient_timeline(
     if end_date:
         query = query.where(PatientTimelineEvent.occurred_at <= end_date)
 
+    # Order and paginate
+    query = query.order_by(
+        desc(PatientTimelineEvent.occurred_at),
+        desc(PatientTimelineEvent.recorded_at),
+        desc(PatientTimelineEvent.id)
+    ).offset(offset).limit(limit)
+
     events = (await db.scalars(query)).all()
 
     results = []
     for event in events:
-        # Skip clinical note draft events that the user cannot access
-        if event.entity_type == "clinical_note" and event.source == "clinical_note":
-            # Fetch the note to check access
-            note = await db.scalar(
-                select(ClinicalNote).where(
-                    ClinicalNote.id == event.entity_id,
-                    ClinicalNote.clinic_id == user.clinic_id
-                )
-            )
-            if note and note.status == "draft" and note.author_id != user.id:
-                # Skip this event - user cannot access this draft
-                continue
-
         actor_name = None
         if event.actor_id:
             actor_name = await _get_user_name(db, event.actor_id)
