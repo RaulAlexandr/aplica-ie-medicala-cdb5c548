@@ -7,7 +7,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
 
 from app.auth.service import require_roles
 from app.database import (
@@ -271,14 +270,36 @@ def _calculate_total_duration(segments: list[ProcedureExecutionSegment]) -> int 
 async def _get_performed_procedure(
     db: AsyncSession, procedure_id: UUID, user: User, for_update: bool = False
 ) -> PerformedProcedure | None:
+    """Get a performed procedure by ID.
+    
+    Note: Does NOT load segments to avoid lazy loading issues.
+    Use _get_active_segments separately or load explicitly in the caller.
+    Lock order: User row (for doctor) -> PerformedProcedure row.
+    """
     query = select(PerformedProcedure).where(
         PerformedProcedure.id == procedure_id,
         PerformedProcedure.clinic_id == user.clinic_id
-    ).options(joinedload(PerformedProcedure.segments))
+    )
     if for_update:
         query = query.with_for_update()
+    
     result = await db.execute(query)
     return result.unique().scalar_one_or_none()
+
+
+async def _get_performed_procedure_with_segments(
+    db: AsyncSession, procedure_id: UUID, user: User, for_update: bool = False
+) -> tuple[PerformedProcedure | None, list[ProcedureExecutionSegment]]:
+    """Get a performed procedure with its segments.
+    
+    Safe alternative to joinedload that avoids lazy loading issues.
+    """
+    procedure = await _get_performed_procedure(db, procedure_id, user, for_update)
+    if procedure:
+        segments = await _get_active_segments(db, procedure_id)
+    else:
+        segments = []
+    return procedure, segments
 
 
 async def _validate_appointment_access(
@@ -308,8 +329,22 @@ async def _check_doctor_has_running_procedure(
 ) -> bool:
     """Check if doctor already has a running procedure.
     
-    Uses FOR UPDATE to lock the rows and prevent concurrent start/resume operations.
+    Lock order (to prevent deadlocks):
+    1. Lock the User row for the executing doctor (prevents concurrent start/resume for same doctor)
+    2. Check for existing running procedures
+    
+    This ensures that two concurrent start/resume operations for the same doctor
+    will be serialized by the lock on the User row.
     """
+    # First, lock the doctor's user row to prevent concurrent operations
+    await db.execute(
+        select(User).where(
+            User.id == doctor_id,
+            User.clinic_id == clinic_id
+        ).with_for_update()
+    )
+    
+    # Then check for existing running procedures
     query = select(PerformedProcedure.id).where(
         PerformedProcedure.clinic_id == clinic_id,
         PerformedProcedure.executed_by_id == doctor_id,
@@ -317,7 +352,6 @@ async def _check_doctor_has_running_procedure(
     )
     if exclude_procedure_id:
         query = query.where(PerformedProcedure.id != exclude_procedure_id)
-    query = query.with_for_update()
     result = await db.scalar(query)
     return result is not None
 
@@ -359,7 +393,7 @@ async def list_performed_procedures(
 ) -> list[PerformedProcedureResponse]:
     query = select(PerformedProcedure).where(
         PerformedProcedure.clinic_id == user.clinic_id
-    ).options(joinedload(PerformedProcedure.segments)).order_by(PerformedProcedure.created_at.desc()).offset(offset).limit(limit)
+    ).order_by(PerformedProcedure.created_at.desc()).offset(offset).limit(limit)
     
     if appointment_id:
         query = query.where(PerformedProcedure.appointment_id == appointment_id)
@@ -370,7 +404,28 @@ async def list_performed_procedures(
     
     result = await db.execute(query)
     procedures = result.unique().scalars().all()
-    return [_response(p, segments=list(p.segments)) for p in procedures]
+    
+    # Eager load segments for all procedures in a single query to avoid N+1
+    procedure_ids = [p.id for p in procedures]
+    if procedure_ids:
+        segments_result = await db.execute(
+            select(ProcedureExecutionSegment).where(
+                ProcedureExecutionSegment.performed_procedure_id.in_(procedure_ids)
+            ).order_by(ProcedureExecutionSegment.performed_procedure_id, ProcedureExecutionSegment.started_at)
+        )
+        segments_by_proc = {}
+        for seg in segments_result.unique().scalars().all():
+            if seg.performed_procedure_id not in segments_by_proc:
+                segments_by_proc[seg.performed_procedure_id] = []
+            segments_by_proc[seg.performed_procedure_id].append(seg)
+        
+        responses = []
+        for p in procedures:
+            p_segments = segments_by_proc.get(p.id, [])
+            responses.append(_response(p, segments=p_segments))
+        return responses
+    else:
+        return [_response(p, segments=[]) for p in procedures]
 
 
 @router.get("/{procedure_id}", response_model=PerformedProcedureResponse)
@@ -379,10 +434,10 @@ async def get_performed_procedure(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles(*STAFF_ROLES)),
 ) -> PerformedProcedureResponse:
-    procedure = await _get_performed_procedure(db, procedure_id, user)
+    procedure, segments = await _get_performed_procedure_with_segments(db, procedure_id, user, for_update=False)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
-    return _response(procedure, segments=list(procedure.segments))
+    return _response(procedure, segments=segments)
 
 
 @router.get("/{procedure_id}/segments", response_model=list[ProcedureSegmentResponse])
@@ -503,8 +558,8 @@ async def start_procedure(
     if procedure.status not in PROCEDURE_TRANSITIONS or "running" not in PROCEDURE_TRANSITIONS[procedure.status]:
         raise HTTPException(409, f"Cannot start procedure from status: {procedure.status}")
     
-    # Check if doctor already has a running procedure
-    has_running = await _check_doctor_has_running_procedure(db, user.id, user.clinic_id, procedure_id)
+    # Check if executed_by doctor already has a running procedure
+    has_running = await _check_doctor_has_running_procedure(db, procedure.executed_by_id, user.clinic_id, procedure_id)
     if has_running:
         raise HTTPException(
             409,
@@ -552,7 +607,9 @@ async def start_procedure(
     await db.commit()
     await db.refresh(procedure)
     
-    return _response(procedure, segments=list(procedure.segments))
+    # Load segments after commit
+    segments = await _get_active_segments(db, procedure_id)
+    return _response(procedure, segments=segments)
 
 
 @router.post("/{procedure_id}/pause", response_model=PerformedProcedureResponse)
@@ -606,7 +663,8 @@ async def pause_procedure(
     await db.commit()
     await db.refresh(procedure)
     
-    return _response(procedure, segments=list(procedure.segments))
+    segments = await _get_active_segments(db, procedure_id)
+    return _response(procedure, segments=segments)
 
 
 @router.post("/{procedure_id}/resume", response_model=PerformedProcedureResponse)
@@ -627,8 +685,8 @@ async def resume_procedure(
     if procedure.status not in PROCEDURE_TRANSITIONS or "running" not in PROCEDURE_TRANSITIONS[procedure.status]:
         raise HTTPException(409, f"Cannot resume procedure from status: {procedure.status}")
     
-    # Check if doctor already has a running procedure
-    has_running = await _check_doctor_has_running_procedure(db, user.id, user.clinic_id, procedure_id)
+    # Check if executed_by doctor already has a running procedure
+    has_running = await _check_doctor_has_running_procedure(db, procedure.executed_by_id, user.clinic_id, procedure_id)
     if has_running:
         raise HTTPException(
             409,
@@ -668,7 +726,8 @@ async def resume_procedure(
     await db.commit()
     await db.refresh(procedure)
     
-    return _response(procedure, segments=list(procedure.segments))
+    segments = await _get_active_segments(db, procedure_id)
+    return _response(procedure, segments=segments)
 
 
 @router.post("/{procedure_id}/complete", response_model=PerformedProcedureResponse)
@@ -712,7 +771,8 @@ async def complete_procedure(
     await db.commit()
     await db.refresh(procedure)
     
-    return _response(procedure, segments=list(procedure.segments))
+    segments = await _get_active_segments(db, procedure_id)
+    return _response(procedure, segments=segments)
 
 
 @router.post("/{procedure_id}/cancel", response_model=PerformedProcedureResponse)
@@ -769,7 +829,8 @@ async def cancel_procedure(
     await db.commit()
     await db.refresh(procedure)
     
-    return _response(procedure, segments=list(procedure.segments))
+    segments = await _get_active_segments(db, procedure_id)
+    return _response(procedure, segments=segments)
 
 
 @router.post("/{procedure_id}/override-duration", response_model=PerformedProcedureResponse)
@@ -820,7 +881,8 @@ async def override_duration(
     await db.commit()
     await db.refresh(procedure)
     
-    return _response(procedure, segments=list(procedure.segments))
+    segments = await _get_active_segments(db, procedure_id)
+    return _response(procedure, segments=segments)
 
 
 @router.post("/{procedure_id}/override-price", response_model=PerformedProcedureResponse)
@@ -868,7 +930,8 @@ async def override_price(
     await db.commit()
     await db.refresh(procedure)
     
-    return _response(procedure, segments=list(procedure.segments))
+    segments = await _get_active_segments(db, procedure_id)
+    return _response(procedure, segments=segments)
 
 
 @router.get("/visit/{appointment_id}/summary", response_model=VisitSummaryResponse)
@@ -894,11 +957,28 @@ async def get_visit_summary(
         select(PerformedProcedure).where(
             PerformedProcedure.appointment_id == appointment_id,
             PerformedProcedure.clinic_id == user.clinic_id
-        ).options(joinedload(PerformedProcedure.segments)).order_by(PerformedProcedure.created_at)
+        ).order_by(PerformedProcedure.created_at)
     )
     procedures = result.unique().scalars().all()
     
-    procedure_responses = [_response(p, segments=list(p.segments)) for p in procedures]
+    # Load all segments for these procedures
+    procedure_ids = [p.id for p in procedures]
+    segments_by_proc = {}
+    if procedure_ids:
+        segments_result = await db.execute(
+            select(ProcedureExecutionSegment).where(
+                ProcedureExecutionSegment.performed_procedure_id.in_(procedure_ids)
+            ).order_by(ProcedureExecutionSegment.performed_procedure_id, ProcedureExecutionSegment.started_at)
+        )
+        for seg in segments_result.unique().scalars().all():
+            if seg.performed_procedure_id not in segments_by_proc:
+                segments_by_proc[seg.performed_procedure_id] = []
+            segments_by_proc[seg.performed_procedure_id].append(seg)
+    
+    procedure_responses = []
+    for p in procedures:
+        p_segments = segments_by_proc.get(p.id, [])
+        procedure_responses.append(_response(p, segments=p_segments))
     
     # Check for unresolved procedures (running or paused)
     unresolved = []
@@ -968,4 +1048,5 @@ async def update_procedure_notes(
     await db.commit()
     await db.refresh(procedure)
     
-    return _response(procedure, segments=list(procedure.segments))
+    segments = await _get_active_segments(db, procedure_id)
+    return _response(procedure, segments=segments)
