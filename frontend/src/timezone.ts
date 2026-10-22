@@ -48,6 +48,7 @@ export function clinicLocalToUtc(value: string, timezone: string, fold?: 0 | 1):
   if (candidates.length > 1 && fold === undefined) {
     throw new Error('This local time is ambiguous; select which occurrence you mean.');
   }
-  const selected = candidates[fold ?? 0];
+  // A supplied second-occurrence choice has no effect when the time occurs once.
+  const selected = candidates.length === 1 ? candidates[0] : candidates[fold ?? 0];
   return new Date(selected).toISOString();
 }
