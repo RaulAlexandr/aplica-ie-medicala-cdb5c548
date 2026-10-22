@@ -336,7 +336,7 @@ async def test_manager_start_for_other_doctor(postgres_context):
     room_id = await create_room(client, headers)
     patient_id = await create_patient(client, headers)
     catalog_id = await create_procedure_catalog(client, headers)
-    appointment_id = await create_appointment(client, headers, patient_id, doctor.id, room_id)
+    appointment_id = await create_appointment(client, headers, patient_id, str(doctor.id), room_id)
 
     # Create procedure for the doctor
     procedure_id = await create_performed_procedure(client, headers, appointment_id, catalog_id)
@@ -346,7 +346,7 @@ async def test_manager_start_for_other_doctor(postgres_context):
     assert start_resp.status_code == 200
 
     # Create another procedure for the same doctor
-    appointment2_id = await create_appointment(client, headers, patient_id, doctor.id, room_id, "2026-10-01T15:00:00+00:00")
+    appointment2_id = await create_appointment(client, headers, patient_id, str(doctor.id), room_id, "2026-10-01T15:00:00+00:00")
     procedure_id_2 = await create_performed_procedure(client, headers, appointment2_id, catalog_id)
 
     # Manager cannot start second procedure for the same doctor (unique timer per doctor)
@@ -379,13 +379,13 @@ async def test_different_doctors_independent(postgres_context):
     room_id_2 = await create_room(client, headers)
     patient2_id = await create_patient(client, headers)
     catalog_id = await create_procedure_catalog(client, headers)
-    appointment2_id = await create_appointment(client, headers, patient2_id, doctor2.id, room_id_2, "2026-10-01T16:00:00+00:00")
+    appointment2_id = await create_appointment(client, headers, patient2_id, str(doctor2.id), room_id_2, "2026-10-01T16:00:00+00:00")
     procedure2_id = await create_performed_procedure(client, headers, appointment2_id, catalog_id)
 
     # Create environment for doctor3 (different room and time)
     room_id_3 = await create_room(client, headers)
     patient3_id = await create_patient(client, headers)
-    appointment3_id = await create_appointment(client, headers, patient3_id, doctor3.id, room_id_3, "2026-10-01T17:00:00+00:00")
+    appointment3_id = await create_appointment(client, headers, patient3_id, str(doctor3.id), room_id_3, "2026-10-01T17:00:00+00:00")
     procedure3_id = await create_performed_procedure(client, headers, appointment3_id, catalog_id)
 
     # Start procedure for doctor2
