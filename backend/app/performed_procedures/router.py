@@ -492,6 +492,14 @@ async def create_performed_procedure(
     if not appointment:
         raise HTTPException(422, "Appointment not found or access denied")
     
+    # Prevent creating procedures for closed appointments
+    # Per T04 spec: "Respingerea operațiilor incompatibile cu programări închise/anulate"
+    if appointment.status in ("completed", "cancelled", "no_show"):
+        raise HTTPException(
+            409,
+            f"Cannot create performed procedure for appointment with status: {appointment.status}"
+        )
+
     # Validate procedure catalog exists and belongs to clinic
     catalog = await _validate_procedure_catalog_access(db, payload.procedure_catalog_id, user)
     if not catalog:
@@ -550,6 +558,19 @@ async def start_procedure(
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
     
+    # Prevent starting procedures for closed appointments
+    # Per T04 spec: "Respingerea operațiilor incompatibile cu programări închise/anulate"
+    appointment = await db.get(Appointment, procedure.appointment_id)
+    if not appointment:
+        raise HTTPException(404, "Appointment not found")
+    if appointment.status in ("completed", "cancelled", "no_show"):
+        raise HTTPException(
+            409,
+            f"Cannot start procedure: appointment has status {appointment.status}"
+        )
+    if appointment.clinic_id != user.clinic_id:
+        raise HTTPException(403, "Appointment does not belong to your clinic")
+
     # Check ownership - only the executing doctor or manager can start
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can start this procedure")
@@ -980,11 +1001,13 @@ async def get_visit_summary(
         p_segments = segments_by_proc.get(p.id, [])
         procedure_responses.append(_response(p, segments=p_segments))
     
-    # Check for unresolved procedures (running or paused)
+    # Check for unresolved procedures (running or paused only, not pending)
+    # Per T04 spec: "nu completa vizita cât timp există manopere running sau paused"
+    # "Manoperele pending trebuie finalizate sau anulate explicit" (do not block closure)
     unresolved = []
     can_close = True
     for p in procedure_responses:
-        if p.status in ("running", "paused") or p.status == "pending":
+        if p.status in ("running", "paused"):
             can_close = False
             unresolved.append({
                 "id": str(p.id),

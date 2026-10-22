@@ -778,15 +778,18 @@ async def refresh_timeline(
             )
             db.add(event)
         
-        # From clinical notes
+        # From clinical notes - skip drafts to protect clinical data
         notes = await db.scalars(
             select(ClinicalNote).where(
                 ClinicalNote.patient_id == patient_id,
-                ClinicalNote.clinic_id == user.clinic_id
+                ClinicalNote.clinic_id == user.clinic_id,
+                ClinicalNote.status != "draft"
             ).order_by(ClinicalNote.created_at)
         )
         
         for note in notes:
+            # For clinical notes, only include metadata in timeline, not content
+            # This prevents exposure of clinical content to unauthorized roles
             event = PatientTimelineEvent(
                 clinic_id=user.clinic_id,
                 patient_id=patient_id,
@@ -794,12 +797,12 @@ async def refresh_timeline(
                 entity_type="clinical_note",
                 entity_id=note.id,
                 title=f"Note: {note.title or note.note_type}",
-                description=note.content[:200],
+                description=f"{note.note_type} note",
                 actor_id=note.author_id,
                 occurred_at=note.created_at,
                 recorded_at=utcnow(),
                 source="clinical_note",
-                metadata={"type": note.note_type, "status": note.status}
+                metadata={"type": note.note_type, "status": note.status, "is_alert": note.is_alert}
             )
             db.add(event)
     

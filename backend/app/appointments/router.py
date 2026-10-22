@@ -155,6 +155,35 @@ async def update_status(appointment_id: UUID, payload: AppointmentStatus, db: As
         raise HTTPException(422, "Unknown appointment status")
     if payload.status != item.status and payload.status not in TRANSITIONS[item.status]:
         raise HTTPException(409, f"Invalid appointment transition: {item.status} -> {payload.status}")
+
+    # Check for unresolved performed procedures when closing appointment
+    # Per T04 spec: cannot close visit if there are running or paused procedures
+    if payload.status == "completed" and payload.status != item.status:
+        from app.database import PerformedProcedure
+        has_unresolved = await db.scalar(
+            select(PerformedProcedure.id).where(
+                PerformedProcedure.appointment_id == appointment_id,
+                PerformedProcedure.clinic_id == user.clinic_id,
+                PerformedProcedure.status.in_(["running", "paused"])
+            )
+        )
+        if has_unresolved:
+            # Get details of unresolved procedures for error message
+            unresolved = await db.execute(
+                select(PerformedProcedure.id, PerformedProcedure.procedure_name, PerformedProcedure.status)
+                .where(
+                    PerformedProcedure.appointment_id == appointment_id,
+                    PerformedProcedure.clinic_id == user.clinic_id,
+                    PerformedProcedure.status.in_(["running", "paused"])
+                )
+            )
+            unresolved_list = unresolved.scalars().all()
+            procedure_details = [f"{p.procedure_name} ({p.status})" for p in unresolved_list]
+            raise HTTPException(
+                409,
+                f"Cannot close appointment: {len(unresolved_list)} unresolved procedure(s): {', '.join(procedure_details)}"
+            )
+
     if payload.status in ACTIVE_STATUSES and item.status not in ACTIVE_STATUSES:
         candidate = AppointmentCreate.model_validate(item, from_attributes=True)
         await validate_refs(db, candidate, user.clinic_id)

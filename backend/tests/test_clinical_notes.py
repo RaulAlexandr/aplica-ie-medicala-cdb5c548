@@ -339,6 +339,11 @@ async def test_timeline_events(client):
         "content": "Test content"
     })
     assert note.status_code == 201
+    note_id = note.json()["id"]
+
+    # Finalize the note (drafts are not included in timeline)
+    finalize = await client.post(f"/api/clinical-notes/{note_id}/finalize", headers=headers)
+    assert finalize.status_code == 200
     
     # Refresh timeline
     refresh = await client.post("/api/clinical-notes/timeline/refresh", headers=headers)
