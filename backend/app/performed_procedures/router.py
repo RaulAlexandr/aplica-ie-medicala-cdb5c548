@@ -1,12 +1,10 @@
 from decimal import Decimal, InvalidOperation
-from datetime import UTC, datetime, timedelta
 from enum import Enum
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import and_, func, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -150,6 +148,10 @@ class PriceOverride(BaseModel):
         return validate_price_value(value)
 
 
+class UpdateProcedureNotes(BaseModel):
+    notes: str = Field(max_length=1000, description="Procedure notes, maximum 1000 characters")
+
+
 class PerformedProcedureResponse(BaseModel):
     id: UUID
     clinic_id: UUID
@@ -208,8 +210,14 @@ class VisitSummaryResponse(BaseModel):
     unresolved_procedures: list[dict]
 
 
-def _response(procedure: PerformedProcedure) -> PerformedProcedureResponse:
-    total_duration = _calculate_total_duration(procedure)
+def _response(procedure: PerformedProcedure, segments: list | None = None) -> PerformedProcedureResponse:
+    # Calculate total duration from explicitly provided segments only
+    # Avoid accessing procedure.segments in sync code to prevent lazy loading issues
+    if segments is not None:
+        total_duration = _calculate_total_duration(segments)
+    else:
+        total_duration = None
+    
     return PerformedProcedureResponse.model_validate(
         {
             **procedure.__dict__,
@@ -235,14 +243,10 @@ def _segment_response(segment: ProcedureExecutionSegment) -> ProcedureSegmentRes
     )
 
 
-def _calculate_total_duration(procedure: PerformedProcedure) -> int | None:
+def _calculate_total_duration(segments: list[ProcedureExecutionSegment]) -> int | None:
     """Calculate total active duration from segments."""
-    if not procedure.id:
-        return None
-    # This is a simplified calculation - in practice would need to query segments
-    # For now, we'll calculate from the procedure's segments relationship
     total = 0
-    for segment in procedure.segments if hasattr(procedure, 'segments') else []:
+    for segment in segments:
         if segment.segment_type == SegmentType.RUN and segment.ended_at:
             duration = (segment.ended_at - segment.started_at).total_seconds()
             total += int(duration)
@@ -257,7 +261,7 @@ async def _get_performed_procedure(
     query = select(PerformedProcedure).where(
         PerformedProcedure.id == procedure_id,
         PerformedProcedure.clinic_id == user.clinic_id
-    )
+    ).options(joinedload(PerformedProcedure.segments))
     if for_update:
         query = query.with_for_update()
     return await db.scalar(query)
@@ -880,15 +884,7 @@ async def get_visit_summary(
     unresolved = []
     can_close = True
     for p in procedure_responses:
-        if p.status in ("running", "paused"):
-            can_close = False
-            unresolved.append({
-                "id": str(p.id),
-                "procedure_name": p.procedure_name,
-                "status": p.status,
-                "executed_by": str(p.executed_by_id)
-            })
-        elif p.status == "pending":
+        if p.status in ("running", "paused") or p.status == "pending":
             can_close = False
             unresolved.append({
                 "id": str(p.id),
@@ -912,7 +908,7 @@ async def get_visit_summary(
 @router.patch("/{procedure_id}/notes", response_model=PerformedProcedureResponse)
 async def update_procedure_notes(
     procedure_id: UUID,
-    notes: str = Field(max_length=1000),
+    payload: UpdateProcedureNotes = Body(...),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_roles(*DOCTORS, *MANAGERS)),
 ) -> PerformedProcedureResponse:
@@ -926,7 +922,7 @@ async def update_procedure_notes(
     old_notes = procedure.notes
     now = utcnow()
     
-    procedure.notes = notes
+    procedure.notes = payload.notes
     procedure.updated_at = now
     
     db.add(AuditEvent(
@@ -937,14 +933,14 @@ async def update_procedure_notes(
         action="notes_updated"
     ))
     
-    if old_notes != notes:
+    if old_notes != payload.notes:
         db.add(PerformedProcedureRevision(
             clinic_id=user.clinic_id,
             performed_procedure_id=procedure.id,
             actor_id=user.id,
             field="notes",
             previous_value=old_notes,
-            new_value=notes,
+            new_value=payload.notes,
             reason="Notes updated",
             occurred_at=now
         ))

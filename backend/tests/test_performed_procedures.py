@@ -4,8 +4,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.auth.service import create_access_token, hash_password
-from app.database import Base, User, get_db
+from app.database import Base, get_db
 from app.main import app
 
 
@@ -39,9 +38,8 @@ async def register(client, clinic="Test Clinic", email="test@example.com"):
 
 async def create_doctor(client, headers, email="doctor@example.com"):
     """Create a doctor user via invitation."""
-    # Get clinic manager token
-    me = await client.get("/api/auth/me", headers=headers)
-    clinic_id = me.json()["clinic_id"]
+    # Ensure we have a valid session/token
+    await client.get("/api/auth/me", headers=headers)
     
     # Create invitation
     invite_resp = await client.post(
@@ -757,9 +755,8 @@ async def test_role_permissions_performed_procedures(client):
     tokens = await register(client, email="manager@example.com")
     headers = {"Authorization": f"Bearer {tokens['access_token']}"}
     
-    # Create assistant
-    assistant_tokens = await create_doctor(client, headers, email="assistant@example.com")
-    # Update to assistant role via direct DB manipulation would be needed
+    # Create assistant (tokens not used - role would need DB manipulation)
+    await create_doctor(client, headers, email="assistant@example.com")
     # For now, test with doctor role
     
     # Setup
@@ -807,3 +804,100 @@ async def test_role_permissions_performed_procedures(client):
     # Doctor can pause
     pause = await client.post(f"/api/performed-procedures/{procedure_id}/pause", headers=headers)
     assert pause.status_code == 200
+
+
+# Helper to create a performed procedure for notes tests
+async def create_test_procedure_for_notes(client, headers):
+    """Helper to create a performed procedure for testing notes update."""
+    # Create room
+    room = await client.post("/api/rooms", headers=headers, json={"name": "Cabinet 1"})
+    assert room.status_code == 201
+    room_id = room.json()["id"]
+    
+    # Create patient
+    patient = await client.post("/api/patients", headers=headers, json={
+        "first_name": "Test",
+        "last_name": "Patient"
+    })
+    assert patient.status_code == 201
+    patient_id = patient.json()["id"]
+    
+    # Create procedure catalog
+    catalog = await client.post("/api/procedures", headers=headers, json={
+        "code": "FILL01",
+        "name": "Filling",
+        "base_price": "100.00",
+        "default_duration_minutes": 30
+    })
+    assert catalog.status_code == 201
+    catalog_id = catalog.json()["id"]
+    
+    me = await client.get("/api/auth/me", headers=headers)
+    doctor_id = me.json()["id"]
+    
+    # Create appointment
+    appointment = await client.post("/api/appointments", headers=headers, json={
+        "patient_id": patient_id,
+        "doctor_id": doctor_id,
+        "room_id": room_id,
+        "starts_at": "2026-10-01T10:00:00+00:00",
+        "duration_minutes": 60,
+        "appointment_type": "Consultation"
+    })
+    appointment_id = appointment.json()["id"]
+    
+    # Create performed procedure
+    pp = await client.post("/api/performed-procedures", headers=headers, json={
+        "appointment_id": appointment_id,
+        "procedure_catalog_id": catalog_id
+    })
+    return pp.json()["id"], headers
+
+
+@pytest.mark.asyncio
+async def test_update_procedure_notes_valid(client):
+    """Test updating procedure notes with a valid value."""
+    tokens = await register(client, email="manager@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    
+    procedure_id, headers = await create_test_procedure_for_notes(client, headers)
+    
+    # Update notes with valid content
+    valid_notes = "This is a test note for the procedure."
+    response = await client.patch(
+        f"/api/performed-procedures/{procedure_id}/notes",
+        headers=headers,
+        json={"notes": valid_notes}
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["notes"] == valid_notes
+
+
+@pytest.mark.asyncio
+async def test_update_procedure_notes_max_length(client):
+    """Test that notes validation rejects strings longer than 1000 characters."""
+    tokens = await register(client, email="manager@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    
+    procedure_id, headers = await create_test_procedure_for_notes(client, headers)
+    
+    # Create notes with exactly 1000 characters (should pass)
+    notes_1000 = "a" * 1000
+    response = await client.patch(
+        f"/api/performed-procedures/{procedure_id}/notes",
+        headers=headers,
+        json={"notes": notes_1000}
+    )
+    assert response.status_code == 200
+    
+    # Create notes with 1001 characters (should fail with validation error)
+    notes_1001 = "a" * 1001
+    response = await client.patch(
+        f"/api/performed-procedures/{procedure_id}/notes",
+        headers=headers,
+        json={"notes": notes_1001}
+    )
+    assert response.status_code == 422  # Unprocessable Entity - Pydantic validation error
+    errors = response.json()["detail"]
+    assert any("max_length" in str(err).lower() or "length" in str(err).lower() for err in errors)
