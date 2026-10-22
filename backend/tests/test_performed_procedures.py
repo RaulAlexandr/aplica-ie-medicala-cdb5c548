@@ -54,11 +54,17 @@ async def create_doctor(client, headers, email="doctor@example.com"):
     assert invite_resp.status_code == 201
     invite_data = invite_resp.json()
     
-    # Accept invitation
+    # Extract token from invitation_url
+    invitation_url = invite_data.get("invitation_url", "")
+    if "token=" in invitation_url:
+        token = invitation_url.split("token=")[-1]
+    else:
+        token = invitation_url
+    
+    # Accept invitation - token is a query parameter
     accept_resp = await client.post(
-        "/api/staff/invitations/accept",
+        f"/api/staff/invitations/accept?token={token}",
         json={
-            "token": invite_data["token"],
             "password": "doctor_password_123"
         }
     )
@@ -901,3 +907,83 @@ async def test_update_procedure_notes_max_length(client):
     assert response.status_code == 422  # Unprocessable Entity - Pydantic validation error
     errors = response.json()["detail"]
     assert any("max_length" in str(err).lower() or "length" in str(err).lower() for err in errors)
+
+
+@pytest.mark.asyncio
+async def test_procedure_duration_tracking(client):
+    """Test that procedure duration is correctly calculated after start/pause/resume/complete."""
+    from freezegun import freeze_time
+    tokens = await register(client, email="manager@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    
+    # Create room, patient, procedure catalog, appointment, and procedure
+    procedure_id, headers = await create_test_procedure_for_notes(client, headers)
+    
+    # Start procedure - duration should be 0 initially
+    with freeze_time("2026-01-01T10:00:00+00:00") as frozen_time:
+        start_resp = await client.post(f"/api/performed-procedures/{procedure_id}/start", headers=headers)
+        assert start_resp.status_code == 200
+        start_data = start_resp.json()
+        assert start_data["status"] == "running"
+        # Duration should be None or 0 since no segment is completed yet
+        assert start_data["total_duration_seconds"] is None or start_data["total_duration_seconds"] == 0
+        
+        # Move time forward and pause
+        frozen_time.move_to("2026-01-01T10:30:00+00:00")
+        pause_resp = await client.post(f"/api/performed-procedures/{procedure_id}/pause", headers=headers)
+        assert pause_resp.status_code == 200
+        pause_data = pause_resp.json()
+        assert pause_data["status"] == "paused"
+        # Should have 30 minutes = 1800 seconds duration
+        assert pause_data["total_duration_seconds"] == 1800
+        
+        # Move time forward and resume
+        frozen_time.move_to("2026-01-01T11:00:00+00:00")
+        resume_resp = await client.post(f"/api/performed-procedures/{procedure_id}/resume", headers=headers)
+        assert resume_resp.status_code == 200
+        resume_data = resume_resp.json()
+        assert resume_data["status"] == "running"
+        # Duration should still be 1800 seconds (from first segment)
+        assert resume_data["total_duration_seconds"] == 1800
+        
+        # Move time forward and complete
+        frozen_time.move_to("2026-01-01T11:15:00+00:00")
+        complete_resp = await client.post(f"/api/performed-procedures/{procedure_id}/complete", headers=headers)
+        assert complete_resp.status_code == 200
+        complete_data = complete_resp.json()
+        assert complete_data["status"] == "completed"
+        # Total duration: 30 min (first segment) + 15 min (second segment) = 2700 seconds
+        assert complete_data["total_duration_seconds"] == 2700
+        
+        # Verify by getting the procedure again (new read from DB)
+        get_resp = await client.get(f"/api/performed-procedures/{procedure_id}", headers=headers)
+        assert get_resp.status_code == 200
+        get_data = get_resp.json()
+        assert get_data["total_duration_seconds"] == 2700
+
+
+@pytest.mark.asyncio
+async def test_list_procedures_with_duration(client):
+    """Test that list endpoint returns correct duration for procedures."""
+    from freezegun import freeze_time
+    tokens = await register(client, email="manager@example.com")
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    
+    # Create room, patient, procedure catalog, appointment, and procedure
+    procedure_id, headers = await create_test_procedure_for_notes(client, headers)
+    
+    # Start and pause procedure to create duration
+    with freeze_time("2026-01-01T10:00:00+00:00") as frozen_time:
+        await client.post(f"/api/performed-procedures/{procedure_id}/start", headers=headers)
+        frozen_time.move_to("2026-01-01T10:10:00+00:00")
+        await client.post(f"/api/performed-procedures/{procedure_id}/pause", headers=headers)
+        
+        # List procedures and check duration
+        list_resp = await client.get("/api/performed-procedures", headers=headers)
+        assert list_resp.status_code == 200
+        procedures = list_resp.json()
+        
+        # Find our procedure
+        our_proc = next((p for p in procedures if str(p["id"]) == str(procedure_id)), None)
+        assert our_proc is not None
+        assert our_proc["total_duration_seconds"] == 600  # 10 minutes

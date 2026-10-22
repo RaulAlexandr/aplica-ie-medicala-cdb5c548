@@ -807,7 +807,7 @@ async def refresh_timeline(
         clinic_id=user.clinic_id,
         actor_id=user.id,
         entity_type="timeline",
-        entity_id=None,
+        entity_id=user.clinic_id,
         action="refreshed"
     ))
     
