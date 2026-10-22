@@ -88,10 +88,10 @@ This document maps each requirement from T04 and T05 specifications to the corre
 | Unique timer per doctor (resume conflicts) | `test_concurrent_start_resume_same_doctor`, `test_race_condition_start_resume_same_doctor` | test_postgres_concurrency.py |
 | Unique timer per doctor (different doctors independent) | `test_different_doctors_independent` | test_postgres_concurrency.py |
 | Manager can start for other doctors | `test_manager_start_for_other_doctor` | test_postgres_concurrency.py |
-| Closure vs create (both orders controlled) | `test_closure_vs_create_concurrent` | test_postgres_concurrency.py |
-| Closure vs start (with pending procedure, closure always fails) | `test_closure_vs_start_concurrent` | test_postgres_concurrency.py |
-| Closure vs resume (with paused procedure, closure always fails) | `test_closure_vs_resume_concurrent` | test_postgres_concurrency.py |
-| Invariant: no completed appointment with pending/running/paused procedures | `test_closure_vs_start_concurrent` (asserts closure always fails with pending procedure), `test_closure_vs_resume_concurrent` (asserts closure always fails with paused procedure) | test_postgres_concurrency.py |
+| Closure vs create (closure wins and create wins, serialized at appointment row lock) | `test_closure_vs_create_concurrent` | test_postgres_concurrency.py |
+| Closure vs start (one pending procedure; closure returns 409 and start returns 200) | `test_closure_vs_start_concurrent` | test_postgres_concurrency.py |
+| Closure vs resume (one paused procedure; closure returns 409 and resume returns 200) | `test_closure_vs_resume_concurrent` | test_postgres_concurrency.py |
+| Invariant: no completed appointment with pending/running/paused procedures | `test_closure_vs_create_concurrent`, `test_closure_vs_start_concurrent`, `test_closure_vs_resume_concurrent` | test_postgres_concurrency.py |
 | Invariant: no partial modification after rejection | All concurrency tests verify final state consistency | test_postgres_concurrency.py |
 | Manager role bypass for unique timer | `test_manager_start_for_other_doctor` | test_postgres_concurrency.py |
 

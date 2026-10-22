@@ -5,15 +5,17 @@ All tests in this module require PostgreSQL and are marked with @pytest.mark.pos
 """
 
 import asyncio
+import itertools
 import os
 import subprocess
+from contextvars import ContextVar
 from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 
 import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.auth.service import hash_password
 from app.database import User, get_db
@@ -21,6 +23,119 @@ from app.main import app
 
 # All tests in this module require PostgreSQL
 pytestmark = pytest.mark.postgres
+
+SYNC_TIMEOUT = 10
+OP_TIMEOUT = 20
+_request_role = ContextVar("concurrency_request_role", default=None)
+_appointment_scenario_number = itertools.count()
+
+
+class _TaggedASGI:
+    """Attach a test-only role to a request so its DB session can be gated."""
+
+    def __init__(self, app, role):
+        self.app = app
+        self.role = role
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        token = _request_role.set(self.role)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _request_role.reset(token)
+
+
+def _appointment_lock(statement):
+    return (
+        getattr(statement, "_for_update_arg", None) is not None
+        and any(table.name == "appointments" for table in statement.get_final_froms())
+    )
+
+
+async def _install_lock_gate(target_url, winner_role):
+    """Install a test-only AsyncSession gate after the winner obtains appointment FOR UPDATE."""
+    acquired = asyncio.Event()
+    release = asyncio.Event()
+    contender_at_lock = asyncio.Event()
+    gate_seen = False
+    previous_overrides = app.dependency_overrides.copy()
+
+    class GatedSession(AsyncSession):
+        async def _gate_after_lock(self, statement, role):
+            nonlocal gate_seen
+            if _appointment_lock(statement) and role == winner_role and not gate_seen:
+                gate_seen = True
+                acquired.set()
+                try:
+                    await asyncio.wait_for(release.wait(), SYNC_TIMEOUT)
+                except TimeoutError as exc:
+                    raise AssertionError("Timed out at winner appointment-lock gate") from exc
+
+        async def execute(self, statement, *args, **kwargs):
+            is_lock = _appointment_lock(statement)
+            role = _request_role.get()
+            if is_lock and role != winner_role:
+                contender_at_lock.set()
+            result = await super().execute(statement, *args, **kwargs)
+            await self._gate_after_lock(statement, role)
+            return result
+
+        async def scalar(self, statement, *args, **kwargs):
+            role = _request_role.get()
+            if _appointment_lock(statement) and role != winner_role:
+                contender_at_lock.set()
+            result = await super().scalar(statement, *args, **kwargs)
+            await self._gate_after_lock(statement, role)
+            return result
+
+    gated_engine = create_async_engine(target_url, pool_pre_ping=True)
+    gated_sessions = async_sessionmaker(gated_engine, expire_on_commit=False, class_=GatedSession)
+
+    async def override():
+        async with gated_sessions() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override
+
+    async def wait_for_postgres_lock_wait():
+        """Require the second backend to be queued on PostgreSQL's row lock."""
+        try:
+            await asyncio.wait_for(contender_at_lock.wait(), SYNC_TIMEOUT)
+        except TimeoutError as exc:
+            raise AssertionError("Timed out waiting for contender to reach appointment lock") from exc
+        admin_url = _postgres_dsn(target_url, "postgres")
+        deadline = asyncio.get_running_loop().time() + SYNC_TIMEOUT
+        while asyncio.get_running_loop().time() < deadline:
+            conn = await asyncio.wait_for(asyncpg.connect(admin_url), SYNC_TIMEOUT)
+            try:
+                waiting = await conn.fetchval(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                    "WHERE datname = $1 AND wait_event_type = 'Lock')",
+                    urlparse(target_url).path.rsplit("/", 1)[-1],
+                )
+            finally:
+                await conn.close()
+            if waiting:
+                return
+            await asyncio.sleep(0.025)
+        raise AssertionError("Timed out waiting for PostgreSQL row-lock wait")
+
+    async def cleanup():
+        release.set()
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous_overrides)
+        await gated_engine.dispose()
+
+    return acquired, release, wait_for_postgres_lock_wait, cleanup
+
+
+async def _bounded(task, phase):
+    try:
+        return await asyncio.wait_for(task, OP_TIMEOUT)
+    except TimeoutError as exc:
+        raise AssertionError(f"Timed out during concurrent operation phase: {phase}") from exc
 
 
 @pytest.fixture
@@ -555,491 +670,134 @@ async def test_race_condition_start_resume_same_doctor(postgres_context):
 # ============================================================================
 
 
+async def _closure_scenario(client, headers, with_procedure=False, paused=False):
+    patient_id = await create_patient(client, headers)
+    doctor_id = (await get_manager_info(client, headers))["id"]
+    room_id = await create_room(client, headers)
+    appt_id = await create_appointment(
+        client,
+        headers,
+        patient_id,
+        doctor_id,
+        room_id,
+        f"2026-10-01T{10 + 2 * next(_appointment_scenario_number):02d}:00:00+00:00",
+    )
+    catalog_id = await create_procedure_catalog(client, headers)
+    if with_procedure:
+        proc_id = await create_performed_procedure(client, headers, appt_id, catalog_id)
+    else:
+        proc_id = None
+    for status in ["confirmed", "arrived", "in_progress"]:
+        response = await client.patch(
+            f"/api/appointments/{appt_id}/status", headers=headers, json={"status": status}
+        )
+        assert response.status_code == 200
+    if paused:
+        assert (await client.post(f"/api/performed-procedures/{proc_id}/start", headers=headers)).status_code == 200
+        assert (await client.post(f"/api/performed-procedures/{proc_id}/pause", headers=headers)).status_code == 200
+    return appt_id, catalog_id, proc_id
+
+
+async def _manager_context(client, email):
+    response = await client.post("/api/auth/register", json={
+        "clinic_name": "Concurrency Clinic", "full_name": "Manager User",
+        "email": email, "password": "testpass1234"
+    })
+    assert response.status_code == 201, response.text
+    headers = {"Authorization": f"Bearer {response.json()['access_token']}"}
+    return headers
+
+
+async def _run_controlled_race(target_url, winner_role, winner_request,
+                               loser_role, loser_request):
+    acquired, release, wait_for_lock, cleanup = await _install_lock_gate(
+        target_url, winner_role
+    )
+    winner_client = AsyncClient(transport=ASGITransport(app=_TaggedASGI(app, winner_role)), base_url="http://test")
+    loser_client = AsyncClient(transport=ASGITransport(app=_TaggedASGI(app, loser_role)), base_url="http://test")
+    winner_task = loser_task = None
+    try:
+        winner_task = asyncio.create_task(winner_request(winner_client))
+        await _bounded(acquired.wait(), f"{winner_role} acquiring appointment lock")
+        loser_task = asyncio.create_task(loser_request(loser_client))
+        await _bounded(wait_for_lock(), f"{loser_role} waiting on PostgreSQL appointment lock")
+        release.set()
+        return await _bounded(asyncio.gather(winner_task, loser_task), "releasing controlled race")
+    finally:
+        release.set()
+        for task in (winner_task, loser_task):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(*(t for t in (winner_task, loser_task) if t is not None), return_exceptions=True)
+        await winner_client.aclose()
+        await loser_client.aclose()
+        await cleanup()
+
+
 @pytest.mark.postgres
 @pytest.mark.asyncio
 async def test_closure_vs_create_concurrent(postgres_context):
-    """Test concurrent closure and procedure creation - closure should win if it starts first."""
-    client, _sessions, _target_url, _db_name = postgres_context
+    """Exercise both serialized orders at the appointment row lock."""
+    client, _sessions, target_url, _db_name = postgres_context
+    headers = await _manager_context(client, f"manager-closure-create-{uuid4().hex}@test.com")
 
-    # Register as clinic manager
-    auth_resp = await client.post("/api/auth/register", json={
-        "clinic_name": "Test Clinic",
-        "full_name": "Manager User",
-        "email": "manager_closure_create@test.com",
-        "password": "testpass12345"
-    })
-    assert auth_resp.status_code == 201, f"Registration failed: {auth_resp.status_code}"
-    tokens = auth_resp.json()
-    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    # Closure wins: it holds the appointment lock while the create request queues behind it.
+    appt_id, catalog_id, _ = await _closure_scenario(client, headers)
+    close_req = lambda c: c.patch(f"/api/appointments/{appt_id}/status", headers=headers, json={"status": "completed"})
+    create_req = lambda c: c.post("/api/performed-procedures", headers=headers, json={"appointment_id": appt_id, "procedure_catalog_id": catalog_id})
+    close_resp, create_resp = await _run_controlled_race(target_url, "close", close_req, "create", create_req)
+    assert close_resp.status_code == 200
+    assert create_resp.status_code == 409
+    assert (await get_appointment(client, headers, appt_id))["status"] == "completed"
+    assert await get_appointment_procedures(client, headers, appt_id) == []
 
-    # Create patient
-    patient_resp = await client.post("/api/patients", headers=headers, json={
-        "first_name": "Test",
-        "last_name": "Patient"
-    })
-    assert patient_resp.status_code == 201, f"Patient creation failed: {patient_resp.status_code}"
-    patient_id = patient_resp.json()["id"]
-
-    # Get doctor (manager is also a doctor in this context)
-    me_resp = await client.get("/api/auth/me", headers=headers)
-    assert me_resp.status_code == 200, f"Get me failed: {me_resp.status_code}"
-    doctor_id = me_resp.json()["id"]
-
-    # Create room
-    room_resp = await client.post("/api/rooms", headers=headers, json={"name": "Room 1"})
-    assert room_resp.status_code == 201, f"Room creation failed: {room_resp.status_code}"
-    room_id = room_resp.json()["id"]
-
-    # Create appointment
-    appt_resp = await client.post("/api/appointments", headers=headers, json={
-        "patient_id": patient_id,
-        "doctor_id": doctor_id,
-        "room_id": room_id,
-        "starts_at": "2026-10-01T10:00:00+00:00",
-        "duration_minutes": 60,
-        "appointment_type": "Consultation"
-    })
-    assert appt_resp.status_code == 201, f"Appointment creation failed: {appt_resp.status_code}"
-    appt_id = appt_resp.json()["id"]
-
-    # Create procedure catalog using the correct endpoint
-    catalog_resp = await client.post("/api/procedures", headers=headers, json={
-        "code": "TEST_CLOSURE_CREATE",
-        "name": "Test Procedure",
-        "base_price": "100.00",
-        "currency": "RON",
-        "default_duration_minutes": 30
-    })
-    assert catalog_resp.status_code == 201, f"Catalog creation failed: {catalog_resp.status_code}, response: {catalog_resp.json()}"
-    catalog_id = catalog_resp.json()["id"]
-
-    # Change appointment status to in_progress to allow closing transition
-    # Path: scheduled -> confirmed -> arrived -> in_progress
-    for status in ["confirmed", "arrived", "in_progress"]:
-        status_resp = await client.patch(
-            f"/api/appointments/{appt_id}/status",
-            headers=headers,
-            json={"status": status}
-        )
-        assert status_resp.status_code == 200, f"Status change to {status} failed: {status_resp.status_code}"
-
-    # Test both orders explicitly using synchronization events
-    # We run the test scenario twice with different order guarantees
-    for order_idx, order in enumerate(["closure_first", "create_first"]):
-        # Recreate appointment and catalog for each order test
-        start_hour = 10 + order_idx
-        appt_resp = await client.post("/api/appointments", headers=headers, json={
-            "patient_id": patient_id,
-            "doctor_id": doctor_id,
-            "room_id": room_id,
-            "starts_at": f"2026-10-01T{start_hour:02d}:00:00+00:00",
-            "duration_minutes": 60,
-            "appointment_type": "Consultation"
-        })
-        assert appt_resp.status_code == 201, f"Appointment creation failed: {appt_resp.status_code}"
-        appt_id = appt_resp.json()["id"]
-
-        catalog_resp = await client.post("/api/procedures", headers=headers, json={
-            "code": f"TEST_CLOSURE_CREATE_{order}",
-            "name": "Test Procedure",
-            "base_price": "100.00",
-            "currency": "RON",
-            "default_duration_minutes": 30
-        })
-        assert catalog_resp.status_code == 201, f"Catalog creation failed: {catalog_resp.status_code}"
-        catalog_id = catalog_resp.json()["id"]
-
-        # Change appointment status to in_progress
-        for status in ["confirmed", "arrived", "in_progress"]:
-            status_resp = await client.patch(
-                f"/api/appointments/{appt_id}/status",
-                headers=headers,
-                json={"status": status}
-            )
-            assert status_resp.status_code == 200, f"Status change to {status} failed: {status_resp.status_code}"
-
-        # Create two separate clients for concurrent operations
-        client1 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-        client2 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-        headers1 = {"Authorization": f"Bearer {tokens['access_token']}"}
-        headers2 = {"Authorization": f"Bearer {tokens['access_token']}"}
-
-        # Synchronization events for explicit order control
-        start_closure = asyncio.Event()
-        start_create = asyncio.Event()
-
-        close_resp = None
-        create_resp = None
-
-        async def do_closure(order, start_closure, start_create, client1, appt_id, headers1):
-            nonlocal close_resp
-            if order == "closure_first":
-                # Closure goes first
-                start_closure.set()
-                close_resp = await client1.patch(
-                    f"/api/appointments/{appt_id}/status",
-                    headers=headers1,
-                    json={"status": "completed"}
-                )
-                # Now allow create to start
-                start_create.set()
-            else:
-                # Wait for create to start first
-                await start_create.wait()
-                close_resp = await client1.patch(
-                    f"/api/appointments/{appt_id}/status",
-                    headers=headers1,
-                    json={"status": "completed"}
-                )
-
-        async def do_create(order, start_closure, start_create, client2, appt_id, catalog_id, headers2):
-            nonlocal create_resp
-            if order == "create_first":
-                # Create goes first
-                start_create.set()
-                create_resp = await client2.post(
-                    "/api/performed-procedures",
-                    headers=headers2,
-                    json={
-                        "appointment_id": appt_id,
-                        "procedure_catalog_id": catalog_id
-                    }
-                )
-                # Now allow closure to start
-                start_closure.set()
-            else:
-                # Wait for closure to start first
-                await start_closure.wait()
-                create_resp = await client2.post(
-                    "/api/performed-procedures",
-                    headers=headers2,
-                    json={
-                        "appointment_id": appt_id,
-                        "procedure_catalog_id": catalog_id
-                    }
-                )
-
-        try:
-            await asyncio.gather(
-                do_closure(order, start_closure, start_create, client1, appt_id, headers1),
-                do_create(order, start_closure, start_create, client2, appt_id, catalog_id, headers2)
-            )
-
-            # Verify the expected outcomes for each order
-            if order == "closure_first":
-                assert close_resp.status_code == 200, f"Closure should succeed, got {close_resp.status_code}"
-                assert create_resp.status_code == 409, f"Create should fail with 409, got {create_resp.status_code}"
-                # Verify appointment is completed
-                appt_check = await get_appointment(client, headers, appt_id)
-                assert appt_check is not None
-                assert appt_check["status"] == "completed"
-                # Verify no procedure was created
-                procedures = await get_appointment_procedures(client, headers, appt_id)
-                assert len(procedures) == 0, f"No procedures should exist, got {len(procedures)}"
-            else:  # create_first
-                assert create_resp.status_code == 201, f"Create should succeed, got {create_resp.status_code}"
-                assert close_resp.status_code == 409, f"Closure should fail with 409, got {close_resp.status_code}"
-                # Verify appointment is NOT completed
-                appt_check = await get_appointment(client, headers, appt_id)
-                assert appt_check is not None
-                assert appt_check["status"] != "completed"
-                # Verify procedure was created and is pending
-                procedures = await get_appointment_procedures(client, headers, appt_id)
-                assert len(procedures) == 1, f"Expected 1 procedure, got {len(procedures)}"
-                assert procedures[0]["status"] == "pending"
-
-        finally:
-            await client1.aclose()
-            await client2.aclose()
+    # Create wins under the same controlled lock handoff.
+    appt_id, catalog_id, _ = await _closure_scenario(client, headers)
+    create_req = lambda c: c.post("/api/performed-procedures", headers=headers, json={"appointment_id": appt_id, "procedure_catalog_id": catalog_id})
+    close_req = lambda c: c.patch(f"/api/appointments/{appt_id}/status", headers=headers, json={"status": "completed"})
+    create_resp, close_resp = await _run_controlled_race(target_url, "create", create_req, "close", close_req)
+    assert create_resp.status_code == 201
+    assert close_resp.status_code == 409
+    assert (await get_appointment(client, headers, appt_id))["status"] == "in_progress"
+    procedures = await get_appointment_procedures(client, headers, appt_id)
+    assert len(procedures) == 1 and procedures[0]["status"] == "pending"
 
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
 async def test_closure_vs_start_concurrent(postgres_context):
-    """Test concurrent closure and procedure start - closure should win if it starts first."""
-    client, _sessions, _target_url, _db_name = postgres_context
-
-    # Register as clinic manager
-    auth_resp = await client.post("/api/auth/register", json={
-        "clinic_name": "Test Clinic",
-        "full_name": "Manager User",
-        "email": "manager_closure_start@test.com",
-        "password": "testpass12345"
-    })
-    assert auth_resp.status_code == 201, f"Registration failed: {auth_resp.status_code}"
-    tokens = auth_resp.json()
-    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
-
-    # Create patient
-    patient_resp = await client.post("/api/patients", headers=headers, json={
-        "first_name": "Test",
-        "last_name": "Patient"
-    })
-    assert patient_resp.status_code == 201, f"Patient creation failed: {patient_resp.status_code}"
-    patient_id = patient_resp.json()["id"]
-
-    # Get doctor
-    me_resp = await client.get("/api/auth/me", headers=headers)
-    assert me_resp.status_code == 200, f"Get me failed: {me_resp.status_code}"
-    doctor_id = me_resp.json()["id"]
-
-    # Create room
-    room_resp = await client.post("/api/rooms", headers=headers, json={"name": "Room 1"})
-    assert room_resp.status_code == 201, f"Room creation failed: {room_resp.status_code}"
-    room_id = room_resp.json()["id"]
-
-    # Create appointment
-    appt_resp = await client.post("/api/appointments", headers=headers, json={
-        "patient_id": patient_id,
-        "doctor_id": doctor_id,
-        "room_id": room_id,
-        "starts_at": "2026-10-01T10:00:00+00:00",
-        "duration_minutes": 60,
-        "appointment_type": "Consultation"
-    })
-    assert appt_resp.status_code == 201, f"Appointment creation failed: {appt_resp.status_code}"
-    appt_id = appt_resp.json()["id"]
-
-    # Create procedure catalog using the correct endpoint
-    catalog_resp = await client.post("/api/procedures", headers=headers, json={
-        "code": "TEST_CLOSURE_START",
-        "name": "Test Procedure",
-        "base_price": "100.00",
-        "currency": "RON",
-        "default_duration_minutes": 30
-    })
-    assert catalog_resp.status_code == 201, f"Catalog creation failed: {catalog_resp.status_code}, response: {catalog_resp.json()}"
-    catalog_id = catalog_resp.json()["id"]
-
-    # Create procedure (pending)
-    proc_resp = await client.post("/api/performed-procedures", headers=headers, json={
-        "appointment_id": appt_id,
-        "procedure_catalog_id": catalog_id
-    })
-    assert proc_resp.status_code == 201
-    proc_id = proc_resp.json()["id"]
-
-    # Change appointment status to in_progress to allow closing transition
-    # Path: scheduled -> confirmed -> arrived -> in_progress
-    for status in ["confirmed", "arrived", "in_progress"]:
-        status_resp = await client.patch(
-            f"/api/appointments/{appt_id}/status",
-            headers=headers,
-            json={"status": status}
-        )
-        assert status_resp.status_code == 200, f"Status change to {status} failed: {status_resp.status_code}"
-
-    # Create two separate clients for concurrent operations
-    # Use barrier to ensure both requests are submitted simultaneously
-    client1 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-    headers1 = {"Authorization": f"Bearer {tokens['access_token']}"}
-    client2 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-    headers2 = {"Authorization": f"Bearer {tokens['access_token']}"}
-
-    try:
-        # Use barrier for explicit synchronization - both operations start at the same time
-        barrier = asyncio.Barrier(2)
-
-        close_resp = None
-        start_resp = None
-
-        async def do_closure():
-            nonlocal close_resp
-            await barrier.wait()
-            close_resp = await client1.patch(
-                f"/api/appointments/{appt_id}/status",
-                headers=headers1,
-                json={"status": "completed"}
-            )
-
-        async def do_start():
-            nonlocal start_resp
-            await barrier.wait()
-            start_resp = await client2.post(
-                f"/api/performed-procedures/{proc_id}/start",
-                headers=headers2
-            )
-
-        await asyncio.gather(do_closure(), do_start())
-
-        # Closure MUST always fail because there's already a pending procedure
-        # The application checks for unresolved procedures (pending/running/paused) before allowing closure
-        assert close_resp.status_code == 409, f"Closure should always fail with pending procedure, got {close_resp.status_code}"
-        assert "unresolved procedures exist" in close_resp.json().get("detail", "").lower()
-
-        # Start can either succeed or fail independently
-        if start_resp.status_code == 200:
-            # Start succeeded - procedure should be running
-            proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
-            assert proc_check.json()["status"] == "running"
-            # Appointment should remain in_progress (not completed)
-            appt_check = await get_appointment(client, headers, appt_id)
-            assert appt_check["status"] != "completed"
-            # Verify exactly one active run segment
-            segments_resp = await client.get(f"/api/performed-procedures/{proc_id}/segments", headers=headers)
-            assert segments_resp.status_code == 200
-            segments = segments_resp.json()
-            run_segments = [s for s in segments if s.get("segment_type") == "run" and s.get("ended_at") is None]
-            assert len(run_segments) == 1, f"Expected exactly 1 active run segment, got {len(run_segments)}"
-        elif start_resp.status_code == 409:
-            # Start failed (e.g., due to unique timer per doctor) - procedure remains pending
-            proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
-            assert proc_check.json()["status"] == "pending"
-            # Appointment should remain in_progress
-            appt_check = await get_appointment(client, headers, appt_id)
-            assert appt_check["status"] == "in_progress"
-        else:
-            assert False, f"Unexpected start status: {start_resp.status_code}"
-
-    finally:
-        await client1.aclose()
-        await client2.aclose()
+    client, _sessions, target_url, _db_name = postgres_context
+    headers = await _manager_context(client, f"manager-closure-start-{uuid4().hex}@test.com")
+    appt_id, _catalog_id, proc_id = await _closure_scenario(client, headers, with_procedure=True)
+    start_req = lambda c: c.post(f"/api/performed-procedures/{proc_id}/start", headers=headers)
+    close_req = lambda c: c.patch(f"/api/appointments/{appt_id}/status", headers=headers, json={"status": "completed"})
+    start_resp, close_resp = await _run_controlled_race(target_url, "start", start_req, "close", close_req)
+    assert close_resp.status_code == 409
+    assert start_resp.status_code == 200
+    assert (await get_appointment(client, headers, appt_id))["status"] == "in_progress"
+    proc = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
+    assert proc.status_code == 200 and proc.json()["status"] == "running"
+    segments = (await client.get(f"/api/performed-procedures/{proc_id}/segments", headers=headers)).json()
+    assert len([s for s in segments if s["segment_type"] == "run" and s["ended_at"] is None]) == 1
 
 
 @pytest.mark.postgres
 @pytest.mark.asyncio
 async def test_closure_vs_resume_concurrent(postgres_context):
-    """Test concurrent closure and procedure resume - closure should win if it starts first."""
-    client, _sessions, _target_url, _db_name = postgres_context
-
-    # Register as clinic manager
-    auth_resp = await client.post("/api/auth/register", json={
-        "clinic_name": "Test Clinic",
-        "full_name": "Manager User",
-        "email": "manager_closure_resume@test.com",
-        "password": "testpass12345"
-    })
-    assert auth_resp.status_code == 201, f"Registration failed: {auth_resp.status_code}"
-    tokens = auth_resp.json()
-    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
-
-    # Create patient
-    patient_resp = await client.post("/api/patients", headers=headers, json={
-        "first_name": "Test",
-        "last_name": "Patient"
-    })
-    assert patient_resp.status_code == 201, f"Patient creation failed: {patient_resp.status_code}"
-    patient_id = patient_resp.json()["id"]
-
-    # Get doctor
-    me_resp = await client.get("/api/auth/me", headers=headers)
-    assert me_resp.status_code == 200, f"Get me failed: {me_resp.status_code}"
-    doctor_id = me_resp.json()["id"]
-
-    # Create room
-    room_resp = await client.post("/api/rooms", headers=headers, json={"name": "Room 1"})
-    assert room_resp.status_code == 201, f"Room creation failed: {room_resp.status_code}"
-    room_id = room_resp.json()["id"]
-
-    # Create appointment
-    appt_resp = await client.post("/api/appointments", headers=headers, json={
-        "patient_id": patient_id,
-        "doctor_id": doctor_id,
-        "room_id": room_id,
-        "starts_at": "2026-10-01T10:00:00+00:00",
-        "duration_minutes": 60,
-        "appointment_type": "Consultation"
-    })
-    assert appt_resp.status_code == 201, f"Appointment creation failed: {appt_resp.status_code}"
-    appt_id = appt_resp.json()["id"]
-
-    # Create procedure catalog using the correct endpoint
-    catalog_resp = await client.post("/api/procedures", headers=headers, json={
-        "code": "TEST_CLOSURE_RESUME",
-        "name": "Test Procedure",
-        "base_price": "100.00",
-        "currency": "RON",
-        "default_duration_minutes": 30
-    })
-    assert catalog_resp.status_code == 201, f"Catalog creation failed: {catalog_resp.status_code}, response: {catalog_resp.json()}"
-    catalog_id = catalog_resp.json()["id"]
-
-    # Create procedure (pending)
-    proc_resp = await client.post("/api/performed-procedures", headers=headers, json={
-        "appointment_id": appt_id,
-        "procedure_catalog_id": catalog_id
-    })
-    assert proc_resp.status_code == 201
-    proc_id = proc_resp.json()["id"]
-
-    # Start and pause procedure
-    start_resp = await client.post(f"/api/performed-procedures/{proc_id}/start", headers=headers)
-    assert start_resp.status_code == 200
-    pause_resp = await client.post(f"/api/performed-procedures/{proc_id}/pause", headers=headers)
-    assert pause_resp.status_code == 200
-
-    # Change appointment status to in_progress to allow closing transition
-    # Path: scheduled -> confirmed -> arrived -> in_progress
-    for status in ["confirmed", "arrived", "in_progress"]:
-        status_resp = await client.patch(
-            f"/api/appointments/{appt_id}/status",
-            headers=headers,
-            json={"status": status}
-        )
-        assert status_resp.status_code == 200, f"Status change to {status} failed: {status_resp.status_code}"
-
-    # Create two separate clients for concurrent operations
-    # Use barrier for explicit synchronization
-    client1 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-    headers1 = {"Authorization": f"Bearer {tokens['access_token']}"}
-    client2 = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
-    headers2 = {"Authorization": f"Bearer {tokens['access_token']}"}
-
-    try:
-        # Use barrier for explicit synchronization - both operations start at the same time
-        barrier = asyncio.Barrier(2)
-
-        close_resp = None
-        resume_resp = None
-
-        async def do_closure():
-            nonlocal close_resp
-            await barrier.wait()
-            close_resp = await client1.patch(
-                f"/api/appointments/{appt_id}/status",
-                headers=headers1,
-                json={"status": "completed"}
-            )
-
-        async def do_resume():
-            nonlocal resume_resp
-            await barrier.wait()
-            resume_resp = await client2.post(
-                f"/api/performed-procedures/{proc_id}/resume",
-                headers=headers2
-            )
-
-        await asyncio.gather(do_closure(), do_resume())
-
-        # Closure MUST always fail because there's already a paused procedure
-        # The application checks for unresolved procedures (pending/running/paused) before allowing closure
-        assert close_resp.status_code == 409, f"Closure should always fail with paused procedure, got {close_resp.status_code}"
-        assert "unresolved procedures exist" in close_resp.json().get("detail", "").lower()
-
-        # Resume can either succeed or fail independently
-        if resume_resp.status_code == 200:
-            # Resume succeeded - procedure should be running
-            proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
-            assert proc_check.json()["status"] == "running"
-            # Appointment should remain in_progress (not completed)
-            appt_check = await get_appointment(client, headers, appt_id)
-            assert appt_check["status"] != "completed"
-            # Verify exactly one active run segment
-            segments_resp = await client.get(f"/api/performed-procedures/{proc_id}/segments", headers=headers)
-            assert segments_resp.status_code == 200
-            segments = segments_resp.json()
-            run_segments = [s for s in segments if s["segment_type"] == "run" and s["ended_at"] is None]
-            assert len(run_segments) == 1, f"Expected exactly 1 active run segment, got {len(run_segments)}"
-        elif resume_resp.status_code == 409:
-            # Resume failed (e.g., due to unique timer per doctor) - procedure remains paused
-            proc_check = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
-            assert proc_check.json()["status"] == "paused"
-            # Appointment should remain in_progress
-            appt_check = await get_appointment(client, headers, appt_id)
-            assert appt_check["status"] == "in_progress"
-        else:
-            assert False, f"Unexpected resume status: {resume_resp.status_code}"
-
-    finally:
-        await client1.aclose()
-        await client2.aclose()
+    client, _sessions, target_url, _db_name = postgres_context
+    headers = await _manager_context(client, f"manager-closure-resume-{uuid4().hex}@test.com")
+    appt_id, _catalog_id, proc_id = await _closure_scenario(
+        client, headers, with_procedure=True, paused=True
+    )
+    resume_req = lambda c: c.post(f"/api/performed-procedures/{proc_id}/resume", headers=headers)
+    close_req = lambda c: c.patch(f"/api/appointments/{appt_id}/status", headers=headers, json={"status": "completed"})
+    resume_resp, close_resp = await _run_controlled_race(target_url, "resume", resume_req, "close", close_req)
+    assert close_resp.status_code == 409
+    assert resume_resp.status_code == 200
+    assert (await get_appointment(client, headers, appt_id))["status"] == "in_progress"
+    proc = await client.get(f"/api/performed-procedures/{proc_id}", headers=headers)
+    assert proc.status_code == 200 and proc.json()["status"] == "running"
+    segments = (await client.get(f"/api/performed-procedures/{proc_id}/segments", headers=headers)).json()
+    pauses = [s for s in segments if s["segment_type"] == "pause"]
+    assert len(pauses) == 1 and pauses[0]["ended_at"] is not None
+    assert len([s for s in segments if s["segment_type"] == "run" and s["ended_at"] is None]) == 1
