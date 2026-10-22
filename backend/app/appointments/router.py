@@ -155,6 +155,29 @@ async def update_status(appointment_id: UUID, payload: AppointmentStatus, db: As
         raise HTTPException(422, "Unknown appointment status")
     if payload.status != item.status and payload.status not in TRANSITIONS[item.status]:
         raise HTTPException(409, f"Invalid appointment transition: {item.status} -> {payload.status}")
+
+    # Check for unresolved performed procedures when closing appointment
+    # Per T04 spec: cannot close visit if there are pending, running or paused procedures
+    # "Manoperele pending trebuie finalizate sau anulate explicit"
+    if payload.status == "completed" and payload.status != item.status:
+        from app.database import PerformedProcedure
+        unresolved = await db.execute(
+            select(PerformedProcedure.id, PerformedProcedure.procedure_name, PerformedProcedure.status)
+            .where(
+                PerformedProcedure.appointment_id == appointment_id,
+                PerformedProcedure.clinic_id == user.clinic_id,
+                PerformedProcedure.status.in_(["pending", "running", "paused"])
+            )
+        )
+        unresolved_list = unresolved.all()
+        if unresolved_list:
+            # Use generic message to avoid exposing clinical details to non-clinical roles
+            # reception role can call this endpoint but should not see procedure details
+            raise HTTPException(
+                409,
+                "Cannot close appointment: unresolved procedures exist. Please resolve all procedures before closing."
+            )
+
     if payload.status in ACTIVE_STATUSES and item.status not in ACTIVE_STATUSES:
         candidate = AppointmentCreate.model_validate(item, from_attributes=True)
         await validate_refs(db, candidate, user.clinic_id)
