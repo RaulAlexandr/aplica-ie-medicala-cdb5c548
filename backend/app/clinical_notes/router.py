@@ -310,8 +310,6 @@ def _sanitize_timeline_event(event: PatientTimelineEvent, user: User, db: AsyncS
 
     return result
 
-    return result
-
 
 def _timeline_event_response(event: PatientTimelineEvent, actor_name: str | None = None, user: User | None = None) -> TimelineEventResponse:
     event_dict = _sanitize_timeline_event(event, user) if user else {
