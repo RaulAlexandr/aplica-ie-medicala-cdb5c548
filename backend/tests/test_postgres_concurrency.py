@@ -5,6 +5,7 @@ All tests in this module require PostgreSQL and are marked with @pytest.mark.pos
 """
 
 import asyncio
+import itertools
 import os
 import subprocess
 from contextvars import ContextVar
@@ -26,6 +27,7 @@ pytestmark = pytest.mark.postgres
 SYNC_TIMEOUT = 10
 OP_TIMEOUT = 20
 _request_role = ContextVar("concurrency_request_role", default=None)
+_appointment_scenario_number = itertools.count()
 
 
 class _TaggedASGI:
@@ -673,7 +675,12 @@ async def _closure_scenario(client, headers, with_procedure=False, paused=False)
     doctor_id = (await get_manager_info(client, headers))["id"]
     room_id = await create_room(client, headers)
     appt_id = await create_appointment(
-        client, headers, patient_id, doctor_id, room_id, "2026-10-01T10:00:00+00:00"
+        client,
+        headers,
+        patient_id,
+        doctor_id,
+        room_id,
+        f"2026-10-01T{10 + 2 * next(_appointment_scenario_number):02d}:00:00+00:00",
     )
     catalog_id = await create_procedure_catalog(client, headers)
     if with_procedure:
