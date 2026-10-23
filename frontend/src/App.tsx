@@ -1,3 +1,5 @@
+import { Calendar } from './Calendar';
+import { AvailabilitySettings } from './AvailabilitySettings';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -123,18 +125,8 @@ function AppointmentForm({ onSaved }: { onSaved: () => void }) {
 }
 
 function Appointments({ user }: { user: User }) {
-  const [showForm, setShowForm] = useState(false);
-  const canCreate = ['clinic_manager', 'doctor', 'reception', 'administrator'].includes(user.role);
-  const query = useQuery({ queryKey: ['appointments'], queryFn: listAppointments });
-  const client = useQueryClient();
-  return <>
-    <header><div><p className="eyebrow">SCHEDULE</p><h1>Appointments</h1></div>{canCreate && <button onClick={() => setShowForm(!showForm)}>{showForm ? 'Close' : 'New appointment'}</button>}</header>
-    {showForm && <AppointmentForm onSaved={() => { setShowForm(false); client.invalidateQueries({ queryKey: ['appointments'] }); }} />}
-    <section className="card">
-      <QueryState loading={query.isLoading} empty={!query.isLoading && !query.isError && query.data?.length === 0} error={query.error} />
-      {!query.isLoading && !query.isError && query.data?.map(a => <article className="appointment" key={a.id}><strong>{new Date(a.starts_at).toLocaleString()}</strong><span>{a.appointment_type} \u00b7 {a.status}</span></article>)}
-    </section>
-  </>;
+  const canManage = ['clinic_manager', 'doctor', 'reception', 'administrator'].includes(user.role);
+  return <Calendar canManage={canManage} />;
 }
 
 function ProcedureForm({ initial, onSaved, onCancel }: { initial?: ProcedureCatalog; onSaved: (procedure: ProcedureCatalog) => void; onCancel: () => void }) {
@@ -361,6 +353,7 @@ function Setup({ user }: { user: User }) {
   return <>
     <header><div><p className="eyebrow">FIRST-RUN SETUP</p><h1>Clinic setup</h1></div></header>
     <ClinicSettings />
+    <AvailabilitySettings />
     <Rooms />
     <section className="card notice">
       <h2>Next step</h2>
@@ -463,7 +456,7 @@ function InvitationAccept() {
 
 function Home({ user }: { user: User }) {
   const count = useQuery({ queryKey: ['patient-count'], queryFn: countPatients });
-  const appointments = useQuery({ queryKey: ['appointments'], queryFn: listAppointments });
+  const appointments = useQuery({ queryKey: ['appointments'], queryFn: () => listAppointments() });
   return <>
     <header><div><p className="eyebrow">CLINIC OVERVIEW</p><h1>Good morning, {user.full_name.split(' ')[0]}</h1></div></header>
     <section className="stats">
