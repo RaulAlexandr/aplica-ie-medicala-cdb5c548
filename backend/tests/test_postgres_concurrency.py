@@ -628,8 +628,9 @@ async def test_race_condition_start_resume_same_doctor(postgres_context):
     patient_id = await create_patient(client, headers)
     catalog_id = await create_procedure_catalog(client, headers)
 
-    appointment1_id = await create_appointment(client, headers, patient_id, manager_info["id"], room_id, "2026-10-01T20:00:00+00:00")
-    appointment2_id = await create_appointment(client, headers, patient_id, manager_info["id"], room_id, "2026-10-01T21:00:00+00:00")
+    # Keep both bookings within one Bucharest day; this test exercises timer concurrency.
+    appointment1_id = await create_appointment(client, headers, patient_id, manager_info["id"], room_id, "2026-10-01T10:00:00+00:00")
+    appointment2_id = await create_appointment(client, headers, patient_id, manager_info["id"], room_id, "2026-10-01T11:00:00+00:00")
 
     procedure1_id = await create_performed_procedure(client, headers, appointment1_id, catalog_id)
     procedure2_id = await create_performed_procedure(client, headers, appointment2_id, catalog_id)
