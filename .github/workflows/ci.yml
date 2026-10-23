@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, fix/security-integrity-workflows]
+    branches: [main, fix/security-integrity-workflows, integration/t02-t05]
   pull_request:
 
 jobs:
