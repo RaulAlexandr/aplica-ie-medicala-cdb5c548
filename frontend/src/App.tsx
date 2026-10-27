@@ -1,12 +1,15 @@
 import { Calendar } from './Calendar';
 import { AvailabilitySettings } from './AvailabilitySettings';
+import { VisitPage } from './clinical/VisitPage';
+import { ClinicalPatientRecord } from './clinical/ClinicalPatientRecord';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
-import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { acceptInvitation, activateProcedure, apiErrorMessage, Clinic, countPatients, countProcedures, createAppointment, createInvitation, createPatient, createProcedure, createRoom, deactivateProcedure, deactivateStaff, Doctor, getClinic, getPatient, getProcedure, getStaff, Invitation, listAppointments, listDoctors, listInvitations, listPatients, listProcedures, listRooms, listStaff, login, logout, me, Patient, ProcedureCatalog, register, reissueInvitation, revokeInvitation, Room, Staff, updateClinic, updatePatient, updateProcedure, updateRoom, User } from './api/client';
 
 const managementRoles = ['clinic_manager', 'administrator'];
 const staffRoles = ['clinic_manager', 'doctor', 'assistant', 'reception', 'administrator'];
+const clinicalRoles = ['doctor', 'clinic_manager', 'administrator'];
 const canEditPatients = (role: string) => managementRoles.includes(role) || role === 'doctor';
 function ErrorState({ error }: { error: unknown }) { return <p className="error" role="alert">{apiErrorMessage(error)}</p>; }
 function QueryState({ loading, empty, error }: { loading: boolean; empty: boolean; error: unknown }) { if (loading) return <p className="muted">Loading\u2026</p>; if (error) return <ErrorState error={error} />; if (empty) return <p className="muted">Nothing to display yet.</p>; return null; }
@@ -76,8 +79,13 @@ function Patients({ user }: { user: User }) {
   </>;
 }
 
-function PatientDetail({ user }: { user: User }) {
+function PatientDetailRoute({ user }: { user: User }) {
   const { id = '' } = useParams();
+  const [searchParams] = useSearchParams();
+  return <PatientDetail key={id} id={id} appointmentId={searchParams.get('appointment_id') ?? undefined} user={user} />;
+}
+
+function PatientDetail({ user, id, appointmentId }: { user: User; id: string; appointmentId?: string }) {
   const [editing, setEditing] = useState(false);
   const query = useQuery({ queryKey: ['patient', id], queryFn: () => getPatient(id) });
   const client = useQueryClient();
@@ -90,13 +98,19 @@ function PatientDetail({ user }: { user: User }) {
     <section className="card">
       <h2>Contact</h2>
       <p>{p.phone || 'No phone'} \u00b7 {p.email || 'No email'}</p>
+      <p>{p.address || 'No address recorded'}{p.emergency_contact ? ` · Emergency contact: ${p.emergency_contact}` : ''}</p>
       <h2>Clinical alerts</h2>
       <p>{p.allergies || 'No allergies recorded.'}</p>
       <p>{p.medications || 'No medications recorded.'}</p>
       <p>{p.medical_alerts || 'No medical alerts recorded.'}</p>
+      <p>{p.chronic_diseases || 'No chronic conditions recorded.'}</p>
+      <p>{p.relevant_medical_conditions || 'No additional medical conditions recorded.'}</p>
+      <p>{p.previous_surgeries || 'No previous surgeries recorded.'}</p>
+      <p>{p.pregnancy_status ? `Pregnancy: ${p.pregnancy_status}` : 'Pregnancy status not recorded.'} · {p.smoking_status ? `Smoking: ${p.smoking_status}` : 'Smoking status not recorded.'}</p>
       <h2>Notes</h2>
       <p>{p.notes || 'No notes recorded.'}</p>
     </section>
+    {clinicalRoles.includes(user.role) && <ClinicalPatientRecord key={id} patientId={id} appointmentId={appointmentId} user={user} />}
   </>;
 }
 
@@ -487,8 +501,9 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Home user={user} />} />
       <Route path="/patients" element={<Patients user={user} />} />
-      <Route path="/patients/:id" element={<PatientDetail user={user} />} />
+      <Route path="/patients/:id" element={<PatientDetailRoute user={user} />} />
       <Route path="/appointments" element={<Appointments user={user} />} />
+      <Route path="/appointments/:appointmentId/visit" element={<VisitPage user={user} />} />
       <Route path="/procedures" element={<Procedures user={user} />} />
       <Route path="/procedures/:id" element={<ProcedureDetail user={user} />} />
       <Route path="/setup" element={managementRoles.includes(user.role) ? <Setup user={user} /> : <Navigate to="/" />} />
