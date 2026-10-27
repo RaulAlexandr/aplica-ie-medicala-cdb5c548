@@ -9,24 +9,52 @@
 
 ## Local host startup
 
-Use only fictitious records and the temporary SQLite database below. Run each command group in its own terminal from this worktree.
+Use only fictitious records and the temporary SQLite database below. Run each command group in its own terminal from this worktree. The SQLite file is demo-only and is not PostgreSQL validation.
 
 API terminal:
 
 ```bash
 cd /home/raul/Projects/worktrees/aplica-ie-t04-t05-ui/backend
-export DATABASE_URL=sqlite+aiosqlite:////tmp/dentacare-t04-t05-ui.db
+if [ ! -x .venv/bin/python ]; then python3.12 -m venv .venv; fi
+if [ ! -x .venv/bin/uvicorn ]; then .venv/bin/python -m pip install -e .; fi
+export DATABASE_URL=sqlite+aiosqlite:////tmp/dentacare-t04-t05-ui-demo.db
 export ENVIRONMENT=development
 export JWT_SECRET=local-ui-test-secret-change-before-sharing
 export CORS_ORIGINS=http://127.0.0.1:5178
-.venv/bin/alembic upgrade head
+if [ -e /tmp/dentacare-t04-t05-ui-demo.db ]; then
+  echo 'Database file exists; it will be preserved and only missing tables will be created.'
+else
+  echo 'Creating the demo database from the SQLAlchemy models.'
+fi
+.venv/bin/python - <<'PY'
+import asyncio
+
+from app.database import Base, engine
+
+
+async def initialize_demo_schema():
+    async with engine.begin() as connection:
+        await connection.run_sync(
+            lambda sync_connection: Base.metadata.create_all(
+                sync_connection, checkfirst=True
+            )
+        )
+    await engine.dispose()
+
+
+asyncio.run(initialize_demo_schema())
+print(f"Initialized {len(Base.metadata.tables)} mapped SQLAlchemy tables.")
+PY
 .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8010
 ```
+
+`Base.metadata.create_all(checkfirst=True)` creates missing tables from the app models and leaves existing tables and rows in place; it does not run Alembic, drop tables, or alter existing columns. If this path already holds a schema from a different demo, keep it and choose another unused filename for a separate demo database. This bootstrap does not validate the PostgreSQL migrations or PostgreSQL behavior. The repository migrations use PostgreSQL-specific DDL such as `JSONB` and `::jsonb` defaults, so do not run `alembic upgrade head` against SQLite.
 
 Frontend terminal:
 
 ```bash
 cd /home/raul/Projects/worktrees/aplica-ie-t04-t05-ui/frontend
+if [ ! -d node_modules ]; then PATH="/home/raul/Projects/dentacare-tools/node/bin:$PATH" npm ci; fi
 PATH="/home/raul/Projects/dentacare-tools/node/bin:$PATH" VITE_API_URL=http://127.0.0.1:8010/api npm run dev -- --host 127.0.0.1 --port 5178 --strictPort
 ```
 
@@ -48,8 +76,10 @@ Open `http://127.0.0.1:5178`. Keep the API CORS origin exactly `http://127.0.0.1
 - `frontend`: `npm test -- --reporter=verbose` — 27 passed, 6 files.
 - `frontend`: `npm run build` — passed with Node 22.
 - `git diff --check` — passed.
-- Browser and persistence run: blocked in the sandbox. `aiosqlite.connect(':memory:')` did not return and raised `TimeoutError` under a two-second `asyncio.wait_for`. `alembic upgrade head` against the temporary SQLite URL produced no progress for about 25 seconds; it was interrupted with Ctrl+C (exit 130), and the DB file remained 0 bytes. Uvicorn printed `Uvicorn running on http://127.0.0.1:8010`, but a curl from a separate command returned `curl: (7) Failed to connect to 127.0.0.1:8010 after 0 ms: Could not connect to server`. A direct loopback socket attempt raised `PermissionError: [Errno 1] Operation not permitted`. No browser E2E or persisted API verdict is claimed from this sandbox.
-- The frontend dev server also could not bind: `Error: listen EPERM: operation not permitted 127.0.0.1:5178`. Since neither API nor UI could be reached on loopback, the browser scenario could not be run.
+- SQLite compilation of the SQLAlchemy model DDL succeeded for all 19 mapped tables. Running the documented `Base.metadata.create_all(checkfirst=True)` bootstrap then timed out after 12 seconds (exit 124) in this sandbox; the new demo file `/tmp/dentacare-t04-t05-ui-demo.db` remains 0 bytes. The command is retained for the host; it never calls Alembic and does not delete data.
+- The earlier `aiosqlite.connect(':memory:')` probe raised `TimeoutError` under a two-second `asyncio.wait_for`. The old SQLite Alembic attempt was interrupted after about 25 seconds; Alembic is removed from the demo instructions because project migrations use PostgreSQL-only DDL (`JSONB`, `::jsonb` defaults).
+- Uvicorn starts and prints `Uvicorn running on http://127.0.0.1:8010`, but the earlier separate curl failed: `curl: (7) Failed to connect to 127.0.0.1 port 8010 after 0 ms: Could not connect to server`. A new five-second Uvicorn start also reached its listening message, then exited cleanly when the timeout sent shutdown. No API browser flow was completed.
+- The frontend dev server cannot bind: `Error: listen EPERM: operation not permitted 127.0.0.1:5178`. A direct loopback socket probe raised `PermissionError: [Errno 1] Operation not permitted`. No browser E2E or persisted API verdict is claimed from this sandbox.
 
 ## Delivery
 
