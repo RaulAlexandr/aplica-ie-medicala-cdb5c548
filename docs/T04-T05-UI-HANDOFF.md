@@ -47,12 +47,16 @@ Open `http://127.0.0.1:5178`. Keep the API CORS origin exactly `http://127.0.0.1
 
 - `frontend`: `npm test -- --reporter=verbose` — 27 passed, 6 files.
 - `frontend`: `npm run build` — passed with Node 22.
-- `git diff --check` — pending final commit review.
+- `git diff --check` — passed.
 - Browser and persistence run: blocked in the sandbox. `aiosqlite.connect(':memory:')` did not return and raised `TimeoutError` under a two-second `asyncio.wait_for`. `alembic upgrade head` against the temporary SQLite URL produced no progress for about 25 seconds; it was interrupted with Ctrl+C (exit 130), and the DB file remained 0 bytes. Uvicorn printed `Uvicorn running on http://127.0.0.1:8010`, but a curl from a separate command returned `curl: (7) Failed to connect to 127.0.0.1:8010 after 0 ms: Could not connect to server`. A direct loopback socket attempt raised `PermissionError: [Errno 1] Operation not permitted`. No browser E2E or persisted API verdict is claimed from this sandbox.
+- The frontend dev server also could not bind: `Error: listen EPERM: operation not permitted 127.0.0.1:5178`. Since neither API nor UI could be reached on loopback, the browser scenario could not be run.
 
 ## Delivery
 
 - Base: `430ebeed97e5eddf30649ff4cda270251a6b375a`.
 - Branch: `feat/t04-t05-clinical-ui`.
-- Final commit, push, PR and CI status: fill in at delivery.
+- Final commit: see the task report at `/home/raul/Projects/dentacare-context/reports/t04-t05-ui/LATEST.md`.
+- The sandbox could not publish the branch because DNS lookup for `github.com` failed. The branch is included in the CI push filter, so a host-side push will trigger the existing jobs. No PR or candidate CI run exists yet.
+- Host publish command: `git -C /home/raul/Projects/worktrees/aplica-ie-t04-t05-ui push -u origin feat/t04-t05-clinical-ui`.
+- Local checks: 27 frontend tests across 6 files and frontend build passed. Browser/API persistence remains unverified; see the blocker above.
 - This is the UI implementation stage only; full T04/T05 acceptance remains open.
