@@ -1,0 +1,1499 @@
+{
+  "verified_at": "2026-10-31T11:16:42.417Z",
+  "repository": {
+    "full_name": "RaulAlexandr/aplica-ie-medicala-cdb5c548",
+    "default_branch": "main",
+    "private": false
+  },
+  "branches": [
+    {
+      "name": "draft/mistral-t04-t05-backend",
+      "sha": "5a09590ff0db5200140db454503280b51bfd3b4d"
+    },
+    {
+      "name": "feat/t04-t05-clinical-ui",
+      "sha": "ede0446e03e46daf1dc128afcdf1b1d28acdb6a5"
+    },
+    {
+      "name": "feat/task-t01-clinic-setup-staff-onboarding",
+      "sha": "31426106f7911c341d8e6ee8aac6dfcdc1a50250"
+    },
+    {
+      "name": "feat/task-t02-operational-calendar",
+      "sha": "adcdc820aef4f61f24879c7675c0658d35db4788"
+    },
+    {
+      "name": "feat/task-t03-procedure-catalog",
+      "sha": "415915faced44dc8ebcbbf782f46646a6316399f"
+    },
+    {
+      "name": "feat/task-t06-odontogram-ui",
+      "sha": "003b61760880c01f708ee130f9f20c0bc3911c16"
+    },
+    {
+      "name": "fix/t04-concurrency-acceptance",
+      "sha": "94108fc6a97f18a2d2779aef5f6d0e615abf8f06"
+    },
+    {
+      "name": "integration/t02-t05",
+      "sha": "430ebeed97e5eddf30649ff4cda270251a6b375a"
+    },
+    {
+      "name": "main",
+      "sha": "2b9f543a0526381709182322ade0ab300f6fad4d"
+    }
+  ],
+  "pull_requests": [
+    {
+      "number": 6,
+      "title": "test: control T04 concurrency acceptance",
+      "state": "closed",
+      "draft": false,
+      "merged_at": "2026-10-22T23:38:26Z",
+      "base": "draft/mistral-t04-t05-backend",
+      "head": "fix/t04-concurrency-acceptance",
+      "head_sha": "94108fc6a97f18a2d2779aef5f6d0e615abf8f06",
+      "merge_commit_sha": "5a09590ff0db5200140db454503280b51bfd3b4d",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/pull/6"
+    },
+    {
+      "number": 5,
+      "title": "T04/T05: Backend - Performed Procedures with Unique Timer per Doctor",
+      "state": "open",
+      "draft": true,
+      "merged_at": null,
+      "base": "feat/task-t03-procedure-catalog",
+      "head": "draft/mistral-t04-t05-backend",
+      "head_sha": "5a09590ff0db5200140db454503280b51bfd3b4d",
+      "merge_commit_sha": "40104ba9e51adcae2204a871dcc62cda5f96cf70",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/pull/5"
+    },
+    {
+      "number": 4,
+      "title": "T03: clinic-scoped procedure catalog and base prices",
+      "state": "open",
+      "draft": true,
+      "merged_at": null,
+      "base": "main",
+      "head": "feat/task-t03-procedure-catalog",
+      "head_sha": "415915faced44dc8ebcbbf782f46646a6316399f",
+      "merge_commit_sha": "24d199f05c5a5b386a541fcb70e8f7a3b8086ccd",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/pull/4"
+    },
+    {
+      "number": 3,
+      "title": "T02: implement operational appointment calendar",
+      "state": "open",
+      "draft": false,
+      "merged_at": null,
+      "base": "main",
+      "head": "feat/task-t02-operational-calendar",
+      "head_sha": "adcdc820aef4f61f24879c7675c0658d35db4788",
+      "merge_commit_sha": "aaeb14355f3f028cd7b15ba1add2178d36102d30",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/pull/3"
+    },
+    {
+      "number": 2,
+      "title": "Implement clinic setup and staff onboarding (T01)",
+      "state": "closed",
+      "draft": false,
+      "merged_at": "2026-09-30T11:08:13Z",
+      "base": "main",
+      "head": "feat/task-t01-clinic-setup-staff-onboarding",
+      "head_sha": "31426106f7911c341d8e6ee8aac6dfcdc1a50250",
+      "merge_commit_sha": "2b9f543a0526381709182322ade0ab300f6fad4d",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/pull/2"
+    },
+    {
+      "number": 1,
+      "title": "Fix security, integrity, migrations, and staff workflows",
+      "state": "closed",
+      "draft": false,
+      "merged_at": "2026-09-28T23:16:17Z",
+      "base": "main",
+      "head": "fix/security-integrity-workflows",
+      "head_sha": "29da26a662c253b283a36101eec8080347e6886b",
+      "merge_commit_sha": "33ae083089b3413e3d73a215498b4f6f7e8fae42",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/pull/1"
+    }
+  ],
+  "recent_runs": [
+    {
+      "id": 40602872429,
+      "branch": "feat/t04-t05-clinical-ui",
+      "head_sha": "ede0446e03e46daf1dc128afcdf1b1d28acdb6a5",
+      "event": "push",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/40602872429"
+    },
+    {
+      "id": 39982401866,
+      "branch": "integration/t02-t05",
+      "head_sha": "430ebeed97e5eddf30649ff4cda270251a6b375a",
+      "event": "push",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39982401866"
+    },
+    {
+      "id": 39981865475,
+      "branch": "integration/t02-t05",
+      "head_sha": "01646633feab8588c9764320db1efbb284230f91",
+      "event": "push",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39981865475"
+    },
+    {
+      "id": 39873123285,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "5a09590ff0db5200140db454503280b51bfd3b4d",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39873123285"
+    },
+    {
+      "id": 39872626087,
+      "branch": "fix/t04-concurrency-acceptance",
+      "head_sha": "94108fc6a97f18a2d2779aef5f6d0e615abf8f06",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39872626087"
+    },
+    {
+      "id": 39870306027,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "0c70bfc60016474f315b3677d297734abf6eae71",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39870306027"
+    },
+    {
+      "id": 39869876783,
+      "branch": "fix/t04-concurrency-acceptance",
+      "head_sha": "a31fa5e92c416d86ca94e666be1aea2553a0b211",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39869876783"
+    },
+    {
+      "id": 39869688573,
+      "branch": "fix/t04-concurrency-acceptance",
+      "head_sha": "46309b8085335a8c039ddcee08715b5c0ce1aac9",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39869688573"
+    },
+    {
+      "id": 39869374247,
+      "branch": "fix/t04-concurrency-acceptance",
+      "head_sha": "4e3485901427ca0a2e0cc89f8be16ad40f216e74",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39869374247"
+    },
+    {
+      "id": 39867212068,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "607fb7cc57ac51b2b77b1922c3b4aface780183b",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39867212068"
+    },
+    {
+      "id": 39866315260,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "020f35e0015a7b99b8799066069c191d8b7d1b97",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39866315260"
+    },
+    {
+      "id": 39859104358,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "087579f73b4ab3ef563a2765d744fe4e9a03111e",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39859104358"
+    },
+    {
+      "id": 39859042236,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "9597bd487769a78c8cccee89ff13fc82688b3d0d",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39859042236"
+    },
+    {
+      "id": 39858025627,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "8f5cf1c9315e41dfa1b235829ab35a2449bd7302",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39858025627"
+    },
+    {
+      "id": 39856401078,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "d777c4ede04df50d3fc66084e5da89ce570e25db",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39856401078"
+    },
+    {
+      "id": 39852469364,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "185b95115732c67aede2bdc33aeb641ddd8b928e",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39852469364"
+    },
+    {
+      "id": 39850637384,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "0ae50299fb4ad60b5810a40b15329499d180784c",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39850637384"
+    },
+    {
+      "id": 39847344811,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "47be85eaa137c77509daa5785d5fab9725ff5f49",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39847344811"
+    },
+    {
+      "id": 39846305446,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "320e9a61a5354d15fe7cecf7c01a25db5419cf3f",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39846305446"
+    },
+    {
+      "id": 39841405087,
+      "branch": "draft/mistral-t04-t05-backend",
+      "head_sha": "5136880001239d7800313e4c6748fda014182f1d",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39841405087"
+    },
+    {
+      "id": 39798043917,
+      "branch": "feat/task-t02-operational-calendar",
+      "head_sha": "adcdc820aef4f61f24879c7675c0658d35db4788",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39798043917"
+    },
+    {
+      "id": 39780495081,
+      "branch": "feat/task-t02-operational-calendar",
+      "head_sha": "799dfe83c47cde7f3f33ea75740c7071ea254c5b",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/39780495081"
+    },
+    {
+      "id": 37018096812,
+      "branch": "feat/task-t03-procedure-catalog",
+      "head_sha": "415915faced44dc8ebcbbf782f46646a6316399f",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/37018096812"
+    },
+    {
+      "id": 37017618731,
+      "branch": "feat/task-t03-procedure-catalog",
+      "head_sha": "b26cf3c00d2500b5c045c3bd5be09fee1431a3d8",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/37017618731"
+    },
+    {
+      "id": 37016555705,
+      "branch": "feat/task-t03-procedure-catalog",
+      "head_sha": "0983cf51d8fb940fd338a09fe34b4cf8ee08eddf",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/37016555705"
+    },
+    {
+      "id": 37013115857,
+      "branch": "feat/task-t03-procedure-catalog",
+      "head_sha": "e19cee421949f8c5ece04465f47cf6a8a5d3861b",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/37013115857"
+    },
+    {
+      "id": 36733569340,
+      "branch": "feat/task-t02-operational-calendar",
+      "head_sha": "6b7352ffec1d435d712ccd7ec30519df441c4d5e",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/36733569340"
+    },
+    {
+      "id": 36730456975,
+      "branch": "feat/task-t02-operational-calendar",
+      "head_sha": "e597278d6248743e9eadc4bb1e85c63f27d147b3",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "failure",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/36730456975"
+    },
+    {
+      "id": 36706669707,
+      "branch": "main",
+      "head_sha": "2b9f543a0526381709182322ade0ab300f6fad4d",
+      "event": "push",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/36706669707"
+    },
+    {
+      "id": 36705421450,
+      "branch": "feat/task-t01-clinic-setup-staff-onboarding",
+      "head_sha": "31426106f7911c341d8e6ee8aac6dfcdc1a50250",
+      "event": "pull_request",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/36705421450"
+    }
+  ],
+  "jobs": [
+    {
+      "run_id": 40602872429,
+      "jobs": [
+        {
+          "id": 122535088593,
+          "name": "frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm ci",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm test",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm run build",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 122535088840,
+          "name": "postgres",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Initialize containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Upgrade an empty database",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run PostgreSQL concurrency tests",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Stop containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 122535088858,
+          "name": "backend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pytest -q -m 'not postgres' --ignore=tests/test_postgres_procedures.py --ignore=tests/test_postgres_integrity.py",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run ruff check app tests alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run python -m compileall -q app alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run alembic heads",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 39982401866,
+      "jobs": [
+        {
+          "id": 120512779000,
+          "name": "postgres",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Initialize containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Upgrade an empty database",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run PostgreSQL concurrency tests",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Stop containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 120512779221,
+          "name": "backend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pytest -q -m 'not postgres' --ignore=tests/test_postgres_procedures.py --ignore=tests/test_postgres_integrity.py",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run ruff check app tests alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run python -m compileall -q app alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run alembic heads",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 120512779310,
+          "name": "frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm ci",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm test",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm run build",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 39873123285,
+      "jobs": [
+        {
+          "id": 120152119762,
+          "name": "backend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pytest -q -m 'not postgres' --ignore=tests/test_postgres_procedures.py --ignore=tests/test_postgres_integrity.py",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run ruff check app tests alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run python -m compileall -q app alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run alembic heads",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 120152120087,
+          "name": "frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm ci",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm test",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm run build",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 120152120132,
+          "name": "postgres",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Initialize containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Upgrade an empty database",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run PostgreSQL concurrency tests",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Stop containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 39798043917,
+      "jobs": [
+        {
+          "id": 119890502228,
+          "name": "backend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pytest -q -m 'not postgres'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run ruff check app tests alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run python -m compileall -q app alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run alembic heads",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 119890502284,
+          "name": "postgres",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Initialize containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Upgrade an empty database",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run PostgreSQL concurrency tests",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Stop containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 119890502347,
+          "name": "frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm ci",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm test",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm run build",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 37018096812,
+      "jobs": [
+        {
+          "id": 110873878270,
+          "name": "postgres",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Initialize containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Upgrade an empty database",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run PostgreSQL concurrency tests",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Stop containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 110873878518,
+          "name": "frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm ci",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm test",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm run build",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 110873878734,
+          "name": "backend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pytest -q -m 'not postgres' --ignore=tests/test_postgres_procedures.py --ignore=tests/test_postgres_integrity.py",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run ruff check app tests alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run python -m compileall -q app alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run alembic heads",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 36706669707,
+      "jobs": [
+        {
+          "id": 109858418211,
+          "name": "backend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pytest -q -m 'not postgres'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run ruff check app tests alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run python -m compileall -q app alembic",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run alembic heads",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 109858418358,
+          "name": "postgres",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Initialize containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run pip install -e '.[test]'",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Upgrade an empty database",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run PostgreSQL concurrency tests",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-python@v5",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Stop containers",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        },
+        {
+          "id": 109858418440,
+          "name": "frontend",
+          "status": "completed",
+          "conclusion": "success",
+          "steps": [
+            {
+              "name": "Set up job",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm ci",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm test",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Run npm run build",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/setup-node@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Post Run actions/checkout@v4",
+              "status": "completed",
+              "conclusion": "success"
+            },
+            {
+              "name": "Complete job",
+              "status": "completed",
+              "conclusion": "success"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "notice": "Remote reads only. Repository push permission metadata does not prove this integration has write access. Non-merged PR merge_commit_sha values can identify temporary merge commits."
+}

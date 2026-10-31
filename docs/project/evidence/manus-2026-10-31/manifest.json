@@ -1,0 +1,141 @@
+{
+  "original_archive_sha256": "087b9aa28f88f22abc12f14925bde64044f7ae18214187fdf06a2d53499f3347",
+  "files": [
+    {
+      "path": "console-timezone.txt",
+      "bytes": 91,
+      "sha256": "e1ddf5741070f820462a3702876a1bd370d496199efbfb7039be1f889a222176",
+      "kind": "original-copy"
+    },
+    {
+      "path": "logs/git-state.txt",
+      "bytes": 61,
+      "sha256": "dcc739540f7d4018edde77c7f6c96dc07bf83abf7d04ff0aadb999810f4e3a39",
+      "kind": "original-copy"
+    },
+    {
+      "path": "logs/git-status.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "kind": "original-copy"
+    },
+    {
+      "path": "logs/persisted-sanitized.json",
+      "bytes": 3611,
+      "sha256": "9a8890be2c7bfbf6c2280ce1180dfd5474225b7ccf6ddb2b7bf8df137c1be270",
+      "kind": "original-copy"
+    },
+    {
+      "path": "logs/startup-config.txt",
+      "bytes": 633,
+      "sha256": "c6820be48fca2e83c7a81b5864030a0f364290029302b3e7e3cb9ef42ac31c6e",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S01-catalog-reload.webp",
+      "bytes": 54134,
+      "sha256": "328b92b1b7b06117d3a5d42a89b46784bf7417fd41bfa6cc3f4c0786351b8d36",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S01-patients.webp",
+      "bytes": 40468,
+      "sha256": "303a9df9ba49866e38a9a8a05b6174899612250ee42c57195aa74a00c922e5c9",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S01-room-created.webp",
+      "bytes": 90090,
+      "sha256": "8f8673e0f6448b1dea029a15015377343ff0b13f7aa8eb14d48d0e66d0ec556c",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S02-visit-open.webp",
+      "bytes": 97348,
+      "sha256": "ac7b00518c4ea412ae3b31531f6dcafd87b04bd61a0b711f388091948cda5022",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S03-pending-snapshot.webp",
+      "bytes": 120658,
+      "sha256": "782651123987c39f83c4cbed68eb587911fa91fe35bfbca2558b2fe3a8177a90",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S04-completed-after-reload.webp",
+      "bytes": 114842,
+      "sha256": "a72709dc95da7e701e2f6faac087e59cdb62c7484ee778a3a0bd2e48ca4251d2",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S04-paused-after-10s.webp",
+      "bytes": 119976,
+      "sha256": "39125429fce13f90f46936ab98f9d9c4c16264f9e948d17abe43f4603b5a5af8",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S05-close-blocked-pending.webp",
+      "bytes": 126156,
+      "sha256": "999e23fc4cab7de53d4fc8adafafc3735c6f5075dc4e8616305bc2df34bf3372",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S05-visit-completed.webp",
+      "bytes": 118230,
+      "sha256": "588d88eb02812c7f6168a0ef7097f8e7abb1e947cad32dd52adf7066f80f7a20",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S06-draft-reopened.webp",
+      "bytes": 71606,
+      "sha256": "d77f414f679749fafe2c5c33d16806dcf997a6909ff6b9de73f559329368717e",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S06-finalized-note.webp",
+      "bytes": 85658,
+      "sha256": "332215e0b746f23da710f937518c41173eb29dda6afe98f5561d2500d5642f2e",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S06-revision-visible.webp",
+      "bytes": 98870,
+      "sha256": "6a141614a0ad995616c64380f4e787971102e37724863efcb18fdd9fadab3995",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S07-Ana-isolated.webp",
+      "bytes": 102596,
+      "sha256": "7197aeaf726579824066bad9c0799e5681c14c21eaece482257652cdf771db01",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S07-unsaved-Ion-draft.webp",
+      "bytes": 79406,
+      "sha256": "30168a6dbcf847bd32838a5a154094eeff25626ca2e4add89b2ae2324925ba01",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S10-invalid-FDI.webp",
+      "bytes": 99780,
+      "sha256": "a9f915a7cd1da51f1e2f8e619c8c1799b2b64093cba4a66ed4eef26f4ca28352",
+      "kind": "original-copy"
+    },
+    {
+      "path": "screenshots/S10-valid-FDI-recovered.webp",
+      "bytes": 118578,
+      "sha256": "64e03858b41c9b612543f4def4887d4e78720309b47508db75c844f81e7e6feb",
+      "kind": "original-copy"
+    },
+    {
+      "path": "MANUS-T04-T05-BROWSER-REPORT.md",
+      "bytes": 9466,
+      "sha256": "65399e0cb5bf440d76287e7fc1567d0e7dfd5e8a027e3aa9e25e92b73bea6831",
+      "kind": "original-copy"
+    }
+  ],
+  "derived": [
+    "logs/persisted-normalized.json"
+  ],
+  "notice": "Original copies are byte-identical. Normalized JSON is derived from the labeled-line source, not a new API/DB capture."
+}

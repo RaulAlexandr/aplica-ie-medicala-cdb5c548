@@ -1,0 +1,14 @@
+Checkout: /home/ubuntu/dentacare-qa
+SHA: ede0446e03e46daf1dc128afcdf1b1d28acdb6a5
+Python: 3.12.3
+Node: v22.23.4
+npm: 10.9.9
+Database: SQLite /home/ubuntu/dentacare-qa-db.sqlite3 (new, fictitious data only)
+API: http://127.0.0.1:8010 (uvicorn 0.0.0.0:8010)
+Frontend: http://127.0.0.1:5178 (Vite 0.0.0.0:5178)
+VITE_API_URL: http://127.0.0.1:8010/api
+CORS_ORIGINS: http://127.0.0.1:5178
+ENVIRONMENT: development
+Health: GET /health -> 200 {"status":"ok"}
+Bootstrap: 19 mapped SQLAlchemy tables, SQLite file created at 462848 bytes before test writes.
+Note: secrets/passwords/tokens are intentionally excluded from this evidence folder.

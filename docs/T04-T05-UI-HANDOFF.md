@@ -71,7 +71,7 @@ Open `http://127.0.0.1:5178`. Keep the API CORS origin exactly `http://127.0.0.1
 7. Open the patient record from the visit. Create and save a finding draft with a fictitious content string, reload, reopen and edit it, then finalize it. Confirm the finalized record is read-only and its revisions are readable.
 8. Open another fictitious patient and confirm no note form or content from the first patient is carried over. Timeline entries are displayed from the persisted server projection; the UI does not call the manager-only timeline refresh endpoint.
 
-## Verification in this worktree
+## Historical sandbox verification before publication
 
 - `frontend`: `npm test -- --reporter=verbose` — 27 passed, 6 files.
 - `frontend`: `npm run build` — passed with Node 22.
@@ -81,12 +81,11 @@ Open `http://127.0.0.1:5178`. Keep the API CORS origin exactly `http://127.0.0.1
 - Uvicorn starts and prints `Uvicorn running on http://127.0.0.1:8010`, but the earlier separate curl failed: `curl: (7) Failed to connect to 127.0.0.1 port 8010 after 0 ms: Could not connect to server`. A new five-second Uvicorn start also reached its listening message, then exited cleanly when the timeout sent shutdown. No API browser flow was completed.
 - The frontend dev server cannot bind: `Error: listen EPERM: operation not permitted 127.0.0.1:5178`. A direct loopback socket probe raised `PermissionError: [Errno 1] Operation not permitted`. No browser E2E or persisted API verdict is claimed from this sandbox.
 
-## Delivery
+## Delivery, updated 2026-10-31
 
-- Base: `430ebeed97e5eddf30649ff4cda270251a6b375a`.
-- Branch: `feat/t04-t05-clinical-ui`.
-- Final commit: see the task report at `/home/raul/Projects/dentacare-context/reports/t04-t05-ui/LATEST.md`.
-- The sandbox could not publish the branch because DNS lookup for `github.com` failed. The branch is included in the CI push filter, so a host-side push will trigger the existing jobs. No PR or candidate CI run exists yet.
-- Host publish command: `git -C /home/raul/Projects/worktrees/aplica-ie-t04-t05-ui push -u origin feat/t04-t05-clinical-ui`.
-- Local checks: 27 frontend tests across 6 files and frontend build passed. Browser/API persistence remains unverified; see the blocker above.
-- This is the UI implementation stage only; full T04/T05 acceptance remains open.
+- Code head: ede0446e03e46daf1dc128afcdf1b1d28acdb6a5, branch feat/t04-t05-clinical-ui, published by Raul.
+- CI 40602872429 is completed/success on that exact SHA: backend 78 / PostgreSQL 25 / frontend 27 plus build. All job statuses were reconfirmed on 2026-10-31.
+- Manus subsequently ran the main browser/API journey using SQLite in its own cloud environment. See [current status](project/CURRENT-STATUS.md), [evidence](project/evidence/manus-2026-10-31/README.md), and [PM review](project/reports/manus-browser-t04-t05/PM-REVIEW.md).
+- Coverage is incomplete: S07 partial, S08/S09 not run, timer segment/finding evidence missing, known empty timeline projection. The previous sandbox blockers above are historical, not a claim that Manus could not run the services.
+- No UI/integration PR was present in the GitHub inventory read on 2026-10-31. Previous connector PR-create attempts returned 403. No merge into main or deploy was performed.
+- Full T04/T05 acceptance remains open. The next explicit user request is the independent Astra audit, without product changes.

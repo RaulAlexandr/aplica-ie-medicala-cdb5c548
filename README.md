@@ -1,3 +1,5 @@
+> Actualizare documentară 2026-10-31: [starea curentă](docs/project/CURRENT-STATUS.md), [plan T00–T35](docs/project/ROADMAP.md), [dovezi browser Manus](docs/project/evidence/manus-2026-10-31/README.md) și [audit complet Astra](docs/project/ASTRA-AUDIT.md). Main este încă la T00/T01; candidatul UI ede0446 este separat. Acest branch adaugă documentație/evidențe, fără modificări de produs sau deploy.
+
 # DentaCare
 
 DentaCare is a multi-tenant dental clinic management platform. This repository contains a FastAPI/async SQLAlchemy backend, PostgreSQL/Alembic migrations, and a React/Vite staff frontend.
@@ -26,7 +28,7 @@ There is no patient-portal role in staff authorization. Tenant identity is deriv
 
 ## Local setup
 
-Requirements: Python 3.12, Node.js 22, and PostgreSQL 16. Docker Compose is the easiest local PostgreSQL setup.
+Requirements: Python 3.12, Node.js 22, and PostgreSQL 16. Use an existing PostgreSQL 16 test service or optional Docker Compose. For the isolated SQLite UI demonstration, use docs/project/ENVIRONMENT.md; it does not validate PostgreSQL migrations.
 
 ```bash
 docker compose up -d

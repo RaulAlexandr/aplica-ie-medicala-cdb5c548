@@ -1,0 +1,126 @@
+{
+  "clinic": [
+    {
+      "id": "8eb58d6c-de88-4268-bb72-8defa9ad68fb",
+      "name": "Cabinet Demo",
+      "timezone": "Europe/Bucharest"
+    }
+  ],
+  "rooms": [
+    {
+      "id": "e0453b77-a776-4c37-aaf0-462220239f8d",
+      "clinic_id": "8eb58d6c-de88-4268-bb72-8defa9ad68fb",
+      "name": "Cabinet Demo 1",
+      "is_active": 1
+    }
+  ],
+  "patients": [
+    {
+      "id": "e6bf6ec2-08ab-471d-ab30-7df5788b8085",
+      "clinic_id": "8eb58d6c-de88-4268-bb72-8defa9ad68fb",
+      "first_name": "Ion",
+      "last_name": "Demo",
+      "email": "ion.demo.2026@example.com"
+    },
+    {
+      "id": "29128d85-933e-498f-8f4f-34d3f17c1b80",
+      "clinic_id": "8eb58d6c-de88-4268-bb72-8defa9ad68fb",
+      "first_name": "Ana",
+      "last_name": "Demo",
+      "email": "ana.demo.2026@example.com"
+    }
+  ],
+  "appointments": [
+    {
+      "id": "f5eeb8df-706d-4a46-a1e7-dc8d46128e56",
+      "patient_id": "e6bf6ec2-08ab-471d-ab30-7df5788b8085",
+      "doctor_id": "f207e984-52fb-445b-8f85-1bacc4f9e4b0",
+      "room_id": "e0453b77-a776-4c37-aaf0-462220239f8d",
+      "starts_at": "2026-11-01 08:00:00.000000",
+      "ends_at": "2026-11-01 08:30:00.000000",
+      "status": "completed",
+      "appointment_type": "Consultation",
+      "notes": "Programare fictivă demo Ion."
+    },
+    {
+      "id": "da450587-f032-4d3a-b426-3dbef0b748fc",
+      "patient_id": "29128d85-933e-498f-8f4f-34d3f17c1b80",
+      "doctor_id": "f207e984-52fb-445b-8f85-1bacc4f9e4b0",
+      "room_id": "e0453b77-a776-4c37-aaf0-462220239f8d",
+      "starts_at": "2026-11-01 09:00:00.000000",
+      "ends_at": "2026-11-01 09:30:00.000000",
+      "status": "in_progress",
+      "appointment_type": "Consultation",
+      "notes": "Programare fictivă demo Ana."
+    }
+  ],
+  "performed_procedures": [
+    {
+      "id": "489a1cb2-6772-466e-8502-9b49ca8ad508",
+      "appointment_id": "f5eeb8df-706d-4a46-a1e7-dc8d46128e56",
+      "patient_id": "e6bf6ec2-08ab-471d-ab30-7df5788b8085",
+      "procedure_code": "UI-EXAM",
+      "procedure_name": "Consultație demo",
+      "procedure_base_price": 125.5,
+      "procedure_currency": "RON",
+      "tooth_fdi": "26",
+      "tooth_surface": "occlusal,mesial",
+      "status": "completed",
+      "current_price": 125.5,
+      "notes": "Notă fictivă: evaluare inițială."
+    },
+    {
+      "id": "7cbe081f-84b7-4d7d-9352-25dd25198350",
+      "appointment_id": "f5eeb8df-706d-4a46-a1e7-dc8d46128e56",
+      "patient_id": "e6bf6ec2-08ab-471d-ab30-7df5788b8085",
+      "procedure_code": "UI-EXAM",
+      "procedure_name": "Consultație demo",
+      "procedure_base_price": 125.5,
+      "procedure_currency": "RON",
+      "tooth_fdi": "27",
+      "tooth_surface": "occlusal",
+      "status": "cancelled",
+      "current_price": 125.5,
+      "notes": "A doua procedură fictivă."
+    },
+    {
+      "id": "8ad11375-cfbc-4880-9abe-4cefee13c2f5",
+      "appointment_id": "da450587-f032-4d3a-b426-3dbef0b748fc",
+      "patient_id": "29128d85-933e-498f-8f4f-34d3f17c1b80",
+      "procedure_code": "UI-EXAM",
+      "procedure_name": "Consultație demo",
+      "procedure_base_price": 125.5,
+      "procedure_currency": "RON",
+      "tooth_fdi": "26",
+      "tooth_surface": "occlusal",
+      "status": "pending",
+      "current_price": 125.5,
+      "notes": "Test invalid FDI."
+    }
+  ],
+  "clinical_notes": [
+    {
+      "id": "622c7113-a363-4acf-bd31-5e4bc639ca90",
+      "patient_id": "e6bf6ec2-08ab-471d-ab30-7df5788b8085",
+      "appointment_id": "f5eeb8df-706d-4a46-a1e7-dc8d46128e56",
+      "author_id": "f207e984-52fb-445b-8f85-1bacc4f9e4b0",
+      "note_type": "note",
+      "title": "Evaluare inițială",
+      "content": "Constatare fictivă modificată: control și recomandări demo.",
+      "status": "finalized",
+      "finalized_at": "2026-10-31 10:43:45.180622"
+    }
+  ],
+  "clinical_note_revisions": [
+    {
+      "id": "7c7d09c7-0dfa-458a-98b0-b4926bf83a8a",
+      "clinical_note_id": "622c7113-a363-4acf-bd31-5e4bc639ca90",
+      "actor_id": "f207e984-52fb-445b-8f85-1bacc4f9e4b0",
+      "field": "content",
+      "previous_value": "Constatare fictivă: pacientul a fost evaluat în vizita demo.",
+      "new_value": "Constatare fictivă modificată: control și recomandări demo.",
+      "reason": "Note updated while in draft",
+      "occurred_at": "2026-10-31 10:43:40.184975"
+    }
+  ]
+}

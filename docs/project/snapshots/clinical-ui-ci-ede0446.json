@@ -1,0 +1,52 @@
+{
+  "verified_at": "2026-10-27T23:35:11.243Z",
+  "sha": "ede0446e03e46daf1dc128afcdf1b1d28acdb6a5",
+  "branch": "feat/t04-t05-clinical-ui",
+  "run_id": 40602872429,
+  "event": "push",
+  "status": "completed",
+  "conclusion": "success",
+  "url": "https://github.com/RaulAlexandr/aplica-ie-medicala-cdb5c548/actions/runs/40602872429",
+  "jobs": [
+    {
+      "id": 122535088593,
+      "name": "frontend",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 122535088840,
+      "name": "postgres",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 122535088858,
+      "name": "backend",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "observed_results": {
+    "backend": {
+      "passed": 78,
+      "deselected": 9,
+      "ruff": "passed",
+      "alembic_head": "merge_t02_t05"
+    },
+    "postgres": {
+      "passed": 25,
+      "empty_database_upgrade": "passed"
+    },
+    "frontend": {
+      "passed": 27,
+      "test_files": 6,
+      "build": "passed"
+    }
+  },
+  "browser_api_persistence": "not verified; sandbox blocks loopback and async SQLite initialization",
+  "pull_request": {
+    "created": false,
+    "reason": "GitHub integration returned 403 Resource not accessible by integration"
+  }
+}

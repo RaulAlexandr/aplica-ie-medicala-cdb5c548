@@ -1,0 +1,20 @@
+{
+  "copied_at": "2026-10-31",
+  "sources": [
+    {
+      "copy": "PlanTotal.md",
+      "sha256": "eac2cd305835a80cc04564b2a58ab285c0273eafcc66766dbf4bdaee2fce0856",
+      "role": "Original user-provided plan/specification, unchanged"
+    },
+    {
+      "copy": "T04.md",
+      "sha256": "f6bd6149fcc172555abd9b1fd9f4ad8908bdfa8f137c88ec12bfbe57af47337b",
+      "role": "Original user-provided plan/specification, unchanged"
+    },
+    {
+      "copy": "T05.md",
+      "sha256": "36a563f839c4f7e3350a52365a57b22260a9ed34429f142cb6fba15cac9535d8",
+      "role": "Original user-provided plan/specification, unchanged"
+    }
+  ]
+}
