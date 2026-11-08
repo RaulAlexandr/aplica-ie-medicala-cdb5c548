@@ -9,16 +9,25 @@ import itertools
 import os
 import subprocess
 from contextvars import ContextVar
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse, urlunparse
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.auth.service import hash_password
-from app.database import User, get_db
+from app.database import (
+    Appointment,
+    ClinicalNote,
+    PerformedProcedure,
+    ProcedureExecutionSegment,
+    User,
+    get_db,
+)
 from app.main import app
 
 # All tests in this module require PostgreSQL
@@ -28,6 +37,14 @@ SYNC_TIMEOUT = 10
 OP_TIMEOUT = 20
 _request_role = ContextVar("concurrency_request_role", default=None)
 _appointment_scenario_number = itertools.count()
+_appointment_scenario_start = datetime(2026, 10, 1, 10, tzinfo=UTC)
+
+
+def _next_appointment_start() -> str:
+    return (
+        _appointment_scenario_start
+        + timedelta(days=next(_appointment_scenario_number))
+    ).isoformat()
 
 
 class _TaggedASGI:
@@ -681,7 +698,7 @@ async def _closure_scenario(client, headers, with_procedure=False, paused=False)
         patient_id,
         doctor_id,
         room_id,
-        f"2026-10-01T{10 + 2 * next(_appointment_scenario_number):02d}:00:00+00:00",
+        _next_appointment_start(),
     )
     catalog_id = await create_procedure_catalog(client, headers)
     if with_procedure:
@@ -780,6 +797,160 @@ async def test_closure_vs_start_concurrent(postgres_context):
     assert proc.status_code == 200 and proc.json()["status"] == "running"
     segments = (await client.get(f"/api/performed-procedures/{proc_id}/segments", headers=headers)).json()
     assert len([s for s in segments if s["segment_type"] == "run" and s["ended_at"] is None]) == 1
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize("attachment", ["note", "procedure"])
+@pytest.mark.parametrize("winner", ["reassign", "attach"])
+async def test_patient_reassignment_vs_clinical_attachment_concurrent(
+    postgres_context, attachment, winner
+):
+    """Both lock acquisition orders preserve a single visit-patient association."""
+    client, sessions, target_url, _db_name = postgres_context
+    headers = await _manager_context(
+        client, f"manager-patient-race-{uuid4().hex}@test.com"
+    )
+    appt_id, catalog_id, _ = await _closure_scenario(client, headers)
+    patient_b = await create_patient(client, headers)
+    appointment = await get_appointment(client, headers, appt_id)
+    patient_a = appointment["patient_id"]
+
+    async def reassign(c):
+        return await c.patch(
+            f"/api/appointments/{appt_id}",
+            headers=headers,
+            json={"patient_id": patient_b},
+        )
+
+    async def attach(c):
+        if attachment == "procedure":
+            return await c.post(
+                "/api/performed-procedures",
+                headers=headers,
+                json={"appointment_id": appt_id, "procedure_catalog_id": catalog_id},
+            )
+        return await c.post(
+            "/api/clinical-notes",
+            headers=headers,
+            json={
+                "patient_id": patient_a,
+                "appointment_id": appt_id,
+                "note_type": "note",
+                "content": "Fictitious PostgreSQL concurrency note",
+            },
+        )
+
+    if winner == "reassign":
+        reassign_resp, attach_resp = await _run_controlled_race(
+            target_url, "reassign", reassign, "attach", attach
+        )
+        assert reassign_resp.status_code == 200, reassign_resp.text
+        if attachment == "note":
+            assert attach_resp.status_code == 422, attach_resp.text
+        else:
+            assert attach_resp.status_code == 201, attach_resp.text
+    else:
+        attach_resp, reassign_resp = await _run_controlled_race(
+            target_url, "attach", attach, "reassign", reassign
+        )
+        assert attach_resp.status_code == 201, attach_resp.text
+        assert reassign_resp.status_code == 409, reassign_resp.text
+
+    async with sessions() as session:
+        appt = await session.get(Appointment, UUID(appt_id))
+        attached_notes = list((await session.scalars(
+            select(ClinicalNote).where(ClinicalNote.appointment_id == UUID(appt_id))
+        )).all())
+        attached_procedures = list((await session.scalars(
+            select(PerformedProcedure).where(PerformedProcedure.appointment_id == UUID(appt_id))
+        )).all())
+        if winner == "reassign":
+            assert str(appt.patient_id) == patient_b
+            if attachment == "note":
+                assert attached_notes == []
+                assert attached_procedures == []
+            else:
+                assert len(attached_procedures) == 1
+                assert str(attached_procedures[0].patient_id) == patient_b
+                assert attached_notes == []
+        else:
+            assert str(appt.patient_id) == patient_a
+            if attachment == "note":
+                assert len(attached_notes) == 1
+                assert str(attached_notes[0].patient_id) == patient_a
+            else:
+                assert len(attached_procedures) == 1
+                assert str(attached_procedures[0].patient_id) == patient_a
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+@pytest.mark.parametrize("winner", ["close", "resolve"])
+async def test_appointment_cancellation_vs_procedure_cancellation_concurrent(
+    postgres_context, winner
+):
+    """An unresolved running procedure cannot be stranded by visit cancellation."""
+    client, sessions, target_url, _db_name = postgres_context
+    headers = await _manager_context(
+        client, f"manager-cancel-race-{uuid4().hex}@test.com"
+    )
+    appt_id, _catalog_id, proc_id = await _closure_scenario(
+        client, headers, with_procedure=True
+    )
+    started = await client.post(
+        f"/api/performed-procedures/{proc_id}/start", headers=headers
+    )
+    assert started.status_code == 200, started.text
+
+    async def close(c):
+        return await c.patch(
+            f"/api/appointments/{appt_id}/status",
+            headers=headers,
+            json={"status": "cancelled"},
+        )
+
+    async def resolve(c):
+        return await c.post(
+            f"/api/performed-procedures/{proc_id}/cancel",
+            headers=headers,
+            json={"transition": "cancel", "notes": "Explicit test resolution"},
+        )
+
+    if winner == "close":
+        close_resp, resolve_resp = await _run_controlled_race(
+            target_url, "close", close, "resolve", resolve
+        )
+        assert close_resp.status_code == 409, close_resp.text
+        assert resolve_resp.status_code == 200, resolve_resp.text
+    else:
+        resolve_resp, close_resp = await _run_controlled_race(
+            target_url, "resolve", resolve, "close", close
+        )
+        assert resolve_resp.status_code == 200, resolve_resp.text
+        assert close_resp.status_code == 200, close_resp.text
+
+    if winner == "close":
+        retry_close = await client.patch(
+            f"/api/appointments/{appt_id}/status",
+            headers=headers,
+            json={"status": "cancelled"},
+        )
+        assert retry_close.status_code == 200, retry_close.text
+
+    async with sessions() as session:
+        appointment = await session.get(Appointment, UUID(appt_id))
+        procedure = await session.get(PerformedProcedure, UUID(proc_id))
+        segments = list((await session.scalars(
+            select(ProcedureExecutionSegment).where(
+                ProcedureExecutionSegment.performed_procedure_id == UUID(proc_id)
+            )
+        )).all())
+        assert appointment.status == "cancelled"
+        assert procedure.status == "cancelled"
+        assert len(segments) == 1
+        assert segments[0].segment_type == "run"
+        assert segments[0].ended_at is not None
 
 
 @pytest.mark.postgres

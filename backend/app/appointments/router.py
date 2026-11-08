@@ -28,7 +28,9 @@ from app.database import (
     AppointmentHistory,
     AuditEvent,
     Clinic,
+    ClinicalNote,
     Patient,
+    PerformedProcedure,
     ResourceUnavailability,
     Room,
     User,
@@ -200,6 +202,21 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, d
     item = await db.scalar(select(Appointment).where(Appointment.id == appointment_id, Appointment.clinic_id == user.clinic_id).with_for_update());
     if not item: raise HTTPException(404, "Appointment not found")
     previous = history_payload(item); data = payload.model_dump(exclude_unset=True); clinic, _ = await clinic_timezone(db, user.clinic_id); patient_id = data.get("patient_id", item.patient_id); doctor_id = data.get("doctor_id", item.doctor_id); assistant_id = data.get("assistant_id", item.assistant_id); room_id = data.get("room_id", item.room_id); duration = data.get("duration_minutes", item.duration_minutes); start = resolve_start(payload, clinic.timezone, item.starts_at)
+    if patient_id != item.patient_id:
+        has_note = await db.scalar(
+            select(ClinicalNote.id).where(
+                ClinicalNote.appointment_id == item.id,
+                ClinicalNote.clinic_id == user.clinic_id,
+            ).limit(1)
+        )
+        has_procedure = await db.scalar(
+            select(PerformedProcedure.id).where(
+                PerformedProcedure.appointment_id == item.id,
+                PerformedProcedure.clinic_id == user.clinic_id,
+            ).limit(1)
+        )
+        if has_note or has_procedure:
+            raise HTTPException(409, "Cannot change patient after clinical data has been recorded for this appointment")
     await refs(db, user.clinic_id, patient_id, doctor_id, assistant_id, room_id)
     if item.status in ACTIVE_STATUSES: await validate_slot(db, user.clinic_id, start, duration, doctor_id, room_id, assistant_id, item.id)
     for key in ("patient_id", "doctor_id", "assistant_id", "room_id", "duration_minutes", "appointment_type", "notes"):
@@ -218,17 +235,15 @@ async def update_status(appointment_id: UUID, payload: AppointmentStatus, db: As
     if payload.status != item.status and payload.status not in TRANSITIONS[item.status]:
         raise HTTPException(409, f"Invalid appointment transition: {item.status} -> {payload.status}")
 
-    if payload.status == "completed" and payload.status != item.status:
-        from app.database import PerformedProcedure
-
+    if payload.status in {"completed", "cancelled", "no_show"} and payload.status != item.status:
         unresolved = await db.execute(
-            select(PerformedProcedure.id, PerformedProcedure.procedure_name, PerformedProcedure.status).where(
+            select(PerformedProcedure.id).where(
                 PerformedProcedure.appointment_id == appointment_id,
                 PerformedProcedure.clinic_id == user.clinic_id,
                 PerformedProcedure.status.in_(["pending", "running", "paused"]),
             )
         )
-        if unresolved.all():
+        if unresolved.first():
             raise HTTPException(
                 409,
                 "Cannot close appointment: unresolved procedures exist. Please resolve all procedures before closing.",
