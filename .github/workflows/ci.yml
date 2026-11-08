@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, fix/security-integrity-workflows, integration/t02-t05, feat/t04-t05-clinical-ui]
+    branches: [main, fix/security-integrity-workflows, integration/t02-t05, feat/t04-t05-clinical-ui, fix/t04-clinical-integrity]
   pull_request:
 
 jobs:

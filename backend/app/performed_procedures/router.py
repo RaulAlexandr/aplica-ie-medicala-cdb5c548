@@ -313,6 +313,28 @@ async def _validate_appointment_access(
     )
 
 
+async def _lock_open_appointment_for_execution(
+    db: AsyncSession, procedure: PerformedProcedure, user: User
+) -> Appointment:
+    """Lock the visit after its procedure row and reject closed visits.
+
+    Execution routes consistently lock PerformedProcedure -> Appointment. Visit
+    closure locks Appointment and reads procedure statuses without row locks, so
+    the two paths serialize without reversing a row-lock order.
+    """
+    appointment = await db.scalar(
+        select(Appointment).where(
+            Appointment.id == procedure.appointment_id,
+            Appointment.clinic_id == user.clinic_id,
+        ).with_for_update()
+    )
+    if not appointment:
+        raise HTTPException(404, "Appointment not found or access denied")
+    if appointment.status in {"completed", "cancelled", "no_show"}:
+        raise HTTPException(409, "Cannot modify procedure execution for a closed appointment")
+    return appointment
+
+
 async def _validate_procedure_catalog_access(
     db: AsyncSession, catalog_id: UUID, user: User
 ) -> ProcedureCatalog | None:
@@ -563,22 +585,7 @@ async def start_procedure(
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
 
-    # Prevent starting procedures for closed appointments
-    # Per T04 spec: "Respingerea operațiilor incompatibile cu programări închise/anulate"
-    # Lock appointment for consistency with closure operations
-    appointment = await db.scalar(
-        select(Appointment).where(
-            Appointment.id == procedure.appointment_id,
-            Appointment.clinic_id == user.clinic_id
-        ).with_for_update()
-    )
-    if not appointment:
-        raise HTTPException(404, "Appointment not found or access denied")
-    if appointment.status in ("completed", "cancelled", "no_show"):
-        raise HTTPException(
-            409,
-            f"Cannot start procedure: appointment has status {appointment.status}"
-        )
+    await _lock_open_appointment_for_execution(db, procedure, user)
 
     # Check ownership - only the executing doctor or manager can start
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
@@ -652,6 +659,8 @@ async def pause_procedure(
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
 
+    await _lock_open_appointment_for_execution(db, procedure, user)
+
     # Check ownership
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can pause this procedure")
@@ -707,22 +716,7 @@ async def resume_procedure(
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
 
-    # Prevent resuming procedures for closed appointments
-    # Per T04 spec: "Respingerea operațiilor incompatibile cu programări închise/anulate"
-    # Lock appointment for consistency with closure operations
-    appointment = await db.scalar(
-        select(Appointment).where(
-            Appointment.id == procedure.appointment_id,
-            Appointment.clinic_id == user.clinic_id
-        ).with_for_update()
-    )
-    if not appointment:
-        raise HTTPException(404, "Appointment not found or access denied")
-    if appointment.status in ("completed", "cancelled", "no_show"):
-        raise HTTPException(
-            409,
-            f"Cannot resume procedure: appointment has status {appointment.status}"
-        )
+    await _lock_open_appointment_for_execution(db, procedure, user)
 
     # Check ownership
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
@@ -787,6 +781,8 @@ async def complete_procedure(
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
 
+    await _lock_open_appointment_for_execution(db, procedure, user)
+
     # Check ownership
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can complete this procedure")
@@ -832,6 +828,8 @@ async def cancel_procedure(
     procedure = await _get_performed_procedure(db, procedure_id, user, for_update=True)
     if not procedure:
         raise HTTPException(404, "Performed procedure not found or access denied")
+
+    await _lock_open_appointment_for_execution(db, procedure, user)
 
     # Check ownership - doctor or manager can cancel
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:

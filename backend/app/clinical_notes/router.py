@@ -352,14 +352,15 @@ async def _validate_patient_access(
 
 
 async def _validate_appointment_access(
-    db: AsyncSession, appointment_id: UUID, user: User
+    db: AsyncSession, appointment_id: UUID, user: User, for_update: bool = False
 ) -> Appointment | None:
-    return await db.scalar(
-        select(Appointment).where(
-            Appointment.id == appointment_id,
-            Appointment.clinic_id == user.clinic_id
-        )
+    query = select(Appointment).where(
+        Appointment.id == appointment_id,
+        Appointment.clinic_id == user.clinic_id
     )
+    if for_update:
+        query = query.with_for_update()
+    return await db.scalar(query)
 
 
 async def _get_user_name(db: AsyncSession, user_id: UUID) -> str:
@@ -445,18 +446,22 @@ async def create_clinical_note(
     user: User = Depends(require_roles(*DOCTORS, *MANAGERS)),
 ) -> ClinicalNoteResponse:
     """Create a new clinical note or finding."""
-    # Validate patient
-    patient = await _validate_patient_access(db, payload.patient_id, user)
-    if not patient:
-        raise HTTPException(422, "Patient not found or access denied")
-
-    # Validate appointment if provided
+    # Lock the appointment before validating its patient association. Appointment
+    # reassignment uses the same row lock, so note creation cannot race it.
     if payload.appointment_id:
-        appointment = await _validate_appointment_access(db, payload.appointment_id, user)
+        appointment = await _validate_appointment_access(
+            db, payload.appointment_id, user, for_update=True
+        )
         if not appointment:
             raise HTTPException(422, "Appointment not found or access denied")
         if appointment.patient_id != payload.patient_id:
             raise HTTPException(422, "Appointment patient does not match note patient")
+
+    # Validate patient after the appointment lock, matching the same lock order
+    # used by appointment reassignment and performed-procedure creation.
+    patient = await _validate_patient_access(db, payload.patient_id, user)
+    if not patient:
+        raise HTTPException(422, "Patient not found or access denied")
 
     # Create the note
     note = ClinicalNote(
