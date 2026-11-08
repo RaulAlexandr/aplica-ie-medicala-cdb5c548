@@ -9,6 +9,7 @@ import itertools
 import os
 import subprocess
 from contextvars import ContextVar
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse, urlunparse
 from uuid import UUID, uuid4
 
@@ -36,6 +37,14 @@ SYNC_TIMEOUT = 10
 OP_TIMEOUT = 20
 _request_role = ContextVar("concurrency_request_role", default=None)
 _appointment_scenario_number = itertools.count()
+_appointment_scenario_start = datetime(2026, 10, 1, 10, tzinfo=UTC)
+
+
+def _next_appointment_start() -> str:
+    return (
+        _appointment_scenario_start
+        + timedelta(days=next(_appointment_scenario_number))
+    ).isoformat()
 
 
 class _TaggedASGI:
@@ -689,7 +698,7 @@ async def _closure_scenario(client, headers, with_procedure=False, paused=False)
         patient_id,
         doctor_id,
         room_id,
-        f"2026-10-01T{10 + 2 * next(_appointment_scenario_number):02d}:00:00+00:00",
+        _next_appointment_start(),
     )
     catalog_id = await create_procedure_catalog(client, headers)
     if with_procedure:
