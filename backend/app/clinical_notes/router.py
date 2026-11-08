@@ -1,23 +1,28 @@
 """T05: Clinical Notes, Findings, and Patient Timeline."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
-from uuid import UUID
+from types import SimpleNamespace
+from uuid import UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import and_, desc, or_, select
+from sqlalchemy import desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.service import require_roles
 from app.database import (
     Appointment,
+    AppointmentHistory,
     AuditEvent,
     ClinicalNote,
     ClinicalNoteRevision,
     Patient,
+    PatientRevision,
     PatientTimelineEvent,
     PerformedProcedure,
+    PerformedProcedureRevision,
+    ProcedureExecutionSegment,
     User,
     get_db,
     utcnow,
@@ -326,6 +331,193 @@ def _can_access_draft(note: ClinicalNote, user: User) -> bool:
     if note.status != "draft":
         return True
     return note.author_id == user.id
+
+
+_TIMELINE_NAMESPACE = UUID("8b1ecfb9-0a51-4c22-84d7-81cab519c20e")
+_GENERATED_TIMELINE_SOURCES = {"appointment", "performed_procedure", "clinical_note"}
+
+
+def _projected_event(
+    *, source: str, source_id: UUID, clinic_id: UUID, patient_id: UUID,
+    event_type: str, entity_type: str, entity_id: UUID, title: str,
+    occurred_at: datetime, recorded_at: datetime, actor_id: UUID | None,
+    description: str | None = None, metadata: dict | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid5(_TIMELINE_NAMESPACE, f"{source}:{source_id}"),
+        clinic_id=clinic_id, patient_id=patient_id, event_type=event_type,
+        entity_type=entity_type, entity_id=entity_id, title=title,
+        description=description, actor_id=actor_id, occurred_at=occurred_at,
+        recorded_at=recorded_at, source=source, metadata=metadata,
+    )
+
+
+def _timeline_timestamp(value: datetime) -> float:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.timestamp()
+
+
+async def _patient_timeline_events(
+    db: AsyncSession, patient_id: UUID, user: User,
+) -> list[SimpleNamespace | PatientTimelineEvent]:
+    """Build a stable projection from persisted source histories and imports."""
+    clinic_id = user.clinic_id
+    events: list[SimpleNamespace | PatientTimelineEvent] = []
+    legacy = await db.scalars(select(PatientTimelineEvent).where(
+        PatientTimelineEvent.patient_id == patient_id,
+        PatientTimelineEvent.clinic_id == clinic_id,
+        or_(PatientTimelineEvent.source.is_(None),
+            PatientTimelineEvent.source.notin_(_GENERATED_TIMELINE_SOURCES)),
+    ))
+    events.extend(legacy.all())
+
+    appointments = (await db.scalars(select(Appointment).where(
+        Appointment.patient_id == patient_id, Appointment.clinic_id == clinic_id,
+    ))).all()
+    appointment_ids = {row.id for row in appointments}
+    histories = (await db.scalars(select(AppointmentHistory).where(
+        AppointmentHistory.appointment_id.in_(appointment_ids),
+        AppointmentHistory.clinic_id == clinic_id,
+    ))).all() if appointment_ids else []
+    by_appointment: dict[UUID, list[AppointmentHistory]] = {}
+    for row in histories:
+        by_appointment.setdefault(row.appointment_id, []).append(row)
+    for appointment in appointments:
+        for row in by_appointment.get(appointment.id, []):
+            created = row.action == "created"
+            snapshot = row.details.get("current", {}) if created else {}
+            appointment_time = snapshot.get("starts_at")
+            appointment_time = datetime.fromisoformat(appointment_time) if appointment_time else appointment.starts_at
+            appointment_type = snapshot.get("appointment_type", "appointment")
+            action_title = {
+                "status_changed": "Appointment status changed",
+                "rescheduled": "Appointment rescheduled",
+                "updated": "Appointment updated",
+            }.get(row.action, "Appointment updated")
+            events.append(_projected_event(
+                source="appointment_history", source_id=row.id,
+                clinic_id=clinic_id, patient_id=patient_id, event_type="appointment",
+                entity_type="appointment", entity_id=appointment.id,
+                title=f"Appointment: {appointment_type}" if created else action_title,
+                occurred_at=appointment_time if created else row.occurred_at,
+                recorded_at=row.occurred_at, actor_id=row.actor_id,
+                metadata={"type": appointment_type} if created else {"action": row.action},
+            ))
+
+    procedures = (await db.scalars(select(PerformedProcedure).where(
+        PerformedProcedure.patient_id == patient_id, PerformedProcedure.clinic_id == clinic_id,
+    ))).all()
+    procedure_ids = {row.id for row in procedures}
+    proc_revisions = (await db.scalars(select(PerformedProcedureRevision).where(
+        PerformedProcedureRevision.performed_procedure_id.in_(procedure_ids),
+        PerformedProcedureRevision.clinic_id == clinic_id,
+    ))).all() if procedure_ids else []
+    by_procedure: dict[UUID, list[PerformedProcedureRevision]] = {}
+    for row in proc_revisions:
+        by_procedure.setdefault(row.performed_procedure_id, []).append(row)
+    segments = (await db.scalars(select(ProcedureExecutionSegment).where(
+        ProcedureExecutionSegment.performed_procedure_id.in_(procedure_ids),
+        ProcedureExecutionSegment.segment_type == "run",
+    ))).all() if procedure_ids else []
+    for procedure in procedures:
+        events.append(_projected_event(
+            source="performed_procedure", source_id=procedure.id,
+            clinic_id=clinic_id, patient_id=patient_id, event_type="performed_procedure",
+            entity_type="performed_procedure", entity_id=procedure.id,
+            title=f"Procedure: {procedure.procedure_name}",
+            description=f"Recorded procedure ({procedure.procedure_code})",
+            occurred_at=procedure.created_at, recorded_at=procedure.created_at,
+            actor_id=procedure.executed_by_id,
+            metadata={"status": "recorded", "code": procedure.procedure_code},
+        ))
+        for revision in by_procedure.get(procedure.id, []):
+            events.append(_projected_event(
+                source="performed_procedure_revision", source_id=revision.id,
+                clinic_id=clinic_id, patient_id=patient_id, event_type="performed_procedure",
+                entity_type="performed_procedure", entity_id=procedure.id,
+                title=f"Procedure {revision.field} corrected",
+                occurred_at=revision.occurred_at, recorded_at=revision.occurred_at,
+                actor_id=revision.actor_id, metadata={"status": "updated", "action": "revision"},
+            ))
+    procedures_by_id = {row.id: row for row in procedures}
+    for segment in segments:
+        procedure = procedures_by_id[segment.performed_procedure_id]
+        events.append(_projected_event(
+            source="procedure_execution_segment", source_id=segment.id,
+            clinic_id=clinic_id, patient_id=patient_id, event_type="performed_procedure",
+            entity_type="performed_procedure", entity_id=procedure.id,
+            title=f"Procedure execution: {procedure.procedure_name}",
+            occurred_at=segment.started_at, recorded_at=segment.created_at,
+            actor_id=procedure.executed_by_id,
+            metadata={"status": "performed", "code": procedure.procedure_code},
+        ))
+
+    notes = (await db.scalars(select(ClinicalNote).where(
+        ClinicalNote.patient_id == patient_id, ClinicalNote.clinic_id == clinic_id,
+    ))).all()
+    note_ids = {row.id for row in notes}
+    note_revisions = (await db.scalars(select(ClinicalNoteRevision).where(
+        ClinicalNoteRevision.clinical_note_id.in_(note_ids),
+        ClinicalNoteRevision.clinic_id == clinic_id,
+    ))).all() if note_ids else []
+    by_note: dict[UUID, list[ClinicalNoteRevision]] = {}
+    for row in note_revisions:
+        by_note.setdefault(row.clinical_note_id, []).append(row)
+    for note in notes:
+        if not _can_access_draft(note, user):
+            continue
+        safe = {"type": note.note_type, "status": note.status, "is_alert": note.is_alert}
+        events.append(_projected_event(
+            source="clinical_note", source_id=note.id,
+            clinic_id=clinic_id, patient_id=patient_id, event_type="clinical_note",
+            entity_type="clinical_note", entity_id=note.id,
+            title=f"{note.note_type} note", description=f"{note.note_type} note",
+            occurred_at=note.created_at, recorded_at=note.created_at,
+            actor_id=note.author_id, metadata=safe,
+        ))
+        if note.finalized_at:
+            events.append(_projected_event(
+                source="clinical_note_finalized", source_id=note.id,
+                clinic_id=clinic_id, patient_id=patient_id, event_type="clinical_note",
+                entity_type="clinical_note", entity_id=note.id,
+                title=f"{note.note_type} note finalized",
+                description=f"{note.note_type} note finalized",
+                occurred_at=note.finalized_at, recorded_at=note.finalized_at,
+                actor_id=note.author_id,
+                metadata={"type": note.note_type, "status": "finalized", "is_alert": note.is_alert},
+            ))
+        for revision in by_note.get(note.id, []):
+            events.append(_projected_event(
+                source="clinical_note_revision", source_id=revision.id,
+                clinic_id=clinic_id, patient_id=patient_id, event_type="clinical_note",
+                entity_type="clinical_note", entity_id=note.id,
+                title="Clinical note corrected", description="Clinical note corrected",
+                occurred_at=revision.occurred_at, recorded_at=revision.occurred_at,
+                actor_id=revision.actor_id,
+                metadata={"type": note.note_type, "status": note.status},
+            ))
+
+    # Patient revisions may contain protected clinical fields. Expose them only
+    # to clinical roles; the general timeline endpoint also serves reception.
+    if user.role in {"clinic_manager", "doctor", "administrator"}:
+        patient_revisions = (await db.scalars(select(PatientRevision).where(
+            PatientRevision.patient_id == patient_id, PatientRevision.clinic_id == clinic_id,
+        ))).all()
+        for row in patient_revisions:
+            events.append(_projected_event(
+                source="patient_revision", source_id=row.id,
+                clinic_id=clinic_id, patient_id=patient_id, event_type="patient_revision",
+                entity_type="patient_revision", entity_id=patient_id,
+                title=f"Patient record {row.field} updated",
+                occurred_at=row.occurred_at, recorded_at=row.occurred_at,
+                actor_id=row.actor_id, metadata={"action": "revision"},
+            ))
+
+    note_by_id = {row.id: row for row in notes}
+    return [event for event in events if event.entity_type != "clinical_note"
+            or event.entity_id not in note_by_id
+            or _can_access_draft(note_by_id[event.entity_id], user)]
 
 
 async def _get_clinical_note(
@@ -720,62 +912,21 @@ async def get_patient_timeline(
     patient = await _validate_patient_access(db, patient_id, user)
     if not patient:
         raise HTTPException(404, "Patient not found or access denied")
-
-    # Build query to filter out clinical note draft events that the user cannot access
-    # We need to recognize clinical note events by entity_type, not just by source
-    # This prevents bypass: entity_type="clinical_note" with different source
-
-    # For clinical note events, we need to check if the user can access the note
-    # For other events, we can include them as-is
-    # We use an OUTER JOIN to ClinicalNote and filter in the WHERE clause
-
-    # Build base query with LEFT JOIN to ClinicalNote for filtering
-    query = select(PatientTimelineEvent).outerjoin(
-        ClinicalNote,
-        and_(
-            PatientTimelineEvent.entity_id == ClinicalNote.id,
-            ClinicalNote.clinic_id == user.clinic_id
-        )
-    ).where(
-        PatientTimelineEvent.patient_id == patient_id,
-        PatientTimelineEvent.clinic_id == user.clinic_id,
-        # Filter out clinical note drafts that the user cannot access
-        # Include: non-clinical events OR clinical events that are accessible
-        or_(
-            # Not a clinical note event - include all
-            PatientTimelineEvent.entity_type != "clinical_note",
-            # Clinical note event - check access via the joined ClinicalNote
-            and_(
-                PatientTimelineEvent.entity_type == "clinical_note",
-                or_(
-                    # Note is finalized (accessible to all)
-                    ClinicalNote.status != "draft",
-                    # Note is a draft but user is the author
-                    and_(
-                        ClinicalNote.status == "draft",
-                        ClinicalNote.author_id == user.id
-                    )
-                )
-            )
-        )
-    )
-
+    events = await _patient_timeline_events(db, patient_id, user)
     if event_type and event_type in TIMELINE_EVENT_TYPES:
-        query = query.where(PatientTimelineEvent.event_type == event_type)
-
+        events = [event for event in events if event.event_type == event_type]
     if start_date:
-        query = query.where(PatientTimelineEvent.occurred_at >= start_date)
+        events = [event for event in events if _timeline_timestamp(event.occurred_at) >= _timeline_timestamp(start_date)]
     if end_date:
-        query = query.where(PatientTimelineEvent.occurred_at <= end_date)
+        events = [event for event in events if _timeline_timestamp(event.occurred_at) <= _timeline_timestamp(end_date)]
 
-    # Order and paginate
-    query = query.order_by(
-        desc(PatientTimelineEvent.occurred_at),
-        desc(PatientTimelineEvent.recorded_at),
-        desc(PatientTimelineEvent.id)
-    ).offset(offset).limit(limit)
+    def stable_order(event: SimpleNamespace | PatientTimelineEvent) -> tuple[float, float, str]:
+        occurred = event.occurred_at
+        recorded = event.recorded_at
+        return (_timeline_timestamp(occurred), _timeline_timestamp(recorded), str(event.id))
 
-    events = (await db.scalars(query)).all()
+    events.sort(key=stable_order, reverse=True)
+    events = events[offset:offset + limit]
 
     results = []
     for event in events:
@@ -867,34 +1018,15 @@ async def get_patient_record(
             "updated_at": proc.updated_at.isoformat(),
         })
 
-    # Get timeline - filter clinical note drafts that user cannot access
-    # Use JOIN to filter in SQL to ensure pagination works correctly
-    timeline_query = select(PatientTimelineEvent).outerjoin(
-        ClinicalNote,
-        and_(
-            PatientTimelineEvent.entity_id == ClinicalNote.id,
-            ClinicalNote.clinic_id == user.clinic_id
-        )
-    ).where(
-        PatientTimelineEvent.patient_id == patient_id,
-        PatientTimelineEvent.clinic_id == user.clinic_id,
-        # Filter out clinical note drafts that the user cannot access
-        or_(
-            PatientTimelineEvent.entity_type != "clinical_note",
-            and_(
-                PatientTimelineEvent.entity_type == "clinical_note",
-                or_(
-                    ClinicalNote.status != "draft",
-                    and_(
-                        ClinicalNote.status == "draft",
-                        ClinicalNote.author_id == user.id
-                    )
-                )
-            )
-        )
-    ).order_by(desc(PatientTimelineEvent.occurred_at))
-
-    timeline = (await db.scalars(timeline_query)).all()
+    timeline = await _patient_timeline_events(db, patient_id, user)
+    timeline.sort(
+        key=lambda event: (
+            _timeline_timestamp(event.occurred_at),
+            _timeline_timestamp(event.recorded_at),
+            str(event.id),
+        ),
+        reverse=True,
+    )
     timeline_list = []
     for event in timeline:
         actor_name = None
@@ -922,107 +1054,14 @@ async def refresh_timeline(
     Restricted to managers/administrators only.
     Useful after bulk imports or when timeline gets out of sync.
     """
-    # Get all patients in clinic
-    patients = await db.scalars(
-        select(Patient.id).where(Patient.clinic_id == user.clinic_id)
-    )
-
-    # Clear existing timeline events for this clinic
-    await db.execute(
-        PatientTimelineEvent.__table__.delete().where(
-            PatientTimelineEvent.clinic_id == user.clinic_id
-        )
-    )
-
-    # Rebuild timeline events from various sources
-    for patient_id in patients:
-        # From appointments
-        appointments = await db.scalars(
-            select(Appointment).where(
-                Appointment.patient_id == patient_id,
-                Appointment.clinic_id == user.clinic_id
-            ).order_by(Appointment.starts_at)
-        )
-
-        for appt in appointments:
-            event = PatientTimelineEvent(
-                clinic_id=user.clinic_id,
-                patient_id=patient_id,
-                event_type="appointment",
-                entity_type="appointment",
-                entity_id=appt.id,
-                title=f"Appointment: {appt.appointment_type}",
-                description=f"Status: {appt.status}",
-                actor_id=appt.doctor_id,
-                occurred_at=appt.starts_at,
-                recorded_at=utcnow(),
-                source="appointment",
-                metadata={"status": appt.status, "type": appt.appointment_type}
-            )
-            db.add(event)
-
-        # From performed procedures
-        procedures = await db.scalars(
-            select(PerformedProcedure).where(
-                PerformedProcedure.patient_id == patient_id,
-                PerformedProcedure.clinic_id == user.clinic_id
-            ).order_by(PerformedProcedure.created_at)
-        )
-
-        for proc in procedures:
-            event = PatientTimelineEvent(
-                clinic_id=user.clinic_id,
-                patient_id=patient_id,
-                event_type="performed_procedure",
-                entity_type="performed_procedure",
-                entity_id=proc.id,
-                title=f"Procedure: {proc.procedure_name}",
-                description=f"Status: {proc.status}",
-                actor_id=proc.executed_by_id,
-                occurred_at=proc.created_at,
-                recorded_at=utcnow(),
-                source="performed_procedure",
-                metadata={"status": proc.status, "code": proc.procedure_code}
-            )
-            db.add(event)
-
-        # From clinical notes - include all notes (drafts will be filtered at query time)
-        # Sanitize all fields in the events
-        all_notes = await db.scalars(
-            select(ClinicalNote).where(
-                ClinicalNote.patient_id == patient_id,
-                ClinicalNote.clinic_id == user.clinic_id
-            ).order_by(ClinicalNote.created_at)
-        )
-
-        for note in all_notes:
-            # For clinical notes, only include metadata in timeline, not content
-            # This prevents exposure of clinical content to unauthorized roles
-            # Note: All notes (including drafts) are added as events; filtering happens at query time
-            event = PatientTimelineEvent(
-                clinic_id=user.clinic_id,
-                patient_id=patient_id,
-                event_type="clinical_note",
-                entity_type="clinical_note",
-                entity_id=note.id,
-                title=f"{note.note_type} note",
-                description=f"{note.note_type} note",
-                actor_id=note.author_id,
-                occurred_at=note.created_at,
-                recorded_at=utcnow(),
-                source="clinical_note",
-                metadata={"type": note.note_type, "status": note.status, "is_alert": note.is_alert}
-            )
-            db.add(event)
-
+    # This remains manager-only for compatibility. Reads project source histories
+    # directly, so synchronization has no destructive rebuild or new identities.
     db.add(AuditEvent(
         clinic_id=user.clinic_id,
         actor_id=user.id,
         entity_type="timeline",
         entity_id=user.clinic_id,
-        action="refreshed"
+        action="refreshed",
     ))
-
     await db.commit()
-
-    return {"status": "ok", "message": "Timeline refreshed successfully"}
+    return {"status": "ok", "message": "Timeline is projected from persisted histories"}
