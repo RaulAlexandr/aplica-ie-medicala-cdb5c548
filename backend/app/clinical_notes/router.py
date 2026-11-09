@@ -251,17 +251,22 @@ def _sanitize_timeline_event(event: PatientTimelineEvent, user: User, db: AsyncS
     if event.entity_type == "clinical_note":
         # Use controlled labels only; never turn note text or imported labels
         # into an action or title.
-        metadata = event.metadata or {}
+        metadata = event.metadata if isinstance(event.metadata, dict) else {}
         note_type = metadata.get("type")
-        if note_type not in {item.value for item in NoteType}:
+        if not isinstance(note_type, str) or note_type not in {item.value for item in NoteType}:
             note_type = NoteType.NOTE.value
 
         if event.source == "clinical_note":
             action = "created"
         elif event.source == "clinical_note_finalized":
             action = "finalized"
-        elif event.source == "clinical_note_revision" and metadata.get("action") in {"corrected", "addendum"}:
-            action = metadata["action"]
+        elif event.source == "clinical_note_revision":
+            candidate_action = metadata.get("action")
+            action = (
+                candidate_action
+                if isinstance(candidate_action, str) and candidate_action in {"corrected", "addendum"}
+                else "activity"
+            )
         else:
             action = "activity"
 
@@ -282,7 +287,11 @@ def _sanitize_timeline_event(event: PatientTimelineEvent, user: User, db: AsyncS
             safe_metadata["status"] = "draft"
         elif action == "finalized":
             safe_metadata["status"] = "finalized"
-        elif action == "activity" and metadata.get("status") in NOTE_STATUSES:
+        elif (
+            action == "activity"
+            and isinstance(metadata.get("status"), str)
+            and metadata["status"] in NOTE_STATUSES
+        ):
             safe_metadata["status"] = metadata["status"]
         if isinstance(metadata.get("is_alert"), bool):
             safe_metadata["is_alert"] = metadata["is_alert"]
