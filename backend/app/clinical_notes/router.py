@@ -249,20 +249,46 @@ def _sanitize_timeline_event(event: PatientTimelineEvent, user: User, db: AsyncS
 
     # Sanitize based on entity type
     if event.entity_type == "clinical_note":
-        # Always sanitize clinical note events - use generic text
-        note_type = event.metadata.get('type', 'note') if event.metadata else "note"
-        result["title"] = f"{note_type} note"
-        result["description"] = f"{note_type} note"
+        # Use controlled labels only; never turn note text or imported labels
+        # into an action or title.
+        metadata = event.metadata or {}
+        note_type = metadata.get("type")
+        if note_type not in {item.value for item in NoteType}:
+            note_type = NoteType.NOTE.value
 
-        # Filter metadata to only include safe fields
-        if event.metadata:
-            safe_metadata = {}
-            # These fields are safe to expose
-            safe_fields = {"type", "status", "is_alert"}
-            for field in safe_fields:
-                if field in event.metadata:
-                    safe_metadata[field] = event.metadata[field]
-            result["metadata"] = safe_metadata
+        if event.source == "clinical_note":
+            action = "created"
+        elif event.source == "clinical_note_finalized":
+            action = "finalized"
+        elif event.source == "clinical_note_revision" and metadata.get("action") in {"corrected", "addendum"}:
+            action = metadata["action"]
+        else:
+            action = "activity"
+
+        labels = {
+            "created": "Clinical note created",
+            "finalized": "Clinical note finalized",
+            "corrected": "Clinical note corrected",
+            "addendum": "Clinical note addendum added",
+            "activity": "Clinical note activity",
+        }
+        result["title"] = labels[action]
+        result["description"] = labels[action]
+
+        safe_metadata = {"type": note_type}
+        if action == "created":
+            # Note creation always starts as a draft. Do not expose the
+            # mutable current status as if it were a historical snapshot.
+            safe_metadata["status"] = "draft"
+        elif action == "finalized":
+            safe_metadata["status"] = "finalized"
+        elif action == "activity" and metadata.get("status") in NOTE_STATUSES:
+            safe_metadata["status"] = metadata["status"]
+        if isinstance(metadata.get("is_alert"), bool):
+            safe_metadata["is_alert"] = metadata["is_alert"]
+        if action != "activity":
+            safe_metadata["action"] = action
+        result["metadata"] = safe_metadata
     elif event.entity_type == "performed_procedure":
         # Sanitize performed procedure events based on role
         if is_clinical_role:
@@ -334,7 +360,12 @@ def _can_access_draft(note: ClinicalNote, user: User) -> bool:
 
 
 _TIMELINE_NAMESPACE = UUID("8b1ecfb9-0a51-4c22-84d7-81cab519c20e")
-_GENERATED_TIMELINE_SOURCES = {"appointment", "performed_procedure", "clinical_note"}
+_GENERATED_TIMELINE_SOURCES = {
+    "appointment", "appointment_history", "performed_procedure",
+    "performed_procedure_revision", "procedure_execution_segment",
+    "clinical_note", "clinical_note_finalized", "clinical_note_revision",
+    "patient_revision",
+}
 
 
 def _projected_event(
@@ -356,6 +387,43 @@ def _timeline_timestamp(value: datetime) -> float:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.timestamp()
+
+
+def _appointment_creation_time(
+    created_history: AppointmentHistory, histories: list[AppointmentHistory],
+) -> datetime:
+    """Recover a legacy appointment's original start from its earliest reschedule."""
+    details = created_history.details or {}
+    current = details.get("current") or {}
+    starts_at = current.get("starts_at")
+    if isinstance(starts_at, str):
+        try:
+            return datetime.fromisoformat(starts_at)
+        except ValueError:
+            pass
+
+    previous_starts: list[tuple[float, str, datetime]] = []
+    for history in histories:
+        if history.action != "rescheduled":
+            continue
+        previous = (history.details or {}).get("previous") or {}
+        starts_at = previous.get("starts_at")
+        if not isinstance(starts_at, str):
+            continue
+        try:
+            previous_starts.append((
+                _timeline_timestamp(history.occurred_at),
+                str(history.id),
+                datetime.fromisoformat(starts_at),
+            ))
+        except ValueError:
+            continue
+    if previous_starts:
+        return min(previous_starts, key=lambda item: (item[0], item[1]))[2]
+
+    # The appointment's current start can change. Its creation-history timestamp
+    # is the stable persisted fallback when no planned start was preserved.
+    return created_history.occurred_at
 
 
 async def _patient_timeline_events(
@@ -386,9 +454,8 @@ async def _patient_timeline_events(
     for appointment in appointments:
         for row in by_appointment.get(appointment.id, []):
             created = row.action == "created"
-            snapshot = row.details.get("current", {}) if created else {}
-            appointment_time = snapshot.get("starts_at")
-            appointment_time = datetime.fromisoformat(appointment_time) if appointment_time else appointment.starts_at
+            snapshot = ((row.details or {}).get("current") or {}) if created else {}
+            appointment_time = _appointment_creation_time(row, by_appointment.get(appointment.id, [])) if created else None
             appointment_type = snapshot.get("appointment_type", "appointment")
             action_title = {
                 "status_changed": "Appointment status changed",
@@ -467,7 +534,8 @@ async def _patient_timeline_events(
     for note in notes:
         if not _can_access_draft(note, user):
             continue
-        safe = {"type": note.note_type, "status": note.status, "is_alert": note.is_alert}
+        safe = {"type": note.note_type, "status": "draft", "is_alert": note.is_alert,
+                "action": "created"}
         events.append(_projected_event(
             source="clinical_note", source_id=note.id,
             clinic_id=clinic_id, patient_id=patient_id, event_type="clinical_note",
@@ -485,17 +553,33 @@ async def _patient_timeline_events(
                 description=f"{note.note_type} note finalized",
                 occurred_at=note.finalized_at, recorded_at=note.finalized_at,
                 actor_id=note.author_id,
-                metadata={"type": note.note_type, "status": "finalized", "is_alert": note.is_alert},
+                metadata={"type": note.note_type, "status": "finalized", "is_alert": note.is_alert,
+                          "action": "finalized"},
             ))
         for revision in by_note.get(note.id, []):
+            if (
+                revision.field == "status"
+                and revision.previous_value == "draft"
+                and revision.new_value == "finalized"
+            ):
+                # The canonical finalized_at projection represents this transition.
+                # Keep the detailed ClinicalNoteRevision persisted for audit/history.
+                continue
+            is_addendum = (
+                revision.field == "content"
+                and note.finalized_at is not None
+                and _timeline_timestamp(revision.occurred_at) >= _timeline_timestamp(note.finalized_at)
+            )
+            action = "addendum" if is_addendum else "corrected"
             events.append(_projected_event(
                 source="clinical_note_revision", source_id=revision.id,
                 clinic_id=clinic_id, patient_id=patient_id, event_type="clinical_note",
                 entity_type="clinical_note", entity_id=note.id,
-                title="Clinical note corrected", description="Clinical note corrected",
+                title=("Clinical note addendum added" if is_addendum else "Clinical note corrected"),
+                description=("Clinical note addendum added" if is_addendum else "Clinical note corrected"),
                 occurred_at=revision.occurred_at, recorded_at=revision.occurred_at,
                 actor_id=revision.actor_id,
-                metadata={"type": note.note_type, "status": note.status},
+                metadata={"type": note.note_type, "action": action},
             ))
 
     # Patient revisions may contain protected clinical fields. Expose them only
@@ -515,9 +599,14 @@ async def _patient_timeline_events(
             ))
 
     note_by_id = {row.id: row for row in notes}
-    return [event for event in events if event.entity_type != "clinical_note"
-            or event.entity_id not in note_by_id
-            or _can_access_draft(note_by_id[event.entity_id], user)]
+    return [
+        event for event in events
+        if event.entity_type != "clinical_note"
+        or (
+            event.entity_id in note_by_id
+            and _can_access_draft(note_by_id[event.entity_id], user)
+        )
+    ]
 
 
 async def _get_clinical_note(
