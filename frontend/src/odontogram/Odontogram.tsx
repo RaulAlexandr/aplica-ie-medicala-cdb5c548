@@ -53,7 +53,7 @@ function FindingCard({
 
 export function Odontogram(props: OdontogramProps) {
   const { teeth, findings, history, selectedToothId, timezone, canWrite, canEditDraft, canFinalizeDraft, canCorrectFinding,
-    onToothSelect, onFindingCreate, onFindingDraftUpdate, onFindingFinalize, onFindingCorrect, onToothStatusChange } = props;
+    onToothSelect, onFindingCreate, onFindingDraftUpdate, onFindingFinalize, onFindingCorrect, onToothStatusChange, onAddPerformedProcedure } = props;
   const formId = useId();
   const tooth = teeth.find((item) => item.id === selectedToothId) ?? { id: selectedToothId, status: 'unevaluated' as const };
   const toothFindings = findings.filter((finding) => finding.toothId === selectedToothId);
@@ -131,6 +131,7 @@ export function Odontogram(props: OdontogramProps) {
       <aside className="og-detail" aria-labelledby={`${formId}-title`}>
         <div className="og-detail-heading"><div><p className="og-kicker">DINTE SELECTAT</p><h3 id={`${formId}-title`}>{formatFdi(selectedToothId)} <span>· FDI {selectedToothId}</span></h3></div>
           {canWrite ? <label className="og-status-field">Stare<select aria-label={`Starea dintelui ${formatFdi(selectedToothId)}`} value={tooth.status} disabled={pending} onChange={(event) => changeToothStatus(event.target.value as ToothStatus)}>{Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label> : <span className="clinical-status">{STATUS_LABELS[tooth.status]}</span>}</div>
+        {canWrite && onAddPerformedProcedure && <button type="button" className="secondary t07-tooth-procedure-action" onClick={() => onAddPerformedProcedure(selectedToothId)}>Add performed procedure for this tooth</button>}
         {callbackError?.toothId === selectedToothId && <p className="og-callback-error" role="alert">{callbackError.message}</p>}
         {tooth.status === 'missing' && <p className="og-missing-note" role="status">Dinte marcat lipsă. Poate fi selectat pentru consultarea istoricului.</p>}
         <section className="og-detail-section"><div className="og-section-title"><h3>Constatări existente</h3><span className="og-count">{toothFindings.length}</span></div>
