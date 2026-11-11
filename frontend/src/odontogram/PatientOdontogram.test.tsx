@@ -16,7 +16,7 @@ function apiFinding(patientId: string, values: Partial<OdontogramFindingDto> = {
   return {
     id: findingId, toothId: '17', kind: 'caries', description: `Finding for ${patientId}`, surfaces: ['occlusal'],
     status: 'draft', observedAt, createdAt: observedAt,
-    author: { id: doctor.id, name: doctor.full_name }, revisions: [], ...values,
+    authorId: doctor.id, author: doctor.full_name, revisions: [], ...values,
   };
 }
 
@@ -65,7 +65,7 @@ describe('persistent patient odontogram', () => {
     let serverFinding: OdontogramFindingDto | undefined;
     const get = vi.spyOn(odontogramApi, 'getPatientOdontogram').mockImplementation(async (patientId) => odontogramApi.mapPatientOdontogram(patientId, apiRecord(patientId, serverFinding ? [serverFinding] : [])));
     const create = vi.spyOn(odontogramApi, 'createOdontogramFinding').mockImplementation(async (patientId, toothId, input, _key) => {
-      serverFinding = apiFinding(patientId, { toothId, ...input });
+      serverFinding = apiFinding(patientId, { toothId, ...input, authorId: doctor.id, author: doctor.full_name });
       return serverFinding;
     });
     const update = vi.spyOn(odontogramApi, 'updateOdontogramFindingDraft').mockImplementation(async (_id, input) => {
@@ -83,7 +83,7 @@ describe('persistent patient odontogram', () => {
           id: 'revision-1',
           previousValue: { kind: serverFinding!.kind, description: serverFinding!.description, surfaces: serverFinding!.surfaces },
           currentValue: { kind: input.kind, description: input.description, surfaces: input.surfaces },
-          reason: input.reason, occurredAt: '2026-11-11T10:00:00Z', actor: { id: doctor.id, name: doctor.full_name },
+          reason: input.reason, occurredAt: '2026-11-11T10:00:00Z', actorId: doctor.id, author: doctor.full_name,
         }],
       };
       return serverFinding;
@@ -101,6 +101,8 @@ describe('persistent patient odontogram', () => {
     expect(create).toHaveBeenCalledWith('patient-A', '17', expect.objectContaining({ description: 'Observație salvată pe server' }), expect.any(String));
     expect(renderer.root.findAllByType('article').some((article) => text(article).includes('Observație salvată pe server'))).toBe(true);
     expect(renderer.root.findAllByType('article').some((article) => text(article).includes('Ciornă'))).toBe(true);
+    expect(renderer.root.findAllByType('button').some((button) => text(button).includes('Editează ciorna'))).toBe(true);
+    expect(renderer.root.findAllByType('button').some((button) => text(button).includes('Finalizează explicit'))).toBe(true);
 
     click(renderer, 'Editează ciorna');
     setTextarea(renderer, `Descriere ciornă ${findingId}`, 'Ciornă actualizată');
@@ -117,6 +119,9 @@ describe('persistent patient odontogram', () => {
     await act(async () => { renderer.root.findByProps({ 'data-correction-id': findingId }).props.onSubmit({ preventDefault() {} }); await flush(); });
     expect(correct).toHaveBeenCalledWith(findingId, expect.objectContaining({ description: 'Constatare corectată la reevaluare', reason: 'Reevaluare clinică' }));
     expect(text(renderer.root).includes('Reevaluare clinică')).toBe(true);
+    expect(text(renderer.root).includes(doctor.full_name)).toBe(true);
+    expect(text(renderer.root).includes('Anterior: Carie: Ciornă actualizată')).toBe(true);
+    expect(text(renderer.root).includes('Valoare curentă: Carie: Constatare corectată la reevaluare')).toBe(true);
 
     await act(async () => { renderer.unmount(); });
     let reloaded!: TestRenderer.ReactTestRenderer;
@@ -178,14 +183,42 @@ describe('persistent patient odontogram', () => {
     expect(renderer.root.findAllByType('article').some((article) => text(article).includes('Finding B server'))).toBe(true);
   });
 
-  it('does not expose clinical write controls to a clinic manager', async () => {
-    vi.spyOn(odontogramApi, 'getPatientOdontogram').mockImplementation(async (patientId) => odontogramApi.mapPatientOdontogram(patientId, apiRecord(patientId)));
-    const manager: User = { ...doctor, id: 'manager-1', role: 'clinic_manager' };
+  it.each(['doctor', 'clinic_manager', 'administrator'])('%s can create findings, change tooth state, and edit/finalize their own draft', async (role) => {
+    const actor: User = { ...doctor, id: `${role}-1`, role };
+    const ownedDraft = apiFinding('patient-A', { authorId: actor.id, author: actor.full_name });
+    vi.spyOn(odontogramApi, 'getPatientOdontogram').mockImplementation(async (patientId) => odontogramApi.mapPatientOdontogram(patientId, apiRecord(patientId, [ownedDraft])));
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(tree('patient-A', newClient(), actor)); });
+    await waitForChart(renderer);
+    clickTooth(renderer, '17');
+    expect(renderer.root.findAllByType('form')).toHaveLength(1);
+    expect(renderer.root.findAllByType('select').some((item) => item.props['aria-label']?.startsWith('Starea dintelui'))).toBe(true);
+    expect(renderer.root.findAllByType('button').some((button) => text(button).includes('Editează ciorna'))).toBe(true);
+    expect(renderer.root.findAllByType('button').some((button) => text(button).includes('Finalizează explicit'))).toBe(true);
+  });
+
+  it.each(['clinic_manager', 'administrator'])('%s cannot edit another author’s draft but can correct a finalized finding', async (role) => {
+    const manager: User = { ...doctor, id: `${role}-1`, role };
+    const foreignDraft = apiFinding('patient-A', { id: 'foreign-draft', authorId: 'other-doctor', author: 'Dr. Other', status: 'draft' });
+    const finalized = apiFinding('patient-A', { id: 'finalized-by-other', authorId: 'other-doctor', author: 'Dr. Other', status: 'finalized' });
+    vi.spyOn(odontogramApi, 'getPatientOdontogram').mockImplementation(async (patientId) => odontogramApi.mapPatientOdontogram(patientId, apiRecord(patientId, [foreignDraft, finalized])));
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(tree('patient-A', newClient(), manager)); });
     await waitForChart(renderer);
-    expect(renderer.root.findAllByType('form')).toHaveLength(0);
-    expect(renderer.root.findAllByType('select').some((item) => item.props['aria-label']?.startsWith('Starea dintelui'))).toBe(false);
-    expect(renderer.root.findAllByType('button').some((button) => text(button).includes('Salvează'))).toBe(false);
+    clickTooth(renderer, '17');
+    expect(renderer.root.findAllByType('button').some((button) => text(button).includes('Editează ciorna'))).toBe(false);
+    expect(renderer.root.findAllByType('button').some((button) => text(button).includes('Finalizează explicit'))).toBe(false);
+    expect(renderer.root.findAllByType('button').some((button) => text(button).includes('Corectează constatarea'))).toBe(true);
+  });
+
+  it('does not let a doctor correct another doctor’s finalized finding', async () => {
+    const foreignFinalized = apiFinding('patient-A', { id: 'foreign-finalized', authorId: 'other-doctor', author: 'Dr. Other', status: 'finalized' });
+    vi.spyOn(odontogramApi, 'getPatientOdontogram').mockImplementation(async (patientId) => odontogramApi.mapPatientOdontogram(patientId, apiRecord(patientId, [foreignFinalized])));
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(tree('patient-A', newClient())); });
+    await waitForChart(renderer);
+    clickTooth(renderer, '17');
+    expect(renderer.root.findAllByType('form')).toHaveLength(1);
+    expect(renderer.root.findAllByType('button').some((button) => text(button).includes('Corectează constatarea'))).toBe(false);
   });
 });

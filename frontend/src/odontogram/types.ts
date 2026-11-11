@@ -26,6 +26,7 @@ export interface ToothHistoryEvent {
   id: string;
   toothId: ToothId;
   occurredAt: string;
+  authorId?: string;
   author: string;
   kind: 'finding_added' | 'finding_corrected' | 'status_changed';
   summary: string;

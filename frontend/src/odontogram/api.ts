@@ -12,7 +12,8 @@ export interface OdontogramFindingRevisionDto {
   currentValue: { kind: string; description: string; surfaces: ToothSurface[] };
   reason: string;
   occurredAt: string;
-  actor: OdontogramActor;
+  actorId: string;
+  author: string;
 }
 
 export interface OdontogramFindingDto {
@@ -24,7 +25,8 @@ export interface OdontogramFindingDto {
   status: 'draft' | 'finalized';
   observedAt: string;
   createdAt: string;
-  author: OdontogramActor;
+  authorId: string;
+  author: string;
   revisions: OdontogramFindingRevisionDto[];
 }
 
@@ -39,7 +41,8 @@ export interface OdontogramHistoryDto {
   id: string;
   toothId: ToothId;
   occurredAt: string;
-  author: OdontogramActor | string;
+  actorId?: string;
+  author: string;
   kind: ToothHistoryEvent['kind'];
   summary: string;
   previousValue?: string;
@@ -62,7 +65,7 @@ export interface PatientOdontogram {
   history: ToothHistoryEvent[];
 }
 
-export type OdontogramMutationFinding = Pick<OdontogramFindingDto, 'id' | 'toothId' | 'kind' | 'description' | 'surfaces' | 'status' | 'observedAt' | 'createdAt' | 'author' | 'revisions'>;
+export type OdontogramMutationFinding = Pick<OdontogramFindingDto, 'id' | 'toothId' | 'kind' | 'description' | 'surfaces' | 'status' | 'observedAt' | 'createdAt' | 'authorId' | 'author' | 'revisions'>;
 export type ToothStateResponse = Pick<OdontogramToothDto, 'toothId' | 'status' | 'updatedAt' | 'updatedBy'> & { previousStatus: ToothStatus };
 
 function mapFinding(finding: OdontogramFindingDto): ClinicalFinding {
@@ -75,8 +78,8 @@ function mapFinding(finding: OdontogramFindingDto): ClinicalFinding {
     status: finding.status,
     observedAt: finding.observedAt,
     createdAt: finding.createdAt,
-    authorId: finding.author.id,
-    author: finding.author.name,
+    authorId: finding.authorId,
+    author: finding.author,
   };
 }
 
@@ -85,7 +88,8 @@ function mapHistoryEvent(event: OdontogramHistoryDto): ToothHistoryEvent {
     id: event.id,
     toothId: event.toothId,
     occurredAt: event.occurredAt,
-    author: typeof event.author === 'string' ? event.author : event.author.name,
+    authorId: event.actorId,
+    author: event.author,
     kind: event.kind,
     summary: event.summary,
     previousValue: event.previousValue,
@@ -99,7 +103,8 @@ function revisionHistory(finding: OdontogramFindingDto): ToothHistoryEvent[] {
     id: `finding-${finding.id}`,
     toothId: finding.toothId,
     occurredAt: finding.createdAt,
-    author: finding.author.name,
+    authorId: finding.authorId,
+    author: finding.author,
     kind: 'finding_added',
     summary: `Constatare adăugată: ${finding.kind}`,
   }];
@@ -107,7 +112,8 @@ function revisionHistory(finding: OdontogramFindingDto): ToothHistoryEvent[] {
     id: revision.id,
     toothId: finding.toothId,
     occurredAt: revision.occurredAt,
-    author: revision.actor.name,
+    authorId: revision.actorId,
+    author: revision.author,
     kind: 'finding_corrected' as const,
     summary: 'Constatare corectată',
     previousValue: `${revision.previousValue.kind}: ${revision.previousValue.description}`,

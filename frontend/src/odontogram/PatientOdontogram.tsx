@@ -22,6 +22,7 @@ function findingCreatedEvent(finding: ClinicalFinding): ToothHistoryEvent {
     id: `finding-${finding.id}`,
     toothId: finding.toothId,
     occurredAt: finding.createdAt,
+    authorId: finding.authorId,
     author: finding.author,
     kind: 'finding_added',
     summary: `Constatare adăugată: ${finding.kind}`,
@@ -37,7 +38,8 @@ export function PatientOdontogram({ patientId, user, timezone }: { patientId: st
     queryFn: ({ signal }) => getPatientOdontogram(patientId, signal),
     enabled: Boolean(patientId),
   });
-  const canWrite = user.role === 'doctor';
+  const canWrite = ['doctor', 'clinic_manager', 'administrator'].includes(user.role);
+  const canManageCorrections = ['clinic_manager', 'administrator'].includes(user.role);
 
   async function updateCacheWithFinding(dto: OdontogramFindingDto, includeCreatedEvent = false) {
     const { finding, history: revisionEvents } = findingWithRevisionHistory(dto);
@@ -113,7 +115,7 @@ export function PatientOdontogram({ patientId, user, timezone }: { patientId: st
       canWrite={canWrite}
       canEditDraft={editableDraft}
       canFinalizeDraft={editableDraft}
-      canCorrectFinding={(finding) => canWrite && finding.status === 'finalized' && finding.authorId === user.id}
+      canCorrectFinding={(finding) => canWrite && finding.status === 'finalized' && (finding.authorId === user.id || canManageCorrections)}
       onToothSelect={setSelectedToothId}
       onFindingCreate={createFinding}
       onFindingDraftUpdate={updateDraft}
