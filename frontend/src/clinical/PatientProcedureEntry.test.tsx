@@ -41,12 +41,26 @@ function tree(client: QueryClient, props: Partial<ComponentProps<typeof PatientP
 }
 function queryClient() { return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 60_000 } } }); }
 async function flush() { await new Promise(resolve => setTimeout(resolve, 20)); }
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
+  return { promise, resolve, reject };
+}
 async function waitForForm(renderer: TestRenderer.ReactTestRenderer) {
   for (let i = 0; i < 30; i += 1) {
     if (renderer.root.findAllByProps({ 'aria-label': 'Procedure tooth' }).length) return;
     await act(async () => { await flush(); });
   }
   throw new Error('Shared performed-procedure form did not load');
+}
+async function waitForSaveEnabled(renderer: TestRenderer.ReactTestRenderer) {
+  for (let i = 0; i < 30; i += 1) {
+    const button = renderer.root.findByType('form').findAllByType('button')[0];
+    if (!button.props.disabled) return button;
+    await act(async () => { await flush(); });
+  }
+  throw new Error('Procedure save did not become enabled after visit verification');
 }
 function select(renderer: TestRenderer.ReactTestRenderer, label: string, value: string) {
   const element = renderer.root.findByProps({ 'aria-label': label });
@@ -127,12 +141,117 @@ describe('tooth-to-procedure entry', () => {
     vi.restoreAllMocks();
     vi.spyOn(clientApi, 'getAppointment').mockResolvedValue({ ...appointment, status: 'completed' });
     vi.spyOn(clientApi, 'listAppointments').mockResolvedValue([]);
+    vi.spyOn(clientApi, 'listProcedures').mockResolvedValue([catalogItem]);
     const closedCreate = vi.spyOn(clinicalApi, 'createPerformedProcedure').mockResolvedValue(createdProcedure);
     const closedClient = queryClient();
     await act(async () => { renderer = TestRenderer.create(tree(closedClient, { appointmentId: appointment.id })); await flush(); });
     expect(text(renderer.root).includes('cannot receive a new procedure')).toBe(true);
     expect(renderer.root.findAllByType('form')).toHaveLength(0);
     expect(closedCreate).not.toHaveBeenCalled();
+  });
+
+  it('preserves the draft during appointment refetch and enables save only after the same visit is revalidated', async () => {
+    const client = queryClient();
+    const nextAppointment = deferred<Appointment>();
+    let fetchCount = 0;
+    vi.spyOn(clientApi, 'getAppointment').mockImplementation(() => ++fetchCount === 1 ? Promise.resolve(appointment) : nextAppointment.promise);
+    vi.spyOn(clientApi, 'listProcedures').mockResolvedValue([catalogItem]);
+    const create = vi.spyOn(clinicalApi, 'createPerformedProcedure').mockResolvedValue(createdProcedure);
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(tree(client, { appointmentId: appointment.id })); await flush(); });
+    await waitForForm(renderer);
+    setFormSelect(renderer, 0, catalogItem.id);
+    check(renderer.root.findAllByType('label').find(label => text(label).trim() === 'Occlusal')!.findByType('input'));
+    setText(renderer, renderer.root.findByType('textarea'), 'Unsaved clinical draft');
+    const refetch = client.refetchQueries({ queryKey: ['appointment', appointment.id], type: 'active' });
+    await act(async () => { await flush(); });
+
+    const pendingForm = renderer.root.findByType('form');
+    expect(renderer.root.findByProps({ 'aria-label': 'Procedure tooth' }).props.value).toBe('17');
+    expect(pendingForm.findAllByType('select')[0].props.value).toBe(catalogItem.id);
+    expect(pendingForm.findByType('textarea').props.value).toBe('Unsaved clinical draft');
+    expect(pendingForm.findAllByType('button')[0].props.disabled).toBe(true);
+    await act(async () => { pendingForm.props.onSubmit({ preventDefault() {} }); });
+    expect(create).not.toHaveBeenCalled();
+
+    await act(async () => { nextAppointment.resolve(appointment); await refetch; await flush(); });
+    const save = await waitForSaveEnabled(renderer);
+    expect(renderer.root.findByType('form').findByType('textarea').props.value).toBe('Unsaved clinical draft');
+    expect(save.props.disabled).toBe(false);
+    await act(async () => { renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }); await flush(); });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith({
+      appointment_id: appointment.id,
+      procedure_catalog_id: catalogItem.id,
+      tooth_fdi: '17',
+      tooth_surface: 'occlusal',
+      notes: 'Unsaved clinical draft',
+    });
+  });
+
+  it.each([
+    ['closed', { ...appointment, status: 'completed' }, 'cannot receive a new procedure'],
+    ['foreign', { ...appointment, patient_id: 'patient-other', appointment_type: 'Foreign visit' }, 'belongs to another patient'],
+  ] as const)('keeps the draft but blocks saving after refetch reports a %s visit', async (_kind, changedAppointment, errorText) => {
+    const client = queryClient();
+    const nextAppointment = deferred<Appointment>();
+    let fetchCount = 0;
+    vi.spyOn(clientApi, 'getAppointment').mockImplementation(() => ++fetchCount === 1 ? Promise.resolve(appointment) : nextAppointment.promise);
+    vi.spyOn(clientApi, 'listAppointments').mockResolvedValue([]);
+    vi.spyOn(clientApi, 'listProcedures').mockResolvedValue([catalogItem]);
+    const create = vi.spyOn(clinicalApi, 'createPerformedProcedure').mockResolvedValue(createdProcedure);
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(tree(client, { appointmentId: appointment.id })); await flush(); });
+    await waitForForm(renderer);
+    setFormSelect(renderer, 0, catalogItem.id);
+    setText(renderer, renderer.root.findByType('textarea'), 'Keep while context is invalid');
+    const refetch = client.refetchQueries({ queryKey: ['appointment', appointment.id], type: 'active' });
+    await act(async () => { await flush(); });
+    await act(async () => { nextAppointment.resolve(changedAppointment); await refetch; await flush(); });
+
+    expect(text(renderer.root).includes(errorText)).toBe(true);
+    expect(renderer.root.findByType('form').findByType('textarea').props.value).toBe('Keep while context is invalid');
+    if (_kind === 'foreign') expect(text(renderer.root.findByType('form')).includes('Foreign visit')).toBe(false);
+    expect(renderer.root.findByType('form').findAllByType('button')[0].props.disabled).toBe(true);
+    await act(async () => { renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }); });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('keeps the draft and blocks save after refetch failure, then restores save after explicit retry', async () => {
+    const client = queryClient();
+    let fetchCount = 0;
+    vi.spyOn(clientApi, 'getAppointment').mockImplementation(() => {
+      fetchCount += 1;
+      return fetchCount === 2 ? Promise.reject(new Error('Temporary appointment lookup failure')) : Promise.resolve(appointment);
+    });
+    vi.spyOn(clientApi, 'listProcedures').mockResolvedValue([catalogItem]);
+    const create = vi.spyOn(clinicalApi, 'createPerformedProcedure').mockResolvedValue(createdProcedure);
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(tree(client, { appointmentId: appointment.id })); await flush(); });
+    await waitForForm(renderer);
+    setFormSelect(renderer, 0, catalogItem.id);
+    setText(renderer, renderer.root.findByType('textarea'), 'Preserve through failed verification');
+    const failedRefetch = client.refetchQueries({ queryKey: ['appointment', appointment.id], type: 'active' });
+    await act(async () => { await failedRefetch; await flush(); });
+
+    expect(text(renderer.root).includes('Temporary appointment lookup failure')).toBe(true);
+    expect(renderer.root.findByType('form').findByType('textarea').props.value).toBe('Preserve through failed verification');
+    expect(renderer.root.findByType('form').findAllByType('button')[0].props.disabled).toBe(true);
+    await act(async () => { renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }); });
+    expect(create).not.toHaveBeenCalled();
+    const retry = renderer.root.findAllByType('button').find(button => text(button) === 'Retry visit verification');
+    expect(retry).toBeDefined();
+    await act(async () => { retry!.props.onClick(); await flush(); });
+    await waitForSaveEnabled(renderer);
+    expect(renderer.root.findByType('form').findByType('textarea').props.value).toBe('Preserve through failed verification');
+    await act(async () => { renderer.root.findByType('form').props.onSubmit({ preventDefault() {} }); await flush(); });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith({
+      appointment_id: appointment.id,
+      procedure_catalog_id: catalogItem.id,
+      tooth_fdi: '17',
+      notes: 'Preserve through failed verification',
+    });
   });
 
   it.each([409, 422])('keeps tooth, catalog, surfaces and notes after API %i without retrying', async status => {

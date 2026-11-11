@@ -13,7 +13,7 @@ const SURFACE_LABELS: Record<ToothSurface, string> = {
   approximal: 'Approximal', interproximal: 'Interproximal',
 };
 
-export function ProcedureForm({ appointment, patientName, catalog, initialTooth, onSaved, onCancel, onSubmittingChange }: {
+export function ProcedureForm({ appointment, patientName, catalog, initialTooth, onSaved, onCancel, onSubmittingChange, canSubmit = true }: {
   appointment: Appointment;
   patientName: string;
   catalog: ProcedureCatalog[];
@@ -21,6 +21,7 @@ export function ProcedureForm({ appointment, patientName, catalog, initialTooth,
   onSaved: (procedure: PerformedProcedure) => void | Promise<void>;
   onCancel?: () => void;
   onSubmittingChange?: (submitting: boolean) => void;
+  canSubmit?: boolean;
 }) {
   const [procedureId, setProcedureId] = useState('');
   const [tooth, setTooth] = useState<ToothId | ''>(initialTooth ?? '');
@@ -38,7 +39,7 @@ export function ProcedureForm({ appointment, patientName, catalog, initialTooth,
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitLock.current || mutation.isPending || !procedureId) return;
+    if (submitLock.current || mutation.isPending || !procedureId || !canSubmit) return;
     submitLock.current = true;
     onSubmittingChange?.(true);
     setRefreshError('');
@@ -99,7 +100,7 @@ export function ProcedureForm({ appointment, patientName, catalog, initialTooth,
     {mutation.isError && <p className="error" role="alert">{apiErrorMessage(mutation.error)} The form was kept. Check the visit before submitting again.</p>}
     {refreshError && <p className="error" role="alert">{refreshError}</p>}
     <p className="muted">Saving creates a pending procedure only. Start the timer explicitly from the visit list.</p>
-    <button disabled={mutation.isPending || !procedureId}>{mutation.isPending ? 'Saving…' : 'Save procedure'}</button>
+    <button disabled={mutation.isPending || !procedureId || !canSubmit}>{mutation.isPending ? 'Saving…' : 'Save procedure'}</button>
     {onCancel && <button type="button" className="secondary" disabled={mutation.isPending} onClick={onCancel}>Cancel</button>}
   </form>;
 }

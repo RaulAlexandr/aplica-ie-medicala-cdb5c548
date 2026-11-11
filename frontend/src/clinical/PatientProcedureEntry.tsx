@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiErrorMessage, getAppointment, listAppointments, listProcedures, type Appointment } from '../api/client';
@@ -26,26 +26,43 @@ export function PatientProcedureEntry({ patientId, patientName, appointmentSearc
   const client = useQueryClient();
   const [selectedAppointmentId, setSelectedAppointmentId] = useState(appointmentId ?? '');
   const [saving, setSaving] = useState(false);
+  const lastEligibleVisitSnapshot = useRef<Appointment | null>(null);
   const selectedAppointment = useQuery({
     queryKey: appointmentKey(selectedAppointmentId),
     queryFn: () => getAppointment(selectedAppointmentId),
     enabled: Boolean(selectedAppointmentId),
+    retry: false,
   });
-  const isSelectedAppointmentInvalid = Boolean(selectedAppointmentId && selectedAppointment.isSuccess && (
-    selectedAppointment.data.patient_id !== patientId || closedStatuses.has(selectedAppointment.data.status)
+  const returnedAppointment = selectedAppointment.data;
+  const isSelectedAppointmentInvalid = Boolean(selectedAppointmentId && returnedAppointment && (
+    returnedAppointment.patient_id !== patientId || closedStatuses.has(returnedAppointment.status)
   ));
+  useEffect(() => {
+    if (returnedAppointment?.patient_id === patientId && !closedStatuses.has(returnedAppointment.status)) {
+      lastEligibleVisitSnapshot.current = returnedAppointment;
+    }
+  }, [patientId, returnedAppointment]);
+  const previousPatientAppointment = lastEligibleVisitSnapshot.current;
+  const appointmentForForm = returnedAppointment?.patient_id === patientId && !closedStatuses.has(returnedAppointment.status)
+    ? returnedAppointment
+    : previousPatientAppointment?.patient_id === patientId && previousPatientAppointment.id === selectedAppointmentId
+      ? previousPatientAppointment
+      : undefined;
+  const canSaveForAppointment = Boolean(
+    selectedAppointment.isSuccess && !selectedAppointment.isFetching && !selectedAppointment.isError &&
+    returnedAppointment?.id === selectedAppointmentId && returnedAppointment.patient_id === patientId &&
+    !closedStatuses.has(returnedAppointment.status),
+  );
   const eligibleVisits = useQuery({
     queryKey: ['patient-procedure-entry-visits', patientId, appointmentSearchTerm],
     queryFn: async () => (await listAppointments({ patient_search: appointmentSearchTerm }))
       .filter(appointment => appointment.patient_id === patientId && !closedStatuses.has(appointment.status)),
     enabled: Boolean(appointmentSearchTerm) && (!selectedAppointmentId || selectedAppointment.isError || isSelectedAppointmentInvalid),
   });
-  const validAppointment = selectedAppointment.isSuccess && !selectedAppointment.isFetching && selectedAppointment.data.patient_id === patientId && !closedStatuses.has(selectedAppointment.data.status)
-    ? selectedAppointment.data : undefined;
   const catalog = useQuery({
     queryKey: ['visit-procedure-catalog'],
     queryFn: () => listProcedures(undefined, true, 100, 0),
-    enabled: Boolean(validAppointment),
+    enabled: Boolean(appointmentForForm),
   });
 
   async function saved(procedure: PerformedProcedure) {
@@ -72,9 +89,6 @@ export function PatientProcedureEntry({ patientId, patientName, appointmentSearc
   }
 
   const appointmentChoice = <>
-    {selectedAppointment.isError && <p className="error" role="alert">The selected visit could not be verified: {apiErrorMessage(selectedAppointment.error)}</p>}
-    {selectedAppointment.data?.patient_id !== undefined && selectedAppointment.data.patient_id !== patientId && <p className="error" role="alert">The selected visit belongs to another patient. Choose a visit for {patientName}.</p>}
-    {selectedAppointment.data && selectedAppointment.data.patient_id === patientId && closedStatuses.has(selectedAppointment.data.status) && <p className="error" role="alert">This visit is {selectedAppointment.data.status.replace('_', ' ')} and cannot receive a new procedure. Choose another visit.</p>}
     <label>Select an eligible visit<select aria-label="Procedure visit" value={selectedAppointmentId} onChange={event => setSelectedAppointmentId(event.target.value)}>
       <option value="">Choose a visit</option>
       {eligibleVisits.data?.map(visit => <option key={visit.id} value={visit.id}>{visitLabel(visit)}</option>)}
@@ -89,23 +103,27 @@ export function PatientProcedureEntry({ patientId, patientName, appointmentSearc
     <div className="detail-heading"><div><p className="eyebrow">T04 PERFORMED PROCEDURE</p><h2>Manoperă pentru dintele FDI {initialTooth}</h2></div>
       <button type="button" className="secondary" disabled={saving} onClick={onCancel}>Cancel</button>
     </div>
-    {(selectedAppointment.isLoading || selectedAppointment.isFetching) && selectedAppointmentId && <p className="muted">Verifying the selected visit…</p>}
+    {(selectedAppointment.isLoading || selectedAppointment.isFetching) && selectedAppointmentId && <p className="muted" role="status">Verifying the selected visit… Saving is disabled until verification completes.</p>}
+    {selectedAppointment.isError && <p className="error" role="alert">The selected visit could not be verified: {apiErrorMessage(selectedAppointment.error)} Saving is disabled until verification succeeds. <button type="button" className="secondary" onClick={() => void selectedAppointment.refetch()}>Retry visit verification</button></p>}
+    {returnedAppointment?.patient_id !== undefined && returnedAppointment.patient_id !== patientId && <p className="error" role="alert">The selected visit belongs to another patient. Choose a visit for {patientName}.</p>}
+    {returnedAppointment && returnedAppointment.patient_id === patientId && closedStatuses.has(returnedAppointment.status) && <p className="error" role="alert">This visit is {returnedAppointment.status.replace('_', ' ')} and cannot receive a new procedure. Choose another visit.</p>}
     {!selectedAppointmentId && appointmentChoice}
-    {selectedAppointmentId && !selectedAppointment.isFetching && !validAppointment && appointmentChoice}
-    {validAppointment && <>
-      <p className="t07-verified-visit"><strong>Verified patient:</strong> {patientName} · <strong>Visit:</strong> {visitLabel(validAppointment)}</p>
-      <button type="button" className="secondary t07-change-visit" disabled={saving} onClick={() => setSelectedAppointmentId('')}>Choose another visit</button>
+    {selectedAppointmentId && !selectedAppointment.isFetching && (isSelectedAppointmentInvalid || (selectedAppointment.isError && !returnedAppointment)) && appointmentChoice}
+    {appointmentForForm && <>
+      <p className="t07-verified-visit"><strong>Patient:</strong> {patientName} · <strong>Selected visit:</strong> {visitLabel(appointmentForForm)}</p>
+      {!isSelectedAppointmentInvalid && <button type="button" className="secondary t07-change-visit" disabled={saving} onClick={() => setSelectedAppointmentId('')}>Choose another visit</button>}
       {catalog.isLoading && <p className="muted">Loading active procedure catalog…</p>}
       {catalog.isError && <p className="error" role="alert">Procedure catalog could not be loaded: {apiErrorMessage(catalog.error)}</p>}
       {catalog.data && <ProcedureForm
-        key={`${patientId}:${validAppointment.id}:${initialTooth}`}
-        appointment={validAppointment}
+        key={`${patientId}:${selectedAppointmentId}:${initialTooth}`}
+        appointment={appointmentForForm}
         patientName={patientName}
         catalog={catalog.data}
         initialTooth={initialTooth}
         onSaved={saved}
         onCancel={onCancel}
         onSubmittingChange={setSaving}
+        canSubmit={canSaveForAppointment}
       />}
     </>}
   </section>;
