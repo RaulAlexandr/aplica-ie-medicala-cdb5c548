@@ -78,6 +78,7 @@ async def test_tooth_state_and_finding_round_trip_correction_and_idempotent_retr
     assert created.status_code == 201 and created.json()["status"] == "draft"
     retried = await client.post(f"/api/odontogram/patients/{patient_id}/findings", headers={**auth, "Idempotency-Key": key}, json=payload)
     assert retried.status_code == 201 and retried.json()["id"] == created.json()["id"]
+    assert retried.json()["observedAt"] == created.json()["observedAt"]
     assert (await client.post(f"/api/odontogram/findings/{created.json()['id']}/finalize", headers=auth)).status_code == 200
     correction = await client.post(f"/api/odontogram/findings/{created.json()['id']}/corrections", headers=auth, json={
         "description": "Constatare corectată fictiv", "surfaces": ["mesial"], "reason": "Reevaluare fictivă",
@@ -97,6 +98,65 @@ async def test_tooth_state_and_finding_round_trip_correction_and_idempotent_retr
     async with sessions() as session:
         assert await session.scalar(select(func.count()).select_from(OdontogramToothRevision)) == 1
         assert await session.scalar(select(func.count()).select_from(OdontogramFindingRevision)) == 1
+        assert await session.scalar(select(func.count()).select_from(OdontogramFinding)) == 1
+
+
+@pytest.mark.asyncio
+async def test_tooth_state_noop_keeps_persisted_author_timestamp_and_revision_count(odontogram_client):
+    client, sessions = odontogram_client
+    first = await register(client, "first@example.com")
+    first_auth = headers(first["access_token"])
+    me = await client.get("/api/auth/me", headers=first_auth)
+    patient = await client.post("/api/patients", headers=first_auth, json={"first_name": "Fictiv", "last_name": "Author"})
+    patient_id = patient.json()["id"]
+    saved = await client.put(f"/api/odontogram/patients/{patient_id}/teeth/16", headers=first_auth, json={"status": "missing"})
+    persisted_author_id = me.json()["id"]
+    persisted_time = saved.json()["updatedAt"]
+    assert saved.json()["updatedBy"]["id"] == persisted_author_id
+
+    peer = await add_user(sessions, me.json()["clinic_id"], "second@example.com", "doctor")
+    no_op = await client.put(
+        f"/api/odontogram/patients/{patient_id}/teeth/16",
+        headers=headers(create_access_token(peer)),
+        json={"status": "missing"},
+    )
+    loaded = await client.get(f"/api/odontogram/patients/{patient_id}", headers=first_auth)
+    tooth = next(item for item in loaded.json()["teeth"] if item["toothId"] == "16")
+    assert no_op.json()["updatedBy"]["id"] == persisted_author_id
+    assert no_op.json()["updatedAt"] == persisted_time
+    assert tooth["updatedBy"]["id"] == persisted_author_id
+    assert tooth["updatedAt"] == persisted_time
+    async with sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(OdontogramToothRevision)) == 1
+
+
+@pytest.mark.asyncio
+async def test_idempotency_key_compares_explicit_observed_at_as_utc_instants(odontogram_client):
+    client, sessions = odontogram_client
+    owner = await register(client, "dates@example.com")
+    auth = headers(owner["access_token"])
+    patient = await client.post("/api/patients", headers=auth, json={"first_name": "Fictiv", "last_name": "Dates"})
+    patient_id = patient.json()["id"]
+    key = str(uuid4())
+    base = {
+        "toothId": "17", "kind": "caries", "description": "Observație fictivă",
+        "surfaces": ["occlusal"], "observedAt": "2031-01-06T11:00:00+02:00",
+    }
+    created = await client.post(f"/api/odontogram/patients/{patient_id}/findings", headers={**auth, "Idempotency-Key": key}, json=base)
+    assert created.status_code == 201
+    equivalent = await client.post(
+        f"/api/odontogram/patients/{patient_id}/findings",
+        headers={**auth, "Idempotency-Key": key},
+        json={**base, "observedAt": "2031-01-06T09:00:00Z"},
+    )
+    assert equivalent.status_code == 201 and equivalent.json()["id"] == created.json()["id"]
+    different = await client.post(
+        f"/api/odontogram/patients/{patient_id}/findings",
+        headers={**auth, "Idempotency-Key": key},
+        json={**base, "observedAt": "2031-01-07T09:00:00Z"},
+    )
+    assert different.status_code == 409
+    async with sessions() as session:
         assert await session.scalar(select(func.count()).select_from(OdontogramFinding)) == 1
 
 

@@ -9,6 +9,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
+from tests.alembic_helpers import configured_alembic_head
 
 
 @pytest.fixture
@@ -63,7 +64,7 @@ async def test_postgresql_procedure_catalog_upgrade_creates_table():
     try:
         assert returncode == 0
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "merge_t02_t05"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == configured_alembic_head()
         assert await connection.fetchval("SELECT count(*) FROM information_schema.tables WHERE table_name = 'procedure_catalog'") == 1
         columns = await connection.fetch("SELECT column_name FROM information_schema.columns WHERE table_name = 'procedure_catalog' ORDER BY ordinal_position")
         column_names = [row["column_name"] for row in columns]

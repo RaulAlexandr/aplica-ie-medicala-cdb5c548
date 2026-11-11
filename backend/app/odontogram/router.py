@@ -128,6 +128,24 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat().replace("+00:00", "Z")
 
 
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _idempotent_finding_matches(
+    finding: OdontogramFinding, patient_id: UUID, payload: FindingCreate
+) -> bool:
+    if finding.patient_id != patient_id or (
+        finding.tooth_fdi, finding.kind, finding.description, finding.surfaces
+    ) != (payload.toothId, payload.kind, payload.description, payload.surfaces):
+        return False
+    # Omitted observedAt means “reuse the original server-assigned time”.
+    # Explicit values are compared as instants in UTC, independent of offset.
+    return payload.observedAt is None or _utc(finding.observed_at) == _utc(payload.observedAt)
+
+
 async def _patient(db: AsyncSession, patient_id: UUID, user: User, *, lock: bool = False) -> Patient:
     query = select(Patient).where(Patient.id == patient_id, Patient.clinic_id == user.clinic_id)
     if lock:
@@ -279,7 +297,7 @@ async def update_tooth_state(
         await db.refresh(row)
     return {"toothId": tooth_id, "status": row.status if row else "unevaluated",
             "previousStatus": old, "updatedAt": _iso(row.updated_at if row else None),
-            "updatedBy": await _actor(db, user.id) if row else None}
+            "updatedBy": await _actor(db, row.updated_by_id) if row else None}
 
 
 @router.post("/patients/{patient_id}/findings", status_code=status.HTTP_201_CREATED)
@@ -303,15 +321,11 @@ async def create_finding(
             OdontogramFinding.idempotency_key == idempotency_key,
         ))
         if existing:
-            expected = (payload.toothId, payload.kind, payload.description, payload.surfaces)
-            actual = (existing.tooth_fdi, existing.kind, existing.description, existing.surfaces)
-            if existing.patient_id != patient_id or actual != expected:
+            if not _idempotent_finding_matches(existing, patient_id, payload):
                 raise HTTPException(409, "Idempotency-Key was already used with a different request")
             return await _finding_response(db, existing)
     now = utcnow()
-    observed = payload.observedAt or now
-    if observed.tzinfo is None:
-        observed = observed.replace(tzinfo=UTC)
+    observed = _utc(payload.observedAt) if payload.observedAt is not None else now
     finding = OdontogramFinding(
         clinic_id=user.clinic_id, patient_id=patient_id, tooth_fdi=payload.toothId,
         kind=payload.kind.strip(), description=payload.description.strip(),
@@ -332,7 +346,7 @@ async def create_finding(
                 OdontogramFinding.author_id == user.id,
                 OdontogramFinding.idempotency_key == idempotency_key,
             ))
-            if existing and existing.patient_id == patient_id and (existing.tooth_fdi, existing.kind, existing.description, existing.surfaces) == (payload.toothId, payload.kind, payload.description, payload.surfaces):
+            if existing and _idempotent_finding_matches(existing, patient_id, payload):
                 return await _finding_response(db, existing)
         raise HTTPException(409, "Finding could not be saved")
     await db.refresh(finding)
