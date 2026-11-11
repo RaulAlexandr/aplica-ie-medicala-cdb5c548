@@ -2,9 +2,11 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AxiosError } from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { User } from '../api/client';
+import * as clientApi from '../api/client';
+import type { Appointment, ProcedureCatalog, User } from '../api/client';
 import * as odontogramApi from './api';
 import type { OdontogramFindingDto, PatientOdontogramDto } from './api';
+import * as clinicalApi from '../clinical/api';
 import { ADULT_TOOTH_IDS } from './types';
 import { PatientOdontogram } from './PatientOdontogram';
 
@@ -28,8 +30,8 @@ function text(node: TestRenderer.ReactTestInstance): string {
   return node.children.map((child) => typeof child === 'string' ? child : text(child)).join('');
 }
 
-function tree(patientId: string, client: QueryClient, user = doctor) {
-  return <QueryClientProvider client={client}><PatientOdontogram key={patientId} patientId={patientId} user={user} timezone="Europe/Bucharest" /></QueryClientProvider>;
+function tree(patientId: string, client: QueryClient, user = doctor, entry: { patientName?: string; appointmentSearchTerm?: string; appointmentId?: string } = {}) {
+  return <QueryClientProvider client={client}><PatientOdontogram key={patientId} patientId={patientId} user={user} timezone="Europe/Bucharest" {...entry} /></QueryClientProvider>;
 }
 
 function newClient() {
@@ -37,6 +39,13 @@ function newClient() {
 }
 
 async function flush() { await new Promise((resolve) => setTimeout(resolve, 10)); }
+async function waitForProcedureForm(renderer: TestRenderer.ReactTestRenderer) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    if (renderer.root.findAllByProps({ 'aria-label': 'Procedure tooth' }).length) return;
+    await act(async () => { await flush(); });
+  }
+  throw new Error('Shared procedure form did not load');
+}
 async function waitForChart(renderer: TestRenderer.ReactTestRenderer) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     if (renderer.root.findAllByProps({ 'aria-label': 'Arcada superioară' }).length) return;
@@ -61,6 +70,40 @@ function setTextarea(renderer: TestRenderer.ReactTestRenderer, label: string, va
 afterEach(() => vi.restoreAllMocks());
 
 describe('persistent patient odontogram', () => {
+  it('opens the shared T04 form from the selected tooth and cancelling creates no procedure or timer', async () => {
+    const appointment: Appointment = {
+      id: 'visit-1', clinic_id: 'clinic-1', patient_id: 'patient-A', doctor_id: doctor.id, assistant_id: null, room_id: 'room-1',
+      starts_at: observedAt, ends_at: '2026-11-11T09:35:00Z', local_start: observedAt, local_end: '2026-11-11T09:35:00Z',
+      timezone: 'Europe/Bucharest', duration_minutes: 30, appointment_type: 'Consultation', status: 'in_progress', notes: null,
+      patient_name: 'Mara Patient', doctor_name: doctor.full_name, assistant_name: null, room_name: 'Room 1',
+    };
+    const catalog: ProcedureCatalog = {
+      id: 'catalog-1', clinic_id: 'clinic-1', code: 'OBT-1', name: 'Composite filling', description: null, category: null,
+      default_duration_minutes: 30, base_price: '250.00', currency: 'RON', is_active: true, created_at: observedAt, updated_at: observedAt,
+    };
+    vi.spyOn(odontogramApi, 'getPatientOdontogram').mockImplementation(async (patientId) => odontogramApi.mapPatientOdontogram(patientId, apiRecord(patientId)));
+    const getAppointment = vi.spyOn(clientApi, 'getAppointment').mockResolvedValue(appointment);
+    vi.spyOn(clientApi, 'listProcedures').mockResolvedValue([catalog]);
+    const create = vi.spyOn(odontogramApi, 'createOdontogramFinding');
+    const createProcedure = vi.spyOn(clinicalApi, 'createPerformedProcedure');
+    const start = vi.spyOn(clinicalApi, 'startPerformedProcedure');
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(tree('patient-A', newClient(), doctor, { patientName: appointment.patient_name!, appointmentSearchTerm: 'mara@example.test', appointmentId: appointment.id })); await flush(); });
+    await waitForChart(renderer);
+    clickTooth(renderer, '17');
+    click(renderer, 'Add performed procedure for this tooth');
+    await waitForProcedureForm(renderer);
+    expect(getAppointment).toHaveBeenCalledWith(appointment.id);
+    expect(renderer.root.findByProps({ 'aria-label': 'Procedure tooth' }).props.value).toBe('17');
+    expect(renderer.root.findAllByType('form').length).toBeGreaterThan(0);
+    const cancel = renderer.root.findAllByType('button').find(button => text(button) === 'Cancel');
+    act(() => cancel?.props.onClick());
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Add procedure for selected tooth' })).toHaveLength(0);
+    expect(create).not.toHaveBeenCalled();
+    expect(createProcedure).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it('saves a finding, edits its draft, finalizes explicitly, records a reasoned correction, and reloads server state', async () => {
     let serverFinding: OdontogramFindingDto | undefined;
     const get = vi.spyOn(odontogramApi, 'getPatientOdontogram').mockImplementation(async (patientId) => odontogramApi.mapPatientOdontogram(patientId, apiRecord(patientId, serverFinding ? [serverFinding] : [])));

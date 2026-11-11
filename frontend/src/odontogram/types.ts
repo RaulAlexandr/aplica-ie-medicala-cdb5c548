@@ -56,6 +56,7 @@ export interface OdontogramProps {
   canEditDraft: (finding: ClinicalFinding) => boolean;
   canFinalizeDraft: (finding: ClinicalFinding) => boolean;
   canCorrectFinding: (finding: ClinicalFinding) => boolean;
+  onAddPerformedProcedure?: (toothId: ToothId) => void;
   onToothSelect: (toothId: ToothId) => void;
   onFindingCreate: (toothId: ToothId, finding: FindingDraftInput) => void | Promise<void>;
   onFindingDraftUpdate: (findingId: string, finding: FindingDraftInput) => void | Promise<void>;
