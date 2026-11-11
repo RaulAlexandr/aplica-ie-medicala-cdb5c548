@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { apiErrorMessage, getClinic, type User } from '../api/client';
 import { clinicLocalToUtc } from '../timezone';
 import { ClinicalNotesPanel } from './ClinicalNotesPanel';
+import { PatientOdontogram } from '../odontogram/PatientOdontogram';
 import { getPatientRecord, getPatientRevisions, listPatientTimeline, type PatientTimelineEvent } from './api';
 
 const pageSize = 20;
@@ -127,6 +128,7 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
         </article>)}</div>
       </section>
     </>}
+    <PatientOdontogram key={patientId} patientId={patientId} user={user} timezone={timezone} />
     <ClinicalNotesPanel key={`${patientId}:${appointmentId ?? 'patient'}`} patientId={patientId} appointmentId={appointmentId} user={user} timezone={timezone} />
     <TimelineSection key={patientId} patientId={patientId} timezone={timezone} />
     {clinic.isError && <p className="error" role="alert">Clinic time zone could not be loaded: {apiErrorMessage(clinic.error)}</p>}
