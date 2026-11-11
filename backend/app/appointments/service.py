@@ -131,6 +131,8 @@ def history_payload(item: Appointment) -> dict[str, Any]:
 
 def add_history(db: AsyncSession, item: Appointment, actor_id: UUID, action: str, previous: dict[str, Any] | None = None, reason: str | None = None) -> None:
     details: dict[str, Any] = {"previous": previous} if previous else {}
+    if action == "created":
+        details["current"] = history_payload(item)
     if reason:
         details["reason"] = reason
     db.add(AppointmentHistory(clinic_id=item.clinic_id, appointment_id=item.id, actor_id=actor_id, action=action, details=details))
