@@ -401,7 +401,14 @@ def _timeline_timestamp(value: datetime) -> float:
 def _appointment_creation_time(
     created_history: AppointmentHistory, histories: list[AppointmentHistory],
 ) -> datetime:
-    """Recover a legacy appointment's original start from its earliest reschedule."""
+    """Use persisted history for the creation time, with an explicit stable fallback.
+
+    Legacy creation rows may have no start-time snapshot. Until a reschedule
+    records ``previous.starts_at``, their creation-history timestamp is only a
+    recording-time fallback, not a claim about the planned appointment date.
+    Once that source history exists, its earliest previous start recovers the
+    original planned date without consulting the mutable appointment row.
+    """
     details = created_history.details or {}
     current = details.get("current") or {}
     starts_at = current.get("starts_at")
@@ -431,7 +438,7 @@ def _appointment_creation_time(
         return min(previous_starts, key=lambda item: (item[0], item[1]))[2]
 
     # The appointment's current start can change. Its creation-history timestamp
-    # is the stable persisted fallback when no planned start was preserved.
+    # is a stable fallback, not a recovered planned start, when no snapshot exists.
     return created_history.occurred_at
 
 

@@ -202,6 +202,7 @@ async def test_legacy_note_references_require_canonical_patient_clinic_and_draft
     client, sessions = client_and_db
     manager = await register(client, "legacy-ref-manager@example.com")
     manager_headers = {"Authorization": f"Bearer {manager['access_token']}"}
+    manager_me = (await client.get("/api/auth/me", headers=manager_headers)).json()
     doctor_headers = await invite_doctor(client, manager_headers, "legacy-ref-author@example.com")
     other_clinic = await register(client, "legacy-ref-other-clinic@example.com", "Other Clinic")
     other_clinic_headers = {"Authorization": f"Bearer {other_clinic['access_token']}"}
@@ -234,20 +235,20 @@ async def test_legacy_note_references_require_canonical_patient_clinic_and_draft
     assert foreign_note.status_code == 201, foreign_note.text
 
     await _add_legacy_note_event(
-        sessions, clinic_id=manager["clinic_id"], patient_id=patient_a["id"],
+        sessions, clinic_id=manager_me["clinic_id"], patient_id=patient_a["id"],
         note_id=draft.json()["id"], event_id=uuid4(), occurred_at=datetime(2032, 1, 1, tzinfo=UTC),
         source=None,
     )
     await _add_legacy_note_event(
-        sessions, clinic_id=manager["clinic_id"], patient_id=patient_b["id"],
+        sessions, clinic_id=manager_me["clinic_id"], patient_id=patient_b["id"],
         note_id=draft.json()["id"], event_id=uuid4(), occurred_at=datetime(2032, 1, 2, tzinfo=UTC),
     )
     await _add_legacy_note_event(
-        sessions, clinic_id=manager["clinic_id"], patient_id=patient_b["id"],
+        sessions, clinic_id=manager_me["clinic_id"], patient_id=patient_b["id"],
         note_id=str(uuid4()), event_id=uuid4(), occurred_at=datetime(2032, 1, 3, tzinfo=UTC),
     )
     await _add_legacy_note_event(
-        sessions, clinic_id=manager["clinic_id"], patient_id=patient_b["id"],
+        sessions, clinic_id=manager_me["clinic_id"], patient_id=patient_b["id"],
         note_id=foreign_note.json()["id"], event_id=uuid4(), occurred_at=datetime(2032, 1, 4, tzinfo=UTC),
     )
 
@@ -325,11 +326,26 @@ async def test_legacy_appointment_creation_recovers_original_time_and_has_stable
         await session.commit()
 
     timeline_url = f"/api/clinical-notes/patients/{patient['id']}/timeline"
-    date_filter = {"start_date": "2031-01-06T00:00:00+00:00", "end_date": "2031-01-06T23:59:59+00:00"}
+    planned_date_filter = {
+        "start_date": "2031-01-06T00:00:00+00:00", "end_date": "2031-01-06T23:59:59+00:00",
+    }
+    creation_fallback_filter = {
+        "start_date": "2030-12-01T00:00:00+00:00", "end_date": "2030-12-01T23:59:59+00:00",
+    }
     initial = (await client.get(timeline_url, headers=headers)).json()
     creation_before = next(event for event in initial if event["source"] == "appointment_history")
-    assert creation_before["occurred_at"].startswith("2031-01-06T09:00:00")
-    assert len((await client.get(timeline_url, headers=headers, params=date_filter)).json()) == 1
+    assert creation_before["occurred_at"].startswith("2030-12-01T12:00:00")
+    assert creation_before["occurred_at"] != appointment["starts_at"]
+    assert creation_before["id"] in {
+        event["id"] for event in (await client.get(
+            timeline_url, headers=headers, params=creation_fallback_filter,
+        )).json()
+    }
+    assert creation_before["id"] not in {
+        event["id"] for event in (await client.get(
+            timeline_url, headers=headers, params=planned_date_filter,
+        )).json()
+    }
 
     await client.post(f"/api/appointments/{appointment['id']}/reschedule", headers=headers, json={
         "starts_at": "2031-01-07T09:00:00+00:00", "reason": "Fictitious reschedule",
@@ -337,7 +353,16 @@ async def test_legacy_appointment_creation_recovers_original_time_and_has_stable
     after_first = (await client.get(timeline_url, headers=headers)).json()
     first_creation = next(event for event in after_first if event["id"] == creation_before["id"])
     assert first_creation["occurred_at"].startswith("2031-01-06T09:00:00")
-    assert len((await client.get(timeline_url, headers=headers, params=date_filter)).json()) == 1
+    assert first_creation["id"] not in {
+        event["id"] for event in (await client.get(
+            timeline_url, headers=headers, params=creation_fallback_filter,
+        )).json()
+    }
+    assert first_creation["id"] in {
+        event["id"] for event in (await client.get(
+            timeline_url, headers=headers, params=planned_date_filter,
+        )).json()
+    }
 
     await client.post(f"/api/appointments/{appointment['id']}/reschedule", headers=headers, json={
         "starts_at": "2031-01-08T09:00:00+00:00", "reason": "Second fictitious reschedule",
@@ -346,7 +371,11 @@ async def test_legacy_appointment_creation_recovers_original_time_and_has_stable
     second_creation = next(event for event in after_second if event["id"] == creation_before["id"])
     assert second_creation["occurred_at"].startswith("2031-01-06T09:00:00")
     assert second_creation["id"] == creation_before["id"]
-    assert len((await client.get(timeline_url, headers=headers, params=date_filter)).json()) == 1
+    assert second_creation["id"] in {
+        event["id"] for event in (await client.get(
+            timeline_url, headers=headers, params=planned_date_filter,
+        )).json()
+    }
 
     second_appointment = await _create_timeline_appointment(
         client, headers, me["id"], patient["id"], room["id"], "2035-04-05T09:00:00+00:00",
@@ -373,6 +402,42 @@ async def test_legacy_appointment_creation_recovers_original_time_and_has_stable
     assert (repeated_fallback["id"], repeated_fallback["occurred_at"]) == (
         fallback_creation["id"], fallback_creation["occurred_at"],
     )
+    fallback_date_filter = {
+        "start_date": "2030-12-02T00:00:00+00:00", "end_date": "2030-12-02T23:59:59+00:00",
+    }
+    fallback_rescheduled = await client.post(
+        f"/api/appointments/{second_appointment['id']}/reschedule", headers=headers, json={
+            "starts_at": "2035-04-06T09:00:00+00:00", "reason": "Expose legacy previous start",
+        },
+    )
+    assert fallback_rescheduled.status_code == 200, fallback_rescheduled.text
+    recovered_events = (await client.get(timeline_url, headers=headers)).json()
+    recovered_creation = next(event for event in recovered_events if event["id"] == fallback_creation["id"])
+    assert recovered_creation["occurred_at"].startswith("2035-04-05T09:00:00")
+    assert recovered_creation["id"] not in {
+        event["id"] for event in (await client.get(
+            timeline_url, headers=headers, params=fallback_date_filter,
+        )).json()
+    }
+    recovered_date_filter = {
+        "start_date": "2035-04-05T00:00:00+00:00", "end_date": "2035-04-05T23:59:59+00:00",
+    }
+    assert recovered_creation["id"] in {
+        event["id"] for event in (await client.get(
+            timeline_url, headers=headers, params=recovered_date_filter,
+        )).json()
+    }
+    await client.post(
+        f"/api/appointments/{second_appointment['id']}/reschedule", headers=headers, json={
+            "starts_at": "2035-04-07T09:00:00+00:00", "reason": "Second legacy reschedule",
+        },
+    )
+    recovered_after_second = (await client.get(timeline_url, headers=headers)).json()
+    stable_recovered_creation = next(
+        event for event in recovered_after_second if event["id"] == fallback_creation["id"]
+    )
+    assert stable_recovered_creation["occurred_at"] == recovered_creation["occurred_at"]
+    assert stable_recovered_creation["id"] == fallback_creation["id"]
 
     current_snapshot_appointment = await _create_timeline_appointment(
         client, headers, me["id"], patient["id"], room["id"], "2036-05-06T09:00:00+00:00",

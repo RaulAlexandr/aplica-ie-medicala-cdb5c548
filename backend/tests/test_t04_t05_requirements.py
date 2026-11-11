@@ -1196,13 +1196,16 @@ async def test_timeline_sanitizes_clinical_note_events(client):
     events = timeline.json()
 
     # Find the clinical note event
-    clinical_note_events = [e for e in events if e["entity_type"] == "clinical_note"]
+    clinical_note_events = [
+        e for e in events
+        if e["entity_type"] == "clinical_note" and e["source"] == "clinical_note_finalized"
+    ]
     assert len(clinical_note_events) >= 1
 
     # Check that sensitive information is sanitized
     note_event = clinical_note_events[0]
-    assert note_event["title"] == "diagnosis note"  # Generic title
-    assert note_event["description"] == "diagnosis note"  # Generic description
+    assert note_event["title"] == "Clinical note finalized"
+    assert note_event["description"] == "Clinical note finalized"
 
     # Check metadata only contains safe fields
     assert "type" in note_event["metadata"]
@@ -1214,6 +1217,8 @@ async def test_timeline_sanitizes_clinical_note_events(client):
     # Should not contain original sensitive title
     assert "Sensitive Diagnosis" not in note_event["title"]
     assert "Sensitive Diagnosis" not in note_event["description"]
+    assert "Patient has a rare condition" not in timeline.text
+    assert "Sensitive Diagnosis" not in timeline.text
 
 
 @pytest.mark.asyncio
