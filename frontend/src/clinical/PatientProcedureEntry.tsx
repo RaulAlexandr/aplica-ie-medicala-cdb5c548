@@ -25,6 +25,7 @@ export function PatientProcedureEntry({ patientId, patientName, appointmentSearc
 }) {
   const client = useQueryClient();
   const [selectedAppointmentId, setSelectedAppointmentId] = useState(appointmentId ?? '');
+  const [saving, setSaving] = useState(false);
   const selectedAppointment = useQuery({
     queryKey: appointmentKey(selectedAppointmentId),
     queryFn: () => getAppointment(selectedAppointmentId),
@@ -86,14 +87,14 @@ export function PatientProcedureEntry({ patientId, patientName, appointmentSearc
 
   return <section className="card clinical-record-section t07-entry-panel" aria-label="Add procedure for selected tooth">
     <div className="detail-heading"><div><p className="eyebrow">T04 PERFORMED PROCEDURE</p><h2>Manoperă pentru dintele FDI {initialTooth}</h2></div>
-      <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
+      <button type="button" className="secondary" disabled={saving} onClick={onCancel}>Cancel</button>
     </div>
     {(selectedAppointment.isLoading || selectedAppointment.isFetching) && selectedAppointmentId && <p className="muted">Verifying the selected visit…</p>}
     {!selectedAppointmentId && appointmentChoice}
     {selectedAppointmentId && !selectedAppointment.isFetching && !validAppointment && appointmentChoice}
     {validAppointment && <>
       <p className="t07-verified-visit"><strong>Verified patient:</strong> {patientName} · <strong>Visit:</strong> {visitLabel(validAppointment)}</p>
-      <button type="button" className="secondary t07-change-visit" onClick={() => setSelectedAppointmentId('')}>Choose another visit</button>
+      <button type="button" className="secondary t07-change-visit" disabled={saving} onClick={() => setSelectedAppointmentId('')}>Choose another visit</button>
       {catalog.isLoading && <p className="muted">Loading active procedure catalog…</p>}
       {catalog.isError && <p className="error" role="alert">Procedure catalog could not be loaded: {apiErrorMessage(catalog.error)}</p>}
       {catalog.data && <ProcedureForm
@@ -104,6 +105,7 @@ export function PatientProcedureEntry({ patientId, patientName, appointmentSearc
         initialTooth={initialTooth}
         onSaved={saved}
         onCancel={onCancel}
+        onSubmittingChange={setSaving}
       />}
     </>}
   </section>;

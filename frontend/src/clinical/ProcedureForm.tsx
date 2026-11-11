@@ -13,13 +13,14 @@ const SURFACE_LABELS: Record<ToothSurface, string> = {
   approximal: 'Approximal', interproximal: 'Interproximal',
 };
 
-export function ProcedureForm({ appointment, patientName, catalog, initialTooth, onSaved, onCancel }: {
+export function ProcedureForm({ appointment, patientName, catalog, initialTooth, onSaved, onCancel, onSubmittingChange }: {
   appointment: Appointment;
   patientName: string;
   catalog: ProcedureCatalog[];
   initialTooth?: ToothId;
   onSaved: (procedure: PerformedProcedure) => void | Promise<void>;
   onCancel?: () => void;
+  onSubmittingChange?: (submitting: boolean) => void;
 }) {
   const [procedureId, setProcedureId] = useState('');
   const [tooth, setTooth] = useState<ToothId | ''>(initialTooth ?? '');
@@ -39,6 +40,7 @@ export function ProcedureForm({ appointment, patientName, catalog, initialTooth,
     event.preventDefault();
     if (submitLock.current || mutation.isPending || !procedureId) return;
     submitLock.current = true;
+    onSubmittingChange?.(true);
     setRefreshError('');
     const payload: PerformedProcedureCreate = {
       appointment_id: appointment.id,
@@ -53,11 +55,16 @@ export function ProcedureForm({ appointment, patientName, catalog, initialTooth,
       setTooth('');
       setSurfaces([]);
       setNotes('');
-      void Promise.resolve(onSaved(saved)).catch(() => setRefreshError('Manopera a fost salvată. Reîncarcă dosarul sau vizita dacă lista nu se actualizează.'));
+      try {
+        await onSaved(saved);
+      } catch {
+        setRefreshError('Manopera a fost salvată. Reîncarcă dosarul sau vizita dacă lista nu se actualizează.');
+      }
     } catch {
       // Keep all inputs intact. Do not automatically retry an uncertain create request.
     } finally {
       submitLock.current = false;
+      onSubmittingChange?.(false);
     }
   }
 
