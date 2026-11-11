@@ -342,6 +342,70 @@ class ClinicalNoteRevision(Base):
     note: Mapped["ClinicalNote"] = relationship(back_populates="revisions")
 
 
+class OdontogramToothState(Base):
+    __tablename__ = "odontogram_tooth_states"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    tooth_fdi: Mapped[str] = mapped_column(String(2), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="unevaluated")
+    updated_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("patient_id", "tooth_fdi", name="uq_odontogram_tooth_patient_fdi"),
+        Index("ix_odontogram_tooth_clinic_patient", "clinic_id", "patient_id"),
+    )
+
+
+class OdontogramToothRevision(Base):
+    __tablename__ = "odontogram_tooth_revisions"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    tooth_fdi: Mapped[str] = mapped_column(String(2), nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    previous_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    current_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    __table_args__ = (Index("ix_odontogram_tooth_revisions_patient", "clinic_id", "patient_id", "occurred_at"),)
+
+
+class OdontogramFinding(Base):
+    __tablename__ = "odontogram_findings"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    tooth_fdi: Mapped[str] = mapped_column(String(2), nullable=False)
+    kind: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    surfaces: Mapped[list] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    author_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    idempotency_key: Mapped[str | None] = mapped_column(String(36))
+    __table_args__ = (
+        Index("ix_odontogram_findings_clinic_patient", "clinic_id", "patient_id", "created_at"),
+        UniqueConstraint("clinic_id", "author_id", "idempotency_key", name="uq_odontogram_finding_retry"),
+    )
+
+
+class OdontogramFindingRevision(Base):
+    __tablename__ = "odontogram_finding_revisions"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    finding_id: Mapped[UUID] = mapped_column(ForeignKey("odontogram_findings.id", ondelete="RESTRICT"), nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    previous_value: Mapped[dict] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    current_value: Mapped[dict] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    __table_args__ = (Index("ix_odontogram_finding_revisions", "clinic_id", "finding_id", "occurred_at"),)
+
+
 class PatientTimelineEvent(Base):
     __tablename__ = "patient_timeline_events"
     id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
