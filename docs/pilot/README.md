@@ -11,7 +11,7 @@ export CANDIDATE=/home/raul/Projects/worktrees/aplica-ie-pilot-candidate
 export DENTACARE_PILOT_HOME="$HOME/.local/share/dentacare-pilot-candidate"
 export PILOT_CONFIG="$HOME/.config/dentacare-pilot-candidate/pilot.env"
 mkdir -p "$(dirname "$PILOT_CONFIG")"
-cp "$CANDIDATE/docs/pilot/pilot.env.example" "$PILOT_CONFIG"
+if [ ! -f "$PILOT_CONFIG" ]; then cp "$CANDIDATE/docs/pilot/pilot.env.example" "$PILOT_CONFIG"; fi
 "$CANDIDATE/scripts/pilot/setup.sh" --checkout "$CANDIDATE" --config "$PILOT_CONFIG"
 "$CANDIDATE/scripts/pilot/start.sh" --checkout "$CANDIDATE" --config "$PILOT_CONFIG"
 ```
