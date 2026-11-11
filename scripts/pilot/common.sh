@@ -36,7 +36,7 @@ python_for_checkout() {
   [[ -x "$PILOT_ROOT/venv/bin/python" ]] && { echo "$PILOT_ROOT/venv/bin/python"; return; }
   command -v python3.12 || { echo "Python 3.12 lipsește; rulează setup.sh în terminalul gazdă." >&2; exit 1; }
 }
-port_available() { "$1" -c 'import socket,sys; s=socket.socket();
+port_available() { "$1" -c 'import socket,sys; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
 try: s.bind((sys.argv[1],int(sys.argv[2])))
 except OSError: sys.exit(1)
 finally: s.close()' "$2" "$3"; }
