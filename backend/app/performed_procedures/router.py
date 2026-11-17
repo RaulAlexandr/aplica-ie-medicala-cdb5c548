@@ -591,9 +591,14 @@ async def start_procedure(
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can start this procedure")
 
-    # Validate transition
-    if procedure.status not in PROCEDURE_TRANSITIONS or "running" not in PROCEDURE_TRANSITIONS[procedure.status]:
+    # Start is only valid for a pending procedure.
+    if procedure.status != "pending":
         raise HTTPException(409, f"Cannot start procedure from status: {procedure.status}")
+
+    # Do not repair inconsistent historical segments implicitly.
+    existing_segments = await _get_active_segments(db, procedure_id)
+    if any(segment.ended_at is None for segment in existing_segments):
+        raise HTTPException(409, "Cannot start procedure with an open execution segment")
 
     # Check if executed_by doctor already has a running procedure
     has_running = await _check_doctor_has_running_procedure(db, procedure.executed_by_id, user.clinic_id, procedure_id)
@@ -722,9 +727,20 @@ async def resume_procedure(
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can resume this procedure")
 
-    # Validate transition
-    if procedure.status not in PROCEDURE_TRANSITIONS or "running" not in PROCEDURE_TRANSITIONS[procedure.status]:
+    # Resume is only valid for a paused procedure.
+    if procedure.status != "paused":
         raise HTTPException(409, f"Cannot resume procedure from status: {procedure.status}")
+
+    # Preserve legacy data as-is and reject a pause history that cannot be resumed safely.
+    existing_segments = await _get_active_segments(db, procedure_id)
+    open_segments = [segment for segment in existing_segments if segment.ended_at is None]
+    if (
+        len(open_segments) != 1
+        or not existing_segments
+        or existing_segments[-1] is not open_segments[0]
+        or open_segments[0].segment_type != SegmentType.PAUSE
+    ):
+        raise HTTPException(409, "Cannot resume procedure with inconsistent execution segments")
 
     # Check if executed_by doctor already has a running procedure
     has_running = await _check_doctor_has_running_procedure(db, procedure.executed_by_id, user.clinic_id, procedure_id)
