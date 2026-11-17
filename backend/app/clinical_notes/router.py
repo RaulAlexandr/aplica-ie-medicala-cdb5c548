@@ -103,6 +103,13 @@ class ClinicalNoteCreate(BaseModel):
     tooth_surface: str | None = Field(default=None, max_length=100)
     is_alert: bool = Field(default=False)
 
+    @field_validator("content", mode="before")
+    @classmethod
+    def validate_content(cls, value: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Clinical note content cannot be empty")
+        return value
+
     @field_validator("tooth_fdi", mode="before")
     @classmethod
     def validate_tooth_fdi(cls, value: str | None) -> str | None:
@@ -121,6 +128,13 @@ class ClinicalNoteUpdate(BaseModel):
     tooth_fdi: str | None = Field(default=None, max_length=3)
     tooth_surface: str | None = Field(default=None, max_length=100)
     is_alert: bool | None = None
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def validate_content(cls, value: str | None) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Clinical note content cannot be empty")
+        return value
 
     @field_validator("tooth_fdi", mode="before")
     @classmethod
@@ -878,6 +892,9 @@ async def finalize_clinical_note(
     # Only author can finalize drafts
     if note.author_id != user.id:
         raise HTTPException(403, "Only the author can finalize this draft note")
+
+    if not note.content or not note.content.strip():
+        raise HTTPException(422, "Clinical note content cannot be empty")
 
     note.status = "finalized"
     note.finalized_at = utcnow()
