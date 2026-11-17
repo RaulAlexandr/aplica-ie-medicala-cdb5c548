@@ -40,3 +40,12 @@ same visit and save a second procedure through the visit form; verify exactly
 one additional pending card. The T07 script automation is not included in this
 file's existing scripted role/privacy scenarios; record these UI observations
 separately with the browser run evidence.
+
+The runner records the original locator/action error separately from its
+finite API-response wait, plus visible alert text, console/page errors, and
+API method/path/status. It never records request headers or credentials. The
+2026-11-17 reproduction found two complete `.patient-odontogram` sections and
+two `.og-new-finding` forms on one patient record. The first global save click
+therefore failed Playwright strict mode before sending a POST. This is a
+duplicate patient-record UI rendering issue; the runner now reports it as a
+blocking check instead of choosing one duplicate instance.

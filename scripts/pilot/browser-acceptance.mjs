@@ -15,13 +15,55 @@ const safe = { appSha: process.env.DENTACARE_APP_SHA, web, api, browser: null, c
 const check = (name, ok, details = {}) => { safe.checks.push({ name, passed: Boolean(ok), ...details }); if (!ok) throw new Error(`Acceptance failed: ${name}`); };
 const screenshot = async (page, name) => { const file = path.join(evidenceDir, `${runId}-${name}.png`); await page.screenshot({ path: file, fullPage: true }); safe.artifacts.push(file); };
 const uniq = (label) => `Pilot fictiv ${label} ${runId}`;
+const diagnostics = { pageErrors: [], consoleErrors: [], apiResponses: [], visibleErrors: [] };
+let activePage = null;
+function observePage(page, role) {
+  activePage = page;
+  page.on('pageerror', error => diagnostics.pageErrors.push({ role, message: String(error.message).slice(0, 500) }));
+  page.on('console', message => { if (message.type() === 'error') diagnostics.consoleErrors.push({ role, message: message.text().slice(0, 500) }); });
+  page.on('response', response => {
+    const url = new URL(response.url());
+    if (!url.pathname.includes('/api/')) return;
+    const record = { role, method: response.request().method(), path: url.pathname, status: response.status() };
+    diagnostics.apiResponses.push(record);
+    if (response.status() >= 400) response.json().then(body => { record.errorDetail = String(body?.detail ?? body?.message ?? '').slice(0, 500); }).catch(() => {});
+    if (diagnostics.apiResponses.length > 80) diagnostics.apiResponses.shift();
+  });
+}
+async function observeAction(page, label, predicate, action) {
+  const responseResult = page.waitForResponse(predicate, { timeout: 8000 })
+    .then(response => ({ response }), error => ({ waitError: String(error?.message ?? error).slice(0, 400) }));
+  let actionError = null;
+  try { await action(); } catch (error) { actionError = String(error?.message ?? error).slice(0, 700); }
+  const observed = await responseResult;
+  const visibleErrors = await page.locator('[role="alert"], .error').allInnerTexts().catch(() => []);
+  diagnostics.visibleErrors = visibleErrors.map(message => message.trim().slice(0, 500)).filter(Boolean).slice(-10);
+  const response = observed.response;
+  const detail = {
+    label,
+    actionError,
+    visibleErrors: diagnostics.visibleErrors,
+    latestApiResponses: diagnostics.apiResponses.slice(-8),
+    pageErrors: diagnostics.pageErrors.slice(-8),
+    consoleErrors: diagnostics.consoleErrors.slice(-8),
+    responseStatus: response?.status() ?? null,
+    responsePath: response ? new URL(response.url()).pathname : null,
+    responseErrorDetail: response && response.status() >= 400 ? String((await response.json().catch(() => ({})))?.detail ?? '').slice(0, 500) : null,
+    responseWaitError: observed.waitError ?? null,
+  };
+  if (actionError || !response) {
+    const error = new Error(`${label}: ${actionError ?? observed.waitError ?? 'matching API response not observed'}`);
+    error.diagnostic = detail;
+    throw error;
+  }
+  return response;
+}
 const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE });
 safe.browser = browser.version();
-const failures = [];
 async function loginContext(account, role) {
   const context = await browser.newContext();
   const page = await context.newPage();
-  page.on('pageerror', e => failures.push(`${role}: pageerror`));
+  observePage(page, role);
   await page.goto(web, { waitUntil: 'domcontentloaded' });
   await page.getByLabel('Email').fill(account.email);
   await page.getByLabel('Password').fill(account.password);
@@ -57,24 +99,23 @@ try {
   await teeth.first().waitFor();
   const toothCount = await teeth.count();
   check('odontogram loaded in browser', toothCount === 32, { teeth: toothCount, patientA });
+  const odontogramCount = await page.locator('.patient-odontogram').count();
+  check('one odontogram instance on patient record', odontogramCount === 1, { odontogramCount, newFindingFormCount: await page.locator('form.og-new-finding').count() });
   const patientAHeading = await page.locator('h1').first().innerText();
   await screenshot(page, 'doctor-patient-a');
 
   const stateSelect = page.locator('[aria-label^="Starea dintelui"]').last();
   const beforeStatus = await stateSelect.inputValue();
   const afterStatus = beforeStatus === 'missing' ? 'present' : 'missing';
-  const stateResponse = page.waitForResponse(r => r.request().method() === 'PUT' && /\/odontogram\/patients\/[^/]+\/teeth\/16$/.test(new URL(r.url()).pathname));
-  await stateSelect.selectOption(afterStatus);
-  const stateResult = await stateResponse;
+  const stateResult = await observeAction(page, 'save tooth state', r => r.request().method() === 'PUT' && /\/odontogram\/patients\/[^/]+\/teeth\/16$/.test(new URL(r.url()).pathname), () => stateSelect.selectOption(afterStatus));
   check('tooth state saved through API', stateResult.status() === 200, { status: stateResult.status(), beforeStatus, afterStatus });
 
   const draftDescription = uniq('doctor draft');
-  await page.getByLabel('Tipul constatării').last().selectOption({ label: 'Carie' });
-  await page.getByLabel('Descriere', { exact: true }).last().fill(draftDescription);
-  await page.getByRole('button', { name: /^Ocluzală/ }).last().click();
-  const createResponseP = page.waitForResponse(r => r.request().method() === 'POST' && /\/odontogram\/patients\/[^/]+\/findings$/.test(new URL(r.url()).pathname));
-  await page.getByRole('button', { name: 'Salvează ciornă' }).click();
-  const createResponse = await createResponseP;
+  const newFindingForm = page.locator('form.og-new-finding');
+  await newFindingForm.getByLabel('Tipul constatării').selectOption({ label: 'Carie' });
+  await newFindingForm.getByLabel('Descriere', { exact: true }).fill(draftDescription);
+  await newFindingForm.getByRole('button', { name: /^Ocluzală/ }).first().click();
+  const createResponse = await observeAction(page, 'create doctor finding draft', r => r.request().method() === 'POST' && /\/odontogram\/patients\/[^/]+\/findings$/.test(new URL(r.url()).pathname), () => newFindingForm.getByRole('button', { name: 'Salvează ciornă' }).click());
   check('doctor finding draft created', createResponse.status() === 201, { status: createResponse.status() });
   let finding = await createResponse.json();
   const findingId = finding.id;
@@ -84,9 +125,7 @@ try {
   await card.waitFor();
   await card.getByRole('button', { name: 'Editează ciorna' }).click();
   await page.getByLabel(`Descriere ciornă ${findingId}`).fill(editedDescription);
-  const patchResponseP = page.waitForResponse(r => r.request().method() === 'PATCH' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}`));
-  await card.getByRole('button', { name: 'Salvează ciorna' }).click();
-  const patchResponse = await patchResponseP;
+  const patchResponse = await observeAction(page, 'edit doctor finding draft', r => r.request().method() === 'PATCH' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}`), () => card.getByRole('button', { name: 'Salvează ciorna' }).click());
   finding = await patchResponse.json();
   check('draft edit persisted', patchResponse.status() === 200 && finding.description === editedDescription, { status: patchResponse.status(), findingId });
   await page.reload();
@@ -95,9 +134,7 @@ try {
   check('draft survives reload with author/date', true, { author: finding.author, observedAt, status: finding.status });
   await screenshot(page, 'doctor-draft-after-reload');
 
-  const finalizeP = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}/finalize`));
-  await page.locator(`.og-finding[data-finding-id="${findingId}"]`).last().getByRole('button', { name: 'Finalizează explicit' }).click();
-  const finalizeResponse = await finalizeP;
+  const finalizeResponse = await observeAction(page, 'finalize doctor finding', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}/finalize`), () => page.locator(`.og-finding[data-finding-id="${findingId}"]`).last().getByRole('button', { name: 'Finalizează explicit' }).click());
   finding = await finalizeResponse.json();
   check('finding finalized', finalizeResponse.status() === 200 && finding.status === 'finalized', { status: finalizeResponse.status(), statusValue: finding.status });
   const correctedDescription = uniq('doctor corrected');
@@ -106,9 +143,7 @@ try {
   await finalCard.getByRole('button', { name: 'Corectează constatarea' }).click();
   await page.getByLabel(`Descriere corectată pentru constatarea ${findingId}`).fill(correctedDescription);
   await page.getByLabel(`Motiv corecție ${findingId}`).fill(reason);
-  const correctP = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}/corrections`));
-  await finalCard.getByRole('button', { name: 'Salvează corecția' }).click();
-  const correctResponse = await correctP;
+  const correctResponse = await observeAction(page, 'correct finalized finding', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}/corrections`), () => finalCard.getByRole('button', { name: 'Salvează corecția' }).click());
   finding = await correctResponse.json();
   check('correction stored with revision', correctResponse.status() === 200 && finding.description === correctedDescription && finding.revisions?.length >= 1, { status: correctResponse.status(), revisions: finding.revisions?.length });
   await page.getByText(reason, { exact: true }).waitFor();
@@ -127,11 +162,10 @@ try {
   // Keep a doctor-owned draft for the role-privacy check.
   await page.locator('[data-tooth-id="15"]').click();
   const privateDraftDescription = uniq('private doctor draft');
-  await page.getByLabel('Tipul constatării').last().selectOption({ label: 'Carie' });
-  await page.getByLabel('Descriere', { exact: true }).last().fill(privateDraftDescription);
-  const privateCreateP = page.waitForResponse(r => r.request().method() === 'POST' && /\/odontogram\/patients\/[^/]+\/findings$/.test(new URL(r.url()).pathname));
-  await page.getByRole('button', { name: 'Salvează ciornă' }).click();
-  const privateCreate = await privateCreateP;
+  const privateFindingForm = page.locator('form.og-new-finding');
+  await privateFindingForm.getByLabel('Tipul constatării').selectOption({ label: 'Carie' });
+  await privateFindingForm.getByLabel('Descriere', { exact: true }).fill(privateDraftDescription);
+  const privateCreate = await observeAction(page, 'create private doctor finding', r => r.request().method() === 'POST' && /\/odontogram\/patients\/[^/]+\/findings$/.test(new URL(r.url()).pathname), () => privateFindingForm.getByRole('button', { name: 'Salvează ciornă' }).click());
   const privateFinding = await privateCreate.json();
   check('second doctor draft created', privateCreate.status() === 201 && privateFinding.status === 'draft', { status: privateCreate.status() });
 
@@ -141,18 +175,15 @@ try {
   await page.getByRole('button', { name: 'New note or finding' }).click();
   await page.getByLabel('Title (optional)').fill(noteTitle);
   await page.getByLabel('Clinical content').fill(noteContent);
-  const noteCreateP = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/clinical-notes');
-  await page.getByRole('button', { name: 'Save as draft' }).click();
-  const noteCreate = await noteCreateP;
+  const noteCreate = await observeAction(page, 'create T05 note', r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/clinical-notes', () => page.getByRole('button', { name: 'Save as draft' }).click());
   check('T05 draft note created through UI', noteCreate.status() === 201, { status: noteCreate.status() });
   const note = await noteCreate.json();
   const noteCard = page.locator('.clinical-list-item').filter({ has: page.getByRole('heading', { name: noteTitle, exact: true }) });
   await noteCard.waitFor();
-  const timelineResponse = page.waitForResponse(r => r.request().method() === 'GET' && new URL(r.url()).pathname.endsWith(`/api/clinical-notes/patients/${patientA}/timeline`));
-  await noteCard.getByRole('button', { name: 'Finalize note' }).click();
-  const noteFinalizeP = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/clinical-notes/${note.id}/finalize`));
-  const noteFinalize = await noteFinalizeP;
-  const timelineRes = await timelineResponse;
+  const timelineResponseP = page.waitForResponse(r => r.request().method() === 'GET' && new URL(r.url()).pathname.endsWith(`/api/clinical-notes/patients/${patientA}/timeline`), { timeout: 8000 }).then(response => response, () => null);
+  const noteFinalize = await observeAction(page, 'finalize T05 note', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/clinical-notes/${note.id}/finalize`), () => noteCard.getByRole('button', { name: 'Finalize note' }).click());
+  const timelineRes = await timelineResponseP;
+  check('timeline request observed after finalize', Boolean(timelineRes), { requestObserved: Boolean(timelineRes) });
   check('T05 note finalized via API', noteFinalize.status() === 200, { status: noteFinalize.status() });
   const events = await timelineRes.json();
   const noteEvents = events.filter(e => e.entity_id === note.id || e.source_id === note.id || e.title?.includes(noteTitle));
@@ -191,18 +222,15 @@ try {
   await targetCard.getByRole('button', { name: 'Corectează constatarea' }).click();
   await managerPage.getByLabel(`Descriere corectată pentru constatarea ${findingId}`).fill(managerCorrection);
   await managerPage.getByLabel(`Motiv corecție ${findingId}`).fill(managerReason);
-  const managerCorrectP = managerPage.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}/corrections`));
-  await targetCard.getByRole('button', { name: 'Salvează corecția' }).click();
-  const managerCorrect = await managerCorrectP;
+  const managerCorrect = await observeAction(managerPage, 'manager correct finalized finding', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}/corrections`), () => targetCard.getByRole('button', { name: 'Salvează corecția' }).click());
   const managerFinding = await managerCorrect.json();
   check('manager may correct finalized finding', managerCorrect.status() === 200 && managerFinding.description === managerCorrection, { status: managerCorrect.status(), revisionAuthor: managerFinding.revisions.at(-1)?.author });
   const managerDescription = uniq('manager own finding');
   await managerPage.locator('[data-tooth-id="14"]').click();
-  await managerPage.getByLabel('Tipul constatării').last().selectOption({ label: 'Carie' });
-  await managerPage.getByLabel('Descriere', { exact: true }).last().fill(managerDescription);
-  const managerCreateP = managerPage.waitForResponse(r => r.request().method() === 'POST' && /\/odontogram\/patients\/[^/]+\/findings$/.test(new URL(r.url()).pathname));
-  await managerPage.getByRole('button', { name: 'Salvează ciornă' }).click();
-  const managerCreate = await managerCreateP;
+  const managerFindingForm = managerPage.locator('form.og-new-finding');
+  await managerFindingForm.getByLabel('Tipul constatării').selectOption({ label: 'Carie' });
+  await managerFindingForm.getByLabel('Descriere', { exact: true }).fill(managerDescription);
+  const managerCreate = await observeAction(managerPage, 'create manager finding', r => r.request().method() === 'POST' && /\/odontogram\/patients\/[^/]+\/findings$/.test(new URL(r.url()).pathname), () => managerFindingForm.getByRole('button', { name: 'Salvează ciornă' }).click());
   const managerFindingOwn = await managerCreate.json();
   check('manager creates own finding', managerCreate.status() === 201 && managerFindingOwn.status === 'draft' && await managerPage.getByText(managerDescription, { exact: true }).count() === 1, { status: managerCreate.status(), author: managerFindingOwn.author });
   await managerSession.context.close();
@@ -217,13 +245,16 @@ try {
   check('reception API denied odontogram', receptionChart.status() === 403, { status: receptionChart.status() });
   await reception.context.close();
   await receptionApi.dispose();
-  check('no browser page errors', failures.length === 0, { count: failures.length });
+  check('no browser page errors', diagnostics.pageErrors.length === 0, { count: diagnostics.pageErrors.length });
   safe.result = 'passed';
 } catch (error) {
   safe.result = 'failed';
-  safe.errors.push(String(error?.message ?? error).slice(0, 500));
+  const visibleErrors = activePage ? await activePage.locator('[role="alert"], .error').allInnerTexts().catch(() => []) : [];
+  safe.errors.push({ message: String(error?.message ?? error).slice(0, 700), diagnostic: error?.diagnostic ?? null, visibleErrors: visibleErrors.map(message => message.trim().slice(0, 500)).filter(Boolean).slice(-10), pageErrors: diagnostics.pageErrors.slice(-10), consoleErrors: diagnostics.consoleErrors.slice(-10), apiResponses: diagnostics.apiResponses.slice(-20) });
+  if (activePage) await screenshot(activePage, 'failure').catch(() => {});
 } finally {
   await browser.close();
+  safe.diagnostics = diagnostics;
   const output = path.join(evidenceDir, `${runId}-summary.json`);
   await fs.writeFile(output, `${JSON.stringify(safe, null, 2)}\n`, { mode: 0o600 });
   console.log(JSON.stringify({ result: safe.result, browser: safe.browser, checks: safe.checks, errors: safe.errors, artifacts: safe.artifacts, summary: output }));
