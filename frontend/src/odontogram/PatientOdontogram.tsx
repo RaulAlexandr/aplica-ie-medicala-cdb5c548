@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiErrorMessage, type User } from '../api/client';
 import { Odontogram } from './Odontogram';
+import { PatientProcedureEntry } from '../clinical/PatientProcedureEntry';
 import {
   correctOdontogramFinding,
   createOdontogramFinding,
@@ -29,9 +30,17 @@ function findingCreatedEvent(finding: ClinicalFinding): ToothHistoryEvent {
   };
 }
 
-export function PatientOdontogram({ patientId, user, timezone }: { patientId: string; user: User; timezone: string }) {
+export function PatientOdontogram({ patientId, user, timezone, patientName, appointmentSearchTerm, appointmentId }: {
+  patientId: string;
+  user: User;
+  timezone: string;
+  patientName?: string;
+  appointmentSearchTerm?: string;
+  appointmentId?: string;
+}) {
   const client = useQueryClient();
   const [selectedToothId, setSelectedToothId] = useState<ToothId>('16');
+  const [procedureToothId, setProcedureToothId] = useState<ToothId | null>(null);
   const idempotencyKeys = useRef(new Map<string, string>());
   const query = useQuery({
     queryKey: queryKey(patientId),
@@ -116,6 +125,7 @@ export function PatientOdontogram({ patientId, user, timezone }: { patientId: st
       canEditDraft={editableDraft}
       canFinalizeDraft={editableDraft}
       canCorrectFinding={(finding) => canWrite && finding.status === 'finalized' && (finding.authorId === user.id || canManageCorrections)}
+      onAddPerformedProcedure={patientName && appointmentSearchTerm ? setProcedureToothId : undefined}
       onToothSelect={setSelectedToothId}
       onFindingCreate={createFinding}
       onFindingDraftUpdate={updateDraft}
@@ -123,5 +133,15 @@ export function PatientOdontogram({ patientId, user, timezone }: { patientId: st
       onFindingCorrect={correctFinding}
       onToothStatusChange={changeToothStatus}
     />
+    {procedureToothId && patientName && appointmentSearchTerm && <PatientProcedureEntry
+      key={`${patientId}:${appointmentId ?? 'choose'}:${procedureToothId}`}
+      patientId={patientId}
+      patientName={patientName}
+      appointmentSearchTerm={appointmentSearchTerm}
+      appointmentId={appointmentId}
+      initialTooth={procedureToothId}
+      onCancel={() => setProcedureToothId(null)}
+      onSaved={() => setProcedureToothId(null)}
+    />}
   </section>;
 }

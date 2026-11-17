@@ -128,7 +128,15 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
         </article>)}</div>
       </section>
     </>}
-    <PatientOdontogram key={patientId} patientId={patientId} user={user} timezone={timezone} />
+    <PatientOdontogram
+      key={patientId}
+      patientId={patientId}
+      user={user}
+      timezone={timezone}
+      patientName={patientFields ? `${patientFields.first_name} ${patientFields.last_name}` : undefined}
+      appointmentSearchTerm={patientFields ? (patientFields.phone || patientFields.email || patientFields.last_name) : undefined}
+      appointmentId={appointmentId}
+    />
     <ClinicalNotesPanel key={`${patientId}:${appointmentId ?? 'patient'}`} patientId={patientId} appointmentId={appointmentId} user={user} timezone={timezone} />
     <TimelineSection key={patientId} patientId={patientId} timezone={timezone} />
     {clinic.isError && <p className="error" role="alert">Clinic time zone could not be loaded: {apiErrorMessage(clinic.error)}</p>}

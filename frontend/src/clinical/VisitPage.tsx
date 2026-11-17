@@ -1,9 +1,9 @@
-import { useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiErrorMessage, getAppointment, listProcedures, updateAppointmentStatus, type Appointment, type ProcedureCatalog, type User } from '../api/client';
+import { apiErrorMessage, getAppointment, listProcedures, updateAppointmentStatus, type Appointment, type User } from '../api/client';
 import { ProcedureCard } from './ProcedureCard';
-import { createPerformedProcedure, getVisitSummary, type PerformedProcedureCreate } from './api';
+import { getVisitSummary, type PerformedProcedure, type VisitSummary } from './api';
+import { ProcedureForm } from './ProcedureForm';
 
 const clinicalRoles = new Set(['doctor', 'clinic_manager', 'administrator']);
 const appointmentManagerRoles = new Set(['clinic_manager', 'doctor', 'reception', 'administrator']);
@@ -43,43 +43,6 @@ function AppointmentStatus({ appointment, canManage, canCloseVisit, isSummaryLoa
   </section>;
 }
 
-function ProcedureForm({ appointmentId, catalog, onSaved }: { appointmentId: string; catalog: ProcedureCatalog[]; onSaved: () => Promise<void> }) {
-  const [procedureId, setProcedureId] = useState('');
-  const [tooth, setTooth] = useState('');
-  const [surface, setSurface] = useState('');
-  const [notes, setNotes] = useState('');
-  const mutation = useMutation({
-    mutationFn: (payload: PerformedProcedureCreate) => createPerformedProcedure(payload),
-    onSuccess: async () => {
-      setProcedureId('');
-      setTooth('');
-      setSurface('');
-      setNotes('');
-      await onSaved();
-    },
-  });
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const payload: PerformedProcedureCreate = { appointment_id: appointmentId, procedure_catalog_id: procedureId };
-    if (tooth.trim()) payload.tooth_fdi = tooth.trim();
-    if (surface.trim()) payload.tooth_surface = surface.trim();
-    if (notes.trim()) payload.notes = notes.trim();
-    mutation.mutate(payload);
-  }
-  return <form className="card clinical-form" onSubmit={submit}>
-    <h2>Add procedure</h2>
-    <label>Procedure from active catalog<select required value={procedureId} onChange={event => setProcedureId(event.target.value)}><option value="">Choose a procedure</option>{catalog.map(item => <option key={item.id} value={item.id}>{item.code} · {item.name} · {item.base_price} {item.currency}</option>)}</select></label>
-    <div className="grid two clinical-form-grid">
-      <label>Tooth FDI (optional)<input inputMode="numeric" maxLength={2} pattern="[1-4][1-8]" value={tooth} onChange={event => setTooth(event.target.value)} placeholder="e.g. 26" /></label>
-      <label>Surface (optional)<input maxLength={100} value={surface} onChange={event => setSurface(event.target.value)} placeholder="e.g. occlusal, mesial" /></label>
-    </div>
-    <label>Procedure notes (optional)<textarea maxLength={1000} value={notes} onChange={event => setNotes(event.target.value)} /></label>
-    {catalog.length === 0 && <p className="muted">No active catalog procedures are available.</p>}
-    {mutation.isError && <p className="error" role="alert">{apiErrorMessage(mutation.error)}</p>}
-    <button disabled={mutation.isPending || !procedureId}>{mutation.isPending ? 'Saving…' : 'Save procedure'}</button>
-  </form>;
-}
-
 function VisitWorkspace({ appointmentId, user }: { appointmentId: string; user: User }) {
   const client = useQueryClient();
   const canManageProcedures = clinicalRoles.has(user.role);
@@ -104,6 +67,16 @@ function VisitWorkspace({ appointmentId, user }: { appointmentId: string; user: 
       client.invalidateQueries({ queryKey: ['patient-timeline'] }),
     ]);
   };
+  const procedureSaved = async (procedure: PerformedProcedure) => {
+    client.setQueryData<VisitSummary>(['visit-summary', appointmentId], current => {
+      if (!current || current.performed_procedures.some(item => item.id === procedure.id)) return current;
+      const unresolved = current.unresolved_procedures.some(item => item.id === procedure.id)
+        ? current.unresolved_procedures
+        : [...current.unresolved_procedures, { id: procedure.id, procedure_name: procedure.procedure_name, status: procedure.status, executed_by: procedure.executed_by_id }];
+      return { ...current, performed_procedures: [...current.performed_procedures, procedure], unresolved_procedures: unresolved, can_close_visit: false };
+    });
+    await refreshVisit();
+  };
   if (appointmentQuery.isLoading) return <p className="muted">Loading appointment…</p>;
   if (appointmentQuery.isError || !appointmentQuery.data) return <p className="error" role="alert">{apiErrorMessage(appointmentQuery.error)}</p>;
   const appointment = appointmentQuery.data;
@@ -124,7 +97,13 @@ function VisitWorkspace({ appointmentId, user }: { appointmentId: string; user: 
           {canManageProcedures && <div className="clinical-list">{procedures.map(procedure => <ProcedureCard key={procedure.id} procedure={procedure} user={user} timezone={appointment.timezone} isVisitClosed={isVisitClosed} onChanged={refreshVisit} />)}</div>}
           {!canManageProcedures && <p className="muted">Procedure and clinical note details are available to clinical roles.</p>}
         </section>
-        {canManageProcedures && !isVisitClosed && catalogQuery.data && <ProcedureForm key={appointmentId} appointmentId={appointmentId} catalog={catalogQuery.data} onSaved={refreshVisit} />}
+        {canManageProcedures && !isVisitClosed && catalogQuery.data && <ProcedureForm
+          key={appointmentId}
+          appointment={appointment}
+          patientName={appointment.patient_name ?? 'Patient'}
+          catalog={catalogQuery.data}
+          onSaved={procedureSaved}
+        />}
         {canManageProcedures && catalogQuery.isLoading && <p className="muted">Loading procedure catalog…</p>}
         {canManageProcedures && catalogQuery.isError && <p className="error" role="alert">{apiErrorMessage(catalogQuery.error)}</p>}
       </section>
