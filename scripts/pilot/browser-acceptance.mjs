@@ -75,8 +75,8 @@ async function loginContext(account, role) {
 }
 async function visitPatient(page, id) {
   await page.getByRole('link', { name: 'Patients', exact: true }).click();
-  await page.locator(`a[href="/patients/${id}"]`).first().click();
-  await page.locator('h1').first().waitFor();
+  await page.locator(`a[href="/patients/${id}"]`).click();
+  await page.getByRole('heading', { level: 1 }).waitFor();
 }
 async function authApi(account, role) {
   const ctx = await request.newContext({ baseURL: api });
@@ -94,17 +94,17 @@ try {
   const patientA = patientLinks[0].href.split('/').at(-1);
   const patientB = patientLinks[1].href.split('/').at(-1);
   await visitPatient(page, patientA);
-  await page.locator('.patient-odontogram').first().waitFor();
-  const teeth = page.locator('.patient-odontogram').first().locator('[data-tooth-id]');
-  await teeth.first().waitFor();
+  await page.locator('.patient-odontogram').waitFor();
+  const teeth = page.locator('.patient-odontogram [data-tooth-id]');
+  await page.locator('.patient-odontogram [data-tooth-id="16"]').waitFor();
   const toothCount = await teeth.count();
   check('odontogram loaded in browser', toothCount === 32, { teeth: toothCount, patientA });
   const odontogramCount = await page.locator('.patient-odontogram').count();
   check('one odontogram instance on patient record', odontogramCount === 1, { odontogramCount, newFindingFormCount: await page.locator('form.og-new-finding').count() });
-  const patientAHeading = await page.locator('h1').first().innerText();
+  const patientAHeading = await page.getByRole('heading', { level: 1 }).innerText();
   await screenshot(page, 'doctor-patient-a');
 
-  const stateSelect = page.locator('[aria-label^="Starea dintelui"]').last();
+  const stateSelect = page.getByLabel('Starea dintelui 1.6');
   const beforeStatus = await stateSelect.inputValue();
   const afterStatus = beforeStatus === 'missing' ? 'present' : 'missing';
   const stateResult = await observeAction(page, 'save tooth state', r => r.request().method() === 'PUT' && /\/odontogram\/patients\/[^/]+\/teeth\/16$/.test(new URL(r.url()).pathname), () => stateSelect.selectOption(afterStatus));
@@ -114,14 +114,15 @@ try {
   const newFindingForm = page.locator('form.og-new-finding');
   await newFindingForm.getByLabel('Tipul constatării').selectOption({ label: 'Carie' });
   await newFindingForm.getByLabel('Descriere', { exact: true }).fill(draftDescription);
-  await newFindingForm.getByRole('button', { name: /^Ocluzală/ }).first().click();
+  await newFindingForm.locator('button.og-surface[aria-label="Ocluzală (occlusal)"]').click();
   const createResponse = await observeAction(page, 'create doctor finding draft', r => r.request().method() === 'POST' && /\/odontogram\/patients\/[^/]+\/findings$/.test(new URL(r.url()).pathname), () => newFindingForm.getByRole('button', { name: 'Salvează ciornă' }).click());
   check('doctor finding draft created', createResponse.status() === 201, { status: createResponse.status() });
   let finding = await createResponse.json();
   const findingId = finding.id;
   const observedAt = finding.observedAt;
   const editedDescription = uniq('doctor draft edited');
-  const card = page.locator(`.og-finding[data-finding-id="${findingId}"]`).last();
+  const card = page.locator(`.og-finding[data-finding-id="${findingId}"]`);
+  check('finding draft has one rendered card', await card.count() === 1, { count: await card.count() });
   await card.waitFor();
   await card.getByRole('button', { name: 'Editează ciorna' }).click();
   await page.getByLabel(`Descriere ciornă ${findingId}`).fill(editedDescription);
@@ -129,17 +130,17 @@ try {
   finding = await patchResponse.json();
   check('draft edit persisted', patchResponse.status() === 200 && finding.description === editedDescription, { status: patchResponse.status(), findingId });
   await page.reload();
-  await page.locator('.patient-odontogram').first().waitFor();
+  await page.locator('.patient-odontogram').waitFor();
   await page.getByText(editedDescription, { exact: true }).waitFor();
   check('draft survives reload with author/date', true, { author: finding.author, observedAt, status: finding.status });
   await screenshot(page, 'doctor-draft-after-reload');
 
-  const finalizeResponse = await observeAction(page, 'finalize doctor finding', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}/finalize`), () => page.locator(`.og-finding[data-finding-id="${findingId}"]`).last().getByRole('button', { name: 'Finalizează explicit' }).click());
+  const finalizeResponse = await observeAction(page, 'finalize doctor finding', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}/finalize`), () => page.locator(`.og-finding[data-finding-id="${findingId}"]`).getByRole('button', { name: 'Finalizează explicit' }).click());
   finding = await finalizeResponse.json();
   check('finding finalized', finalizeResponse.status() === 200 && finding.status === 'finalized', { status: finalizeResponse.status(), statusValue: finding.status });
   const correctedDescription = uniq('doctor corrected');
   const reason = uniq('correction reason');
-  const finalCard = page.locator(`.og-finding[data-finding-id="${findingId}"]`).last();
+  const finalCard = page.locator(`.og-finding[data-finding-id="${findingId}"]`);
   await finalCard.getByRole('button', { name: 'Corectează constatarea' }).click();
   await page.getByLabel(`Descriere corectată pentru constatarea ${findingId}`).fill(correctedDescription);
   await page.getByLabel(`Motiv corecție ${findingId}`).fill(reason);
@@ -153,7 +154,7 @@ try {
   check('correction history survives reload', true, { findingId, revisions: finding.revisions.length, author: finding.revisions.at(-1)?.author, observedAt });
 
   await visitPatient(page, patientB);
-  await page.locator('.patient-odontogram').first().waitFor();
+  await page.locator('.patient-odontogram').waitFor();
   check('patient switch loads separate odontogram', await page.getByText(correctedDescription, { exact: true }).count() === 0, { patientB });
   await visitPatient(page, patientA);
   await page.getByText(correctedDescription, { exact: true }).waitFor();
@@ -199,13 +200,90 @@ try {
   await doctorApi.dispose();
   check('timeline reload stable and duplicate-free', timelineAfter.length > 0 && new Set(timelineAfter.map(e => e.id)).size === timelineAfter.length && JSON.stringify(eventIdsBefore) === JSON.stringify(timelineAfter.map(e => e.id)), { ids: timelineAfter.map(e => e.id), duplicates: timelineAfter.length - new Set(timelineAfter.map(e => e.id)).size });
   await screenshot(page, 'doctor-timeline-after-reload');
+
+  // T07 path one: start from a selected tooth in the patient chart.
+  await page.locator('[data-tooth-id="16"]').click();
+  await page.getByRole('button', { name: 'Add performed procedure for this tooth' }).click();
+  const entry = page.getByRole('region', { name: 'Add procedure for selected tooth' });
+  await entry.getByLabel('Procedure visit').waitFor();
+  const eligibleVisit = entry.getByLabel('Procedure visit');
+  const eligibleOptions = await eligibleVisit.locator('option').evaluateAll(options => options.map(option => option.value).filter(Boolean));
+  check('T07 chart path has eligible visit', eligibleOptions.length > 0, { eligibleVisitCount: eligibleOptions.length });
+  await eligibleVisit.selectOption(eligibleOptions[0]);
+  const chartProcedureForm = entry.locator('form.t07-procedure-form');
+  await chartProcedureForm.waitFor();
+  const chartCatalogOptions = await chartProcedureForm.getByLabel('Procedure from active catalog').locator('option').evaluateAll(options => options.map(option => option.value).filter(Boolean));
+  check('T07 chart path has active procedure', chartCatalogOptions.length > 0, { catalogCount: chartCatalogOptions.length });
+  await chartProcedureForm.getByLabel('Procedure from active catalog').selectOption(chartCatalogOptions[0]);
+  const firstProcedureNote = uniq('T07 chart path');
+  await chartProcedureForm.getByLabel('Procedure notes (optional)').fill(firstProcedureNote);
+  const chartCreate = await observeAction(page, 'create procedure from odontogram', r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures', () => chartProcedureForm.getByRole('button', { name: 'Save procedure' }).click());
+  const chartProcedure = await chartCreate.json();
+  check('T07 chart path saved one pending procedure', chartCreate.status() === 201 && chartProcedure.status === 'pending' && chartProcedure.tooth_fdi === '16', { status: chartCreate.status(), procedureStatus: chartProcedure.status, tooth: chartProcedure.tooth_fdi, procedureId: chartProcedure.id });
+
+  // Reopen the patient record and use the second T07 path from the visit page.
+  await page.reload();
+  await page.getByText(firstProcedureNote, { exact: true }).waitFor();
+  const visitUrl = `/appointments/${chartProcedure.appointment_id}/visit`;
+  await page.goto(`${web}${visitUrl}`, { waitUntil: 'domcontentloaded' });
+  await page.getByRole('heading', { name: 'Performed procedures', exact: true }).waitFor();
+  const visitProcedureForm = page.locator('form.t07-procedure-form');
+  await visitProcedureForm.waitFor();
+  const visitCatalogOptions = await visitProcedureForm.getByLabel('Procedure from active catalog').locator('option').evaluateAll(options => options.map(option => option.value).filter(Boolean));
+  check('T07 visit path has active procedure', visitCatalogOptions.length > 0, { catalogCount: visitCatalogOptions.length });
+  await visitProcedureForm.getByLabel('Procedure from active catalog').selectOption(visitCatalogOptions[0]);
+  await visitProcedureForm.getByLabel('Tooth FDI (optional)').selectOption('17');
+  const secondProcedureNote = uniq('T07 visit path');
+  await visitProcedureForm.getByLabel('Procedure notes (optional)').fill(secondProcedureNote);
+  const visitCreate = await observeAction(page, 'create procedure from visit', r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures', () => visitProcedureForm.getByRole('button', { name: 'Save procedure' }).click());
+  const visitProcedure = await visitCreate.json();
+  check('T07 visit path saved one pending procedure', visitCreate.status() === 201 && visitProcedure.status === 'pending' && visitProcedure.tooth_fdi === '17', { status: visitCreate.status(), procedureStatus: visitProcedure.status, tooth: visitProcedure.tooth_fdi, procedureId: visitProcedure.id });
+  const visitApi = await authApi(creds.doctor, 'T07 procedure persistence');
+  const visitProceduresResponse = await visitApi.get(`/performed-procedures?appointment_id=${chartProcedure.appointment_id}`);
+  const savedVisitProcedures = await visitProceduresResponse.json();
+  check('both T07 paths persisted exactly once', visitProceduresResponse.ok() && savedVisitProcedures.filter(item => [chartProcedure.id, visitProcedure.id].includes(item.id)).length === 2 && new Set(savedVisitProcedures.map(item => item.id)).size === savedVisitProcedures.length, { status: visitProceduresResponse.status(), count: savedVisitProcedures.length, ids: savedVisitProcedures.map(item => item.id), duplicates: savedVisitProcedures.length - new Set(savedVisitProcedures.map(item => item.id)).size });
+  await page.reload();
+  await page.getByText(firstProcedureNote, { exact: true }).waitFor();
+  await page.getByText(secondProcedureNote, { exact: true }).waitFor();
+  check('both T07 procedures survive visit reload', await page.locator('article.procedure-card').count() === 2, { procedureCards: await page.locator('article.procedure-card').count() });
+
+  // Explicit timer lifecycle on the chart-path procedure.
+  const timerCard = page.locator('article.procedure-card').filter({ hasText: firstProcedureNote });
+  check('timer target resolves to one procedure', await timerCard.count() === 1, { count: await timerCard.count() });
+  const timerActions = [
+    ['start', 'Start', 'running'], ['pause', 'Pause', 'paused'], ['resume', 'Resume', 'running'], ['complete', 'Complete', 'completed'],
+  ];
+  for (const [transition, label, expectedStatus] of timerActions) {
+    const response = await observeAction(page, `explicit procedure timer ${transition}`, r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/performed-procedures/${chartProcedure.id}/${transition}`), () => timerCard.getByRole('button', { name: label, exact: true }).click());
+    const result = await response.json();
+    check(`timer transition ${transition} persisted`, response.status() === 200 && result.status === expectedStatus, { status: response.status(), procedureStatus: result.status });
+  }
+  await page.reload();
+  await page.getByText(firstProcedureNote, { exact: true }).waitFor();
+  check('completed timer persists after reload', await timerCard.getByText('completed', { exact: true }).count() > 0, { statusVisible: await timerCard.getByText('completed', { exact: true }).count() > 0 });
+
+  // Resolve the second pending procedure, then close the visit as a separate UI action.
+  const secondCard = page.locator('article.procedure-card').filter({ hasText: secondProcedureNote });
+  check('second T07 procedure has one card', await secondCard.count() === 1, { count: await secondCard.count() });
+  const cancelResponse = await observeAction(page, 'resolve second T07 procedure', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/performed-procedures/${visitProcedure.id}/cancel`), () => secondCard.getByRole('button', { name: 'Cancel', exact: true }).click());
+  check('second T07 procedure resolved', cancelResponse.status() === 200, { status: cancelResponse.status() });
+  for (const [status, label] of [['confirmed', 'Mark confirmed'], ['arrived', 'Mark arrived'], ['in_progress', 'Mark in progress']]) {
+    const response = await observeAction(page, `advance visit to ${status}`, r => r.request().method() === 'PATCH' && new URL(r.url()).pathname.endsWith(`/appointments/${chartProcedure.appointment_id}/status`), () => page.getByRole('button', { name: label, exact: true }).click());
+    const result = await response.json();
+    check(`visit status ${status} saved`, response.status() === 200 && result.status === status, { status: response.status(), appointmentStatus: result.status });
+  }
+  const closeResponse = await observeAction(page, 'close visit separately', r => r.request().method() === 'PATCH' && new URL(r.url()).pathname.endsWith(`/appointments/${chartProcedure.appointment_id}/status`), () => page.getByRole('button', { name: 'Close visit', exact: true }).click());
+  const closedVisit = await closeResponse.json();
+  check('visit closed as a separate action', closeResponse.status() === 200 && closedVisit.status === 'completed', { status: closeResponse.status(), appointmentStatus: closedVisit.status });
+  await visitApi.dispose();
+  await screenshot(page, 'doctor-visit-timer-and-close');
   await doctorContext.close();
 
   // Separate browser context and API client for manager.
   const managerSession = await loginContext(creds.manager, 'manager');
   const managerPage = managerSession.page;
   await visitPatient(managerPage, patientA);
-  await managerPage.locator('.patient-odontogram').first().waitFor();
+  await managerPage.locator('.patient-odontogram').waitFor();
   check('manager cannot see doctor draft in UI', await managerPage.getByText(privateDraftDescription, { exact: true }).count() === 0, { privateFindingId: privateFinding.id });
   const managerApi = await authApi(creds.manager, 'manager');
   const managerChart = await managerApi.get(`/odontogram/patients/${patientA}`);
@@ -217,7 +295,7 @@ try {
 
   const managerCorrection = uniq('manager correction');
   const managerReason = uniq('manager correction reason');
-  const targetCard = managerPage.locator(`.og-finding[data-finding-id="${findingId}"]`).last();
+  const targetCard = managerPage.locator(`.og-finding[data-finding-id="${findingId}"]`);
   await targetCard.getByRole('button', { name: 'Corectează constatarea' }).waitFor();
   await targetCard.getByRole('button', { name: 'Corectează constatarea' }).click();
   await managerPage.getByLabel(`Descriere corectată pentru constatarea ${findingId}`).fill(managerCorrection);
