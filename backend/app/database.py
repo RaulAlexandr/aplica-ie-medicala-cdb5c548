@@ -630,3 +630,58 @@ class PeriodontalSiteMeasurement(Base):
     plaque: Mapped[bool | None] = mapped_column(Boolean)
     suppuration: Mapped[bool | None] = mapped_column(Boolean)
     __table_args__ = (UniqueConstraint("tooth_id", "site", name="uq_periodontal_tooth_site"),)
+
+
+# ---- T13: internal patient financial ledger (not fiscal invoicing) ----
+# Immutable movements; services owed are a projection of completed T04 procedures, never copied here.
+FINANCE_ENTRY_KINDS = ("payment", "refund", "adjustment_credit", "adjustment_debit", "reversal")
+FINANCE_METHODS = ("cash", "card", "transfer", "other")
+
+
+class PatientFinancialEntry(Base):
+    __tablename__ = "patient_financial_entries"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="RESTRICT"), nullable=False)
+    appointment_id: Mapped[UUID | None] = mapped_column(ForeignKey("appointments.id", ondelete="RESTRICT"))
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="RON")
+    method: Mapped[str | None] = mapped_column(String(20))
+    reason: Mapped[str | None] = mapped_column(Text)
+    reverses_entry_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("patient_financial_entries.id", ondelete="RESTRICT"))
+    client_request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    __table_args__ = (
+        Index("ix_patient_financial_entries_patient", "clinic_id", "patient_id", "created_at"),
+        Index("ix_patient_financial_entries_clinic_day", "clinic_id", "created_at"),
+        Index("ix_patient_financial_entries_appointment", "appointment_id"),
+        UniqueConstraint("clinic_id", "client_request_id", name="uq_financial_entry_client_request"),
+        CheckConstraint(
+            "kind IN ('payment', 'refund', 'adjustment_credit', 'adjustment_debit', 'reversal')",
+            name="ck_financial_entry_kind"),
+        CheckConstraint("amount > 0", name="ck_financial_entry_amount"),
+        CheckConstraint("currency = 'RON'", name="ck_financial_entry_currency"),
+        CheckConstraint(
+            "(kind IN ('payment', 'refund') AND method IS NOT NULL AND method IN ('cash', 'card', 'transfer', 'other')) "
+            "OR (kind NOT IN ('payment', 'refund') AND method IS NULL)",
+            name="ck_financial_entry_method"),
+        CheckConstraint(
+            "kind = 'payment' OR (reason IS NOT NULL AND length(trim(reason)) > 0)",
+            name="ck_financial_entry_reason"),
+        CheckConstraint(
+            "(kind = 'reversal') = (reverses_entry_id IS NOT NULL)",
+            name="ck_financial_entry_reversal_target"),
+    )
+
+
+# A movement can be reversed at most once (partial unique index on the reversed entry).
+Index(
+    "uq_financial_entry_reversal_once",
+    PatientFinancialEntry.reverses_entry_id,
+    unique=True,
+    postgresql_where=PatientFinancialEntry.reverses_entry_id.isnot(None),
+    sqlite_where=PatientFinancialEntry.reverses_entry_id.isnot(None),
+)
