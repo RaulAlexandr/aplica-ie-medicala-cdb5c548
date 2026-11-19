@@ -15,19 +15,29 @@ const safe = { appSha: process.env.DENTACARE_APP_SHA, web, api, browser: null, c
 const check = (name, ok, details = {}) => { safe.checks.push({ name, passed: Boolean(ok), ...details }); if (!ok) throw new Error(`Acceptance failed: ${name}`); };
 const screenshot = async (page, name) => { const file = path.join(evidenceDir, `${runId}-${name}.png`); await page.screenshot({ path: file, fullPage: true }); safe.artifacts.push(file); };
 const uniq = (label) => `Pilot fictiv ${label} ${runId}`;
-const diagnostics = { pageErrors: [], consoleErrors: [], apiResponses: [], visibleErrors: [] };
+const diagnostics = { pageErrors: [], consoleErrors: [], apiResponses: [], httpFailures: [], visibleErrors: [] };
 let activePage = null;
 function observePage(page, role) {
   activePage = page;
   page.on('pageerror', error => diagnostics.pageErrors.push({ role, message: String(error.message).slice(0, 500) }));
-  page.on('console', message => { if (message.type() === 'error') diagnostics.consoleErrors.push({ role, message: message.text().slice(0, 500) }); });
+  page.on('console', message => {
+    if (message.type() !== 'error') return;
+    let sourcePath = null;
+    try { sourcePath = message.location().url ? new URL(message.location().url).pathname : null; } catch {}
+    diagnostics.consoleErrors.push({ role, message: message.text().slice(0, 500), sourcePath });
+  });
   page.on('response', response => {
     const url = new URL(response.url());
-    if (!url.pathname.includes('/api/')) return;
     const record = { role, method: response.request().method(), path: url.pathname, status: response.status() };
-    diagnostics.apiResponses.push(record);
-    if (response.status() >= 400) response.json().then(body => { record.errorDetail = String(body?.detail ?? body?.message ?? '').slice(0, 500); }).catch(() => {});
-    if (diagnostics.apiResponses.length > 80) diagnostics.apiResponses.shift();
+    if (url.pathname.includes('/api/')) {
+      diagnostics.apiResponses.push(record);
+      if (diagnostics.apiResponses.length > 120) diagnostics.apiResponses.shift();
+    }
+    if (response.status() >= 400) {
+      diagnostics.httpFailures.push(record);
+      if (url.pathname.includes('/api/')) response.json().then(body => { record.errorDetail = String(body?.detail ?? body?.message ?? '').slice(0, 500); }).catch(() => {});
+      if (diagnostics.httpFailures.length > 30) diagnostics.httpFailures.shift();
+    }
   });
 }
 async function observeAction(page, label, predicate, action) {
@@ -44,6 +54,7 @@ async function observeAction(page, label, predicate, action) {
     actionError,
     visibleErrors: diagnostics.visibleErrors,
     latestApiResponses: diagnostics.apiResponses.slice(-8),
+    latestHttpFailures: diagnostics.httpFailures.slice(-8),
     pageErrors: diagnostics.pageErrors.slice(-8),
     consoleErrors: diagnostics.consoleErrors.slice(-8),
     responseStatus: response?.status() ?? null,
