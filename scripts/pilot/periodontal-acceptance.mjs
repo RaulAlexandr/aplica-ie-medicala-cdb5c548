@@ -1,7 +1,9 @@
 // Reproducible local browser/API acceptance for T09-T10 plus a T08 integration smoke.
 // Requires a disposable fictitious-data runtime with the worktree backend and frontend.
 // No database, credential, token, or cookie is written to this repository.
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 const playwrightPath = process.env.PLAYWRIGHT_MODULE;
 if (!playwrightPath) throw new Error('Set PLAYWRIGHT_MODULE to the local Playwright entry point');
@@ -10,6 +12,8 @@ const web = process.env.PILOT_WEB_URL ?? 'http://127.0.0.1:5199';
 const api = (process.env.PILOT_API_URL ?? 'http://127.0.0.1:8029/api').replace(/\/$/, '');
 const executablePath = process.env.CHROMIUM_EXECUTABLE;
 if (!executablePath) throw new Error('Set CHROMIUM_EXECUTABLE to the local Chromium executable');
+const evidenceDir = process.env.PERIODONTAL_EVIDENCE_DIR ?? fileURLToPath(new URL('./evidence', import.meta.url));
+await mkdir(evidenceDir, { recursive: true });
 const browser = await chromium.launch({ headless: true, executablePath, args: ['--no-sandbox'] });
 const checks = [];
 const check = (name, ok, details = {}) => {
@@ -53,7 +57,7 @@ try {
 
   const createPatient = async first_name => {
     const response = await apiClient.post(`${api}/patients`, { headers: ownerHeaders, data: { first_name, last_name: 'Paro fictiv' } });
-    return (await expectStatus(response, 201, `create patient ${first_name}`)).id;
+    return (await expectStatus(response, 201, 'create fictitious patient')).id;
   };
   const patientA = await createPatient(`Pacient A ${suffix}`);
   const patientB = await createPatient(`Pacient B ${suffix}`);
@@ -149,6 +153,7 @@ try {
   const comparison = page.locator('.periodontal-comparison-results');
   await comparison.getByText(/BOP a doua evaluare:/).first().waitFor();
   check('comparison displays persisted measurement delta', (await comparison.innerText()).includes('Δ 1'), { finalizedCount: finalizedIds.length });
+  await page.locator('.periodontal-section').screenshot({ path: join(evidenceDir, 'periodontal-comparison.png') });
 
   await page.goto(`${web}/patients/${patientB}`);
   await page.getByRole('heading', { name: `Pacient B ${suffix} Paro fictiv` }).waitFor();
@@ -156,7 +161,14 @@ try {
   check('patient switch resets periodontal history', await page.locator('.periodontal-history').count() === 0, { patientB });
   check('no browser page errors', pageErrors.length === 0, { pageErrors });
 
-  console.log(JSON.stringify({ result: 'PASS', checks, browser: browser.version() }));
+  const safeChecks = checks.map(({ name, ok, status, expected, periodontalPanels, odontograms, peerVisibleDrafts, finalizedCount }) => ({
+    name, ok, ...(status === undefined ? {} : { status }), ...(expected === undefined ? {} : { expected }),
+    ...(periodontalPanels === undefined ? {} : { periodontalPanels }), ...(odontograms === undefined ? {} : { odontograms }),
+    ...(peerVisibleDrafts === undefined ? {} : { peerVisibleDrafts }), ...(finalizedCount === undefined ? {} : { finalizedCount }),
+  }));
+  const evidence = { result: 'PASS', browser: browser.version(), checks: safeChecks };
+  await writeFile(join(evidenceDir, 'periodontal-acceptance-LATEST.json'), `${JSON.stringify(evidence, null, 2)}\n`);
+  console.log(JSON.stringify({ result: evidence.result, browser: evidence.browser, checks: safeChecks.length, evidenceDir }));
   await context.close();
   await apiClient.dispose();
 } finally {
