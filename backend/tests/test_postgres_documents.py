@@ -230,63 +230,91 @@ async def test_upload_and_visit_reassignment_are_serialized_on_the_appointment_r
             yield session
 
     reached, release = asyncio.Event(), asyncio.Event()
-    if winner == "upload":
-        from app.documents import router as documents_router
-        original_validate = documents_router._validate_refs
 
-        async def validate_then_hold(db, clinic_id, patient_id, appointment_id, *, lock=False):
-            await original_validate(db, clinic_id, patient_id, appointment_id, lock=lock)
-            if lock:  # the authoritative check holds the appointment row lock here, before commit
-                reached.set()
-                await asyncio.wait_for(release.wait(), TIMEOUT)
+    async def hold_once() -> None:
+        """Gate for the first operation only: signal, then wait for the test to release it."""
+        if reached.is_set():
+            return
+        reached.set()
+        await asyncio.wait_for(release.wait(), TIMEOUT)
 
-        monkeypatch.setattr(documents_router, "_validate_refs", validate_then_hold)
-    else:
-        original_slot = appointments_router.validate_slot
+    def install_gate() -> None:
+        # Installed only after the initial data exists: creating the appointment also calls
+        # validate_slot and must never reach the gate.
+        if winner == "upload":
+            from app.documents import router as documents_router
+            original_validate = documents_router._validate_refs
 
-        async def slot_then_hold(*args, **kwargs):  # PATCH holds the row lock here, before commit
-            await original_slot(*args, **kwargs)
-            reached.set()
-            await asyncio.wait_for(release.wait(), TIMEOUT)
+            async def validate_then_hold(db, clinic_id, patient_id, appointment_id, *, lock=False):
+                await original_validate(db, clinic_id, patient_id, appointment_id, lock=lock)
+                if lock:  # the authoritative check holds the appointment row lock here, before commit
+                    await hold_once()
 
-        monkeypatch.setattr(appointments_router, "validate_slot", slot_then_hold)
+            monkeypatch.setattr(documents_router, "_validate_refs", validate_then_hold)
+        else:
+            original_slot = appointments_router.validate_slot
 
+            async def slot_then_hold(*args, **kwargs):  # PATCH holds the row lock here, before commit
+                await original_slot(*args, **kwargs)
+                await hold_once()
+
+            monkeypatch.setattr(appointments_router, "validate_slot", slot_then_hold)
+
+    async def settle(tasks: list[asyncio.Task]) -> None:
+        """Release the gate, then let started requests finish (bounded) or cancel them, and await
+        them, so no request still uses a session when the client/engine are closed."""
+        release.set()
+        if not tasks:
+            return
+        _, pending = await asyncio.wait(tasks, timeout=TIMEOUT)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    tasks: list[asyncio.Task] = []
     previous = app.dependency_overrides.copy()
     app.dependency_overrides[get_db] = override
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=TIMEOUT * 3) as client:
-            reg = await client.post("/api/auth/register", json={
-                "clinic_name": "T11 PG lock", "full_name": "Manager Fictiv",
-                "email": f"t11-lock-{uuid4().hex[:8]}@example.com", "password": "correct horse battery staple"})
-            assert reg.status_code == 201, reg.text
-            auth = {"Authorization": f"Bearer {reg.json()['access_token']}"}
-            me = (await client.get("/api/auth/me", headers=auth)).json()
-            room = (await client.post("/api/rooms", headers=auth, json={"name": "Cabinet"})).json()["id"]
-            pa = (await client.post("/api/patients", headers=auth, json={"first_name": "Ana", "last_name": "PG"})).json()["id"]
-            pb = (await client.post("/api/patients", headers=auth, json={"first_name": "Bianca", "last_name": "PG"})).json()["id"]
-            visit = await client.post("/api/appointments", headers=auth, json={
-                "patient_id": pa, "doctor_id": me["id"], "room_id": room, "starts_at": "2026-12-07T09:00:00+00:00",
-                "duration_minutes": 30, "appointment_type": "Control"})
-            assert visit.status_code == 201, visit.text
-            vid = visit.json()["id"]
+            try:
+                reg = await client.post("/api/auth/register", json={
+                    "clinic_name": "T11 PG lock", "full_name": "Manager Fictiv",
+                    "email": f"t11-lock-{uuid4().hex[:8]}@example.com", "password": "correct horse battery staple"})
+                assert reg.status_code == 201, reg.text
+                auth = {"Authorization": f"Bearer {reg.json()['access_token']}"}
+                me = (await client.get("/api/auth/me", headers=auth)).json()
+                room = (await client.post("/api/rooms", headers=auth, json={"name": "Cabinet"})).json()["id"]
+                pa = (await client.post("/api/patients", headers=auth, json={"first_name": "Ana", "last_name": "PG"})).json()["id"]
+                pb = (await client.post("/api/patients", headers=auth, json={"first_name": "Bianca", "last_name": "PG"})).json()["id"]
+                visit = await client.post("/api/appointments", headers=auth, json={
+                    "patient_id": pa, "doctor_id": me["id"], "room_id": room, "starts_at": "2026-12-07T09:00:00+00:00",
+                    "duration_minutes": 30, "appointment_type": "Control"})
+                assert visit.status_code == 201, visit.text
+                vid = visit.json()["id"]
+                assert not reached.is_set(), "the gate must not be reached during setup"
 
-            def do_upload():
-                return client.post(f"/api/documents/patients/{pa}", headers={
-                    **auth, "Content-Type": "application/octet-stream", "X-File-Name": "rx.png"},
-                    params={"category": "radiograph", "appointment_id": vid}, content=_png())
+                def do_upload():
+                    return client.post(f"/api/documents/patients/{pa}", headers={
+                        **auth, "Content-Type": "application/octet-stream", "X-File-Name": "rx.png"},
+                        params={"category": "radiograph", "appointment_id": vid}, content=_png())
 
-            def do_reassign():
-                return client.patch(f"/api/appointments/{vid}", headers=auth, json={"patient_id": pb})
+                def do_reassign():
+                    return client.patch(f"/api/appointments/{vid}", headers=auth, json={"patient_id": pb})
 
-            first, second = (do_upload, do_reassign) if winner == "upload" else (do_reassign, do_upload)
-            first_task = asyncio.create_task(first())
-            await asyncio.wait_for(reached.wait(), TIMEOUT)
-            second_task = asyncio.create_task(second())
-            await _wait_for_lock_wait(url, name)
-            assert not second_task.done()
-            release.set()
-            first_response = await asyncio.wait_for(first_task, TIMEOUT)
-            second_response = await asyncio.wait_for(second_task, TIMEOUT)
+                install_gate()
+                first, second = (do_upload, do_reassign) if winner == "upload" else (do_reassign, do_upload)
+                first_task = asyncio.create_task(first())
+                tasks.append(first_task)
+                await asyncio.wait_for(reached.wait(), TIMEOUT)
+                second_task = asyncio.create_task(second())
+                tasks.append(second_task)
+                await _wait_for_lock_wait(url, name)
+                assert not second_task.done()
+                release.set()
+                first_response = await asyncio.wait_for(first_task, TIMEOUT)
+                second_response = await asyncio.wait_for(second_task, TIMEOUT)
+            finally:
+                await settle(tasks)
 
         files = [p for p in store.rglob("*") if p.is_file()] if store.exists() else []
         check = await asyncpg.connect(_dsn(url, name))
@@ -309,6 +337,7 @@ async def test_upload_and_visit_reassignment_are_serialized_on_the_appointment_r
             assert visit_patient == pb
             assert docs == [] and uploaded == 0 and files == []
     finally:
+        release.set()
         app.dependency_overrides.clear()
         app.dependency_overrides.update(previous)
         await engine.dispose()
