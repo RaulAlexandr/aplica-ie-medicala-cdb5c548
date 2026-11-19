@@ -1,0 +1,200 @@
+{
+  "task": "consolidated T05-T11",
+  "appSha": "c89f77fecf32aab4a8b8b6864c257b4cb0387c9c",
+  "web": "http://127.0.0.1:5197",
+  "api": "http://127.0.0.1:8037/api",
+  "browser": "151.0.7922.34",
+  "browserTimezone": "Europe/Bucharest",
+  "clinicTimezone": "Europe/Bucharest",
+  "checks": [
+    {
+      "name": "clinic time zone known and different from the browser zone",
+      "passed": true,
+      "clinicTimezone": "Europe/Bucharest",
+      "browserTimezone": "Europe/Bucharest"
+    },
+    {
+      "name": "reception creates the fictional patient",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "reception books the appointment",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "appointment clinic time differs from browser UTC time (observable zone)",
+      "passed": true,
+      "clinicTime": "12:00",
+      "utcTime": "12:00"
+    },
+    {
+      "name": "one record: one odontogram, one T08, one T09/T10 and one T11 panel",
+      "passed": true
+    },
+    {
+      "name": "odontogram finding draft saved on tooth 16",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "odontogram finding finalized explicitly",
+      "passed": true
+    },
+    {
+      "name": "active catalog services available",
+      "passed": true,
+      "services": 3
+    },
+    {
+      "name": "tooth preselected from the odontogram",
+      "passed": true
+    },
+    {
+      "name": "T07 procedure saved pending from tooth (no timer started)",
+      "passed": true,
+      "status": 201,
+      "procedureStatus": "pending"
+    },
+    {
+      "name": "no timer segment before explicit start",
+      "passed": true,
+      "segments": 0
+    },
+    {
+      "name": "timer start -> running",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "running"
+    },
+    {
+      "name": "timer pause -> paused",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "paused"
+    },
+    {
+      "name": "timer resume -> running",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "running"
+    },
+    {
+      "name": "timer complete -> completed",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "completed"
+    },
+    {
+      "name": "timer persisted as closed segments: two run, one pause",
+      "passed": true,
+      "byType": {
+        "run": 2,
+        "pause": 1
+      }
+    },
+    {
+      "name": "pause time is not counted in the active duration",
+      "passed": true,
+      "pauseSeconds": 1.183,
+      "totalDurationSeconds": null,
+      "runSeconds": 0
+    },
+    {
+      "name": "completing the procedure does not close the visit",
+      "passed": true,
+      "appointmentStatus": "scheduled"
+    },
+    {
+      "name": "visit still offers a separate close after procedure completion",
+      "passed": true
+    },
+    {
+      "name": "T08 plan item linked to the completed T07 procedure",
+      "passed": true,
+      "plans": 1,
+      "planStatus": "in_progress"
+    },
+    {
+      "name": "default periodontal clinical date is the clinic day",
+      "passed": true,
+      "expectedClinicDay": "2026-11-19"
+    },
+    {
+      "name": "first periodontal assessment finalized",
+      "passed": true
+    },
+    {
+      "name": "follow-up periodontal assessment finalized",
+      "passed": true
+    },
+    {
+      "name": "two finalized assessments persisted",
+      "passed": true,
+      "finalized": 2
+    },
+    {
+      "name": "displayed assessment is a finalized one from this run",
+      "passed": true,
+      "shownIsFollowUp": true
+    },
+    {
+      "name": "finalization time shown in the clinic zone, not raw UTC",
+      "passed": true,
+      "clinicTime": "20:09",
+      "browserTime": "20:09"
+    },
+    {
+      "name": "comparison shows the persisted delta",
+      "passed": true
+    },
+    {
+      "name": "document uploaded on visit + tooth",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "visit time on the document shown in the clinic zone",
+      "passed": false,
+      "clinicTime": "12:00",
+      "utcTime": "12:00"
+    }
+  ],
+  "artifacts": [
+    "consolidated-visit-timer-completed-visit-open.png",
+    "consolidated-plan-linked.png",
+    "consolidated-periodontal-comparison.png",
+    "consolidated-failure.png"
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "user": "doctor",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "sourcePath": "/favicon.ico"
+    }
+  ],
+  "errors": [
+    "Acceptance failed: visit time on the document shown in the clinic zone {\"clinicTime\":\"12:00\",\"utcTime\":\"12:00\"}"
+  ],
+  "ids": {
+    "patient": "a1ef8333-ff58-4bbe-99f2-6d46f06ca53e",
+    "appointment": "6a9b2cb8-1367-43bd-b381-0d3bfb5dbc87",
+    "finding": "8be38230-3e87-456d-b77c-907b9e8ca4c4",
+    "procedure": "e07977ce-0270-4704-945a-40414a3280f9",
+    "plan": "0963d730-0f4d-4b38-a2da-66f7992b11c2",
+    "assessments": [
+      "6a19321f-2ebf-491a-b486-5b99b93face1",
+      "eecb89c7-7063-48b9-98c7-9d41f5d762e4"
+    ],
+    "document": "8b35d14d-5cdc-4945-95ce-73aaf5880be6"
+  },
+  "documentSha256": "0e8e0171439038870d06806b038e2d80853f04c8bafbf2f12197ef40a232d33e",
+  "result": "FAIL",
+  "totals": {
+    "passed": 28,
+    "total": 29
+  },
+  "knownDefectNaiveApiTimestamps": []
+}
