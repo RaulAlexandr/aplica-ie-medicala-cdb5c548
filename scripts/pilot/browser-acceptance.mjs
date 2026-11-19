@@ -79,12 +79,17 @@ async function visitPatient(page, id) {
   await page.getByRole('heading', { level: 1 }).waitFor();
 }
 async function authApi(account, role) {
-  const ctx = await request.newContext({ baseURL: api });
-  const login = await ctx.post('/auth/login', { data: { email: account.email, password: account.password } });
+  const ctx = await request.newContext();
+  const login = await ctx.post(`${api}/auth/login`, { data: { email: account.email, password: account.password } });
   check(`${role} API login`, login.ok(), { status: login.status() });
   const body = await login.json();
   await ctx.setExtraHTTPHeaders({ Authorization: `Bearer ${body.access_token}` });
-  return ctx;
+  return {
+    get: (route, options) => ctx.get(`${api}${route}`, options),
+    post: (route, options) => ctx.post(`${api}${route}`, options),
+    patch: (route, options) => ctx.patch(`${api}${route}`, options),
+    dispose: () => ctx.dispose(),
+  };
 }
 try {
   const { context: doctorContext, page } = await loginContext(creds.doctor, 'doctor');
