@@ -531,6 +531,8 @@ async def create_performed_procedure(
     catalog = await _validate_procedure_catalog_access(db, payload.procedure_catalog_id, user)
     if not catalog:
         raise HTTPException(422, "Procedure catalog not found or access denied")
+    if not catalog.is_active:
+        raise HTTPException(409, "Cannot create a performed procedure from an inactive catalog service")
 
     # Check if appointment patient matches
     patient = await db.scalar(
