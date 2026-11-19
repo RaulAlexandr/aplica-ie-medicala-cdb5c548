@@ -1,0 +1,16 @@
+.doc-rules { line-height: 1.55; max-width: 860px; }
+.doc-form { border: 1px solid #e2e8ec; border-radius: 10px; padding: 16px; margin: 12px 0 18px; }
+.doc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0 14px; }
+.doc-filters { margin: 8px 0 14px; }
+.doc-name { overflow-wrap: anywhere; }
+.doc-archived { opacity: 0.75; }
+.doc-viewer { margin-top: 18px; border-top: 3px solid #3b8c84; padding-top: 14px; }
+.doc-zoom { display: grid; gap: 8px; min-width: 0; }
+.doc-zoom-controls span { min-width: 52px; text-align: center; font-weight: 700; }
+.doc-stage { height: 440px; overflow: auto; background: #1d2528; border-radius: 8px; padding: 4px; }
+.doc-stage img { display: block; image-rendering: auto; }
+.doc-stage .muted, .doc-stage .error { color: #e8f3f1; padding: 12px; }
+.doc-compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.doc-compare figure { margin: 0; min-width: 0; display: grid; gap: 8px; }
+.doc-compare figcaption { overflow-wrap: anywhere; }
+@media (max-width: 800px) { .doc-compare { grid-template-columns: 1fr; } .doc-stage { height: 320px; } }

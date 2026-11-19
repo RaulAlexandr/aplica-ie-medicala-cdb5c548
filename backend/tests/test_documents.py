@@ -200,6 +200,7 @@ async def test_manager_admin_allowed_reception_assistant_denied_including_direct
         denied = await add_user(sessions, cid, role)
         assert (await client.get("/api/documents/limits", headers=denied)).status_code == 403
         assert (await client.get(f"/api/documents/patients/{pid}", headers=denied)).status_code == 403
+        assert (await client.get(f"/api/documents/patients/{pid}/visit-options", headers=denied)).status_code == 403
         assert (await client.get(f"/api/documents/{doc_id}", headers=denied)).status_code == 403
         assert (await client.get(f"/api/documents/{doc_id}/content", headers=denied)).status_code == 403
         assert (await upload(client, denied, pid, png())).status_code == 403
@@ -220,6 +221,9 @@ async def test_other_clinic_and_foreign_visit_are_refused_without_partial_record
     doc = (await upload(client, a["auth"], pa, png())).json()
 
     assert (await client.get(f"/api/documents/patients/{pa}", headers=b["auth"])).status_code == 404
+    assert (await client.get(f"/api/documents/patients/{pa}/visit-options", headers=b["auth"])).status_code == 404
+    options = (await client.get(f"/api/documents/patients/{pa2}/visit-options", headers=a["auth"])).json()
+    assert [row["id"] for row in options] == [va2]
     assert (await client.get(f"/api/documents/{doc['id']}", headers=b["auth"])).status_code == 404
     assert (await client.get(f"/api/documents/{doc['id']}/content", headers=b["auth"])).status_code == 404
     assert (await client.post(f"/api/documents/{doc['id']}/archive", headers=b["auth"], json={"reason": "x"})).status_code == 404

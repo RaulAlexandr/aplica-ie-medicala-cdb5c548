@@ -6,6 +6,7 @@ import { clinicLocalToUtc } from '../timezone';
 import { ClinicalNotesPanel } from './ClinicalNotesPanel';
 import { PatientOdontogram } from '../odontogram/PatientOdontogram';
 import { TreatmentPlansPanel } from '../treatment-plans/TreatmentPlansPanel';
+import { DocumentsPanel } from '../documents/DocumentsPanel';
 import { getPatientRecord, getPatientRevisions, listPatientTimeline, type PatientTimelineEvent } from './api';
 
 const pageSize = 20;
@@ -129,6 +130,7 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
         </article>)}</div>
       </section>
       <TreatmentPlansPanel key={`${patientId}:treatment-plans`} patientId={patientId} timezone={timezone} />
+      <DocumentsPanel key={`${patientId}:documents`} patientId={patientId} timezone={timezone} />
     </>}
     <PatientOdontogram
       key={`${patientId}:odontogram`}

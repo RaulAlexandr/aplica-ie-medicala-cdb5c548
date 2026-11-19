@@ -171,6 +171,21 @@ async def limits(user: User = Depends(require_roles(*DOCUMENT_ROLES))) -> dict:
     return _limits()
 
 
+@router.get("/patients/{patient_id}/visit-options")
+async def visit_options(
+    patient_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_roles(*DOCUMENT_ROLES)),
+) -> list[dict]:
+    """This patient's visits (read-only T02 data) for associating a document."""
+    await _patient(db, patient_id, user)
+    rows = await db.scalars(select(Appointment).where(
+        Appointment.clinic_id == user.clinic_id, Appointment.patient_id == patient_id,
+    ).order_by(Appointment.starts_at.desc()).limit(200))
+    return [{"id": str(row.id), "starts_at": _iso(row.starts_at), "appointment_type": row.appointment_type,
+             "status": row.status} for row in rows]
+
+
 @router.get("/patients/{patient_id}")
 async def list_documents(
     patient_id: UUID,
