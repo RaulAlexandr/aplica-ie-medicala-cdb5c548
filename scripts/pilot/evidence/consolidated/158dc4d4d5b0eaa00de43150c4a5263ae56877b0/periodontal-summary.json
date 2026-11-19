@@ -1,0 +1,159 @@
+{
+  "result": "PASS",
+  "browser": "151.0.7922.34",
+  "checks": [
+    {
+      "name": "create fictitious clinic owner",
+      "ok": true,
+      "status": 201,
+      "expected": 201
+    },
+    {
+      "name": "invite same-clinic clinical peer",
+      "ok": true,
+      "status": 201,
+      "expected": 201
+    },
+    {
+      "name": "accept same-clinic peer invitation",
+      "ok": true,
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "name": "login same-clinic peer",
+      "ok": true,
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "name": "create fictitious patient",
+      "ok": true,
+      "status": 201,
+      "expected": 201
+    },
+    {
+      "name": "create fictitious patient",
+      "ok": true,
+      "status": 201,
+      "expected": 201
+    },
+    {
+      "name": "T08 plan creation smoke",
+      "ok": true,
+      "status": 201,
+      "expected": 201
+    },
+    {
+      "name": "T08 plan read smoke",
+      "ok": true,
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "name": "T08 plan persisted",
+      "ok": true
+    },
+    {
+      "name": "one periodontal panel and one odontogram",
+      "ok": true,
+      "periodontalPanels": 1,
+      "odontograms": 1
+    },
+    {
+      "name": "T08 smoke rendered in the integrated patient record",
+      "ok": true
+    },
+    {
+      "name": "draft created from the patient record",
+      "ok": true
+    },
+    {
+      "name": "empty finalize error is controlled and draft remains selected",
+      "ok": true
+    },
+    {
+      "name": "peer cannot read another user draft",
+      "ok": true,
+      "status": 404,
+      "expected": 404
+    },
+    {
+      "name": "peer cannot write another user draft",
+      "ok": true,
+      "status": 404,
+      "expected": 404
+    },
+    {
+      "name": "peer cannot finalize another user draft",
+      "ok": true,
+      "status": 404,
+      "expected": 404
+    },
+    {
+      "name": "peer sees finalized history only",
+      "ok": true,
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "name": "same-clinic peer draft is absent from history",
+      "ok": true,
+      "peerVisibleDrafts": 0
+    },
+    {
+      "name": "saved zero, false, and null survive reload",
+      "ok": true
+    },
+    {
+      "name": "first assessment finalization response",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "follow-up finalization response",
+      "ok": true,
+      "status": 200
+    },
+    {
+      "name": "read finalized assessment history",
+      "ok": true,
+      "status": 200,
+      "expected": 200
+    },
+    {
+      "name": "follow-up finalized as a separate persistent assessment",
+      "ok": true,
+      "finalizedCount": 2
+    },
+    {
+      "name": "comparison displays persisted measurement delta",
+      "ok": true,
+      "finalizedCount": 2
+    },
+    {
+      "name": "patient switch resets periodontal history",
+      "ok": true
+    },
+    {
+      "name": "no browser page errors",
+      "ok": true
+    }
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "sourcePath": "/favicon.ico"
+    },
+    {
+      "httpStatus": 422,
+      "method": "POST",
+      "path": "/api/periodontal/assessments/:id/finalize"
+    },
+    {
+      "text": "Failed to load resource: the server responded with a status of 422 (Unprocessable Entity)",
+      "sourcePath": "/api/periodontal/assessments/:id/finalize"
+    }
+  ]
+}

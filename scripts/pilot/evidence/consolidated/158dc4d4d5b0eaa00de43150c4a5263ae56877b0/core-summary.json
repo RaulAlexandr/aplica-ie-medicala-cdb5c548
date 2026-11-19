@@ -1,0 +1,1119 @@
+{
+  "appSha": "158dc4d4d5b0eaa00de43150c4a5263ae56877b0",
+  "web": "http://127.0.0.1:5193",
+  "api": "http://127.0.0.1:8033/api",
+  "browser": "151.0.7922.34",
+  "checks": [
+    {
+      "name": "doctor sees seeded patients",
+      "passed": true,
+      "count": 3
+    },
+    {
+      "name": "odontogram loaded in browser",
+      "passed": true,
+      "teeth": 32,
+      "patientA": "56824449-1526-53b1-8afb-a975772ceee6"
+    },
+    {
+      "name": "one odontogram instance on patient record",
+      "passed": true,
+      "odontogramCount": 1,
+      "newFindingFormCount": 1
+    },
+    {
+      "name": "tooth state saved through API",
+      "passed": true,
+      "status": 200,
+      "beforeStatus": "unevaluated",
+      "afterStatus": "missing"
+    },
+    {
+      "name": "doctor finding draft created",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "finding draft has one rendered card",
+      "passed": true,
+      "count": 1
+    },
+    {
+      "name": "draft edit persisted",
+      "passed": true,
+      "status": 200,
+      "findingId": "adeb76b4-24cf-47db-a995-376f0aeb68f7"
+    },
+    {
+      "name": "draft survives reload with author/date",
+      "passed": true,
+      "author": "Dr. Alex Demo",
+      "observedAt": "2026-11-19T17:56:43.945286Z",
+      "status": "draft"
+    },
+    {
+      "name": "finding finalized",
+      "passed": true,
+      "status": 200,
+      "statusValue": "finalized"
+    },
+    {
+      "name": "correction stored with revision",
+      "passed": true,
+      "status": 200,
+      "revisions": 1
+    },
+    {
+      "name": "correction history survives reload",
+      "passed": true,
+      "findingId": "adeb76b4-24cf-47db-a995-376f0aeb68f7",
+      "revisions": 1,
+      "author": "Dr. Alex Demo",
+      "observedAt": "2026-11-19T17:56:43.945286Z"
+    },
+    {
+      "name": "patient switch loads separate odontogram",
+      "passed": true,
+      "patientB": "c8c8559e-6ad4-5b31-b92d-d5437370d87a"
+    },
+    {
+      "name": "return to patient restores persisted finding",
+      "passed": true,
+      "patientA": "56824449-1526-53b1-8afb-a975772ceee6"
+    },
+    {
+      "name": "second doctor draft created",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "T05 draft note created through UI",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "timeline request observed after finalize",
+      "passed": true,
+      "requestObserved": true
+    },
+    {
+      "name": "T05 note finalized via API",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "automatic timeline projection after finalize",
+      "passed": true,
+      "status": 200,
+      "eventCount": 2,
+      "refreshEndpointUsed": false
+    },
+    {
+      "name": "doctor timeline reload API login",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "timeline reload stable and duplicate-free",
+      "passed": true,
+      "noteEventIdsBefore": [
+        "46934789-93c1-5dc6-b3df-a36af021f2bb",
+        "4d8bb427-01b4-570a-9aa1-767dfcac1939"
+      ],
+      "noteEventIdsAfter": [
+        "46934789-93c1-5dc6-b3df-a36af021f2bb",
+        "4d8bb427-01b4-570a-9aa1-767dfcac1939"
+      ],
+      "totalEvents": 2,
+      "duplicates": 0
+    },
+    {
+      "name": "T07 chart path has eligible visit",
+      "passed": true,
+      "eligibleVisitCount": 1
+    },
+    {
+      "name": "T07 chart path has active procedure",
+      "passed": true,
+      "catalogCount": 3
+    },
+    {
+      "name": "T07 chart path saved one pending procedure",
+      "passed": true,
+      "status": 201,
+      "procedureStatus": "pending",
+      "tooth": "16",
+      "procedureId": "d3dddcc6-08cc-4e91-8292-e525d5620877"
+    },
+    {
+      "name": "T07 visit path has active procedure",
+      "passed": true,
+      "catalogCount": 3
+    },
+    {
+      "name": "F06 selected service is the pre-existing procedure service",
+      "passed": true,
+      "selectedCatalogId": "1a9922d5-3d40-5253-929b-d11457bb6349"
+    },
+    {
+      "name": "F06 catalog lifecycle API login",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "F06 procedure preservation API login",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "F06 service deactivated while visit form remains open",
+      "passed": true,
+      "status": 200,
+      "isActive": false
+    },
+    {
+      "name": "F06 stale selection rejected with controlled message",
+      "passed": true,
+      "status": 409,
+      "visibleMessage": "Cannot create a performed procedure from an inactive catalog service The form was kept. Check the visit before submitting again."
+    },
+    {
+      "name": "F06 rejected create preserves selected service and form fields",
+      "passed": true,
+      "selectedServicePreserved": true,
+      "toothPreserved": true,
+      "notesPreserved": true
+    },
+    {
+      "name": "F06 rejected create has no new procedure side effect",
+      "passed": true,
+      "status": 200,
+      "matchingProcedures": 0
+    },
+    {
+      "name": "F06 pre-existing procedure remains visible while service is disabled",
+      "passed": true,
+      "cardCount": 1
+    },
+    {
+      "name": "F06 pre-existing procedure remains executable after deactivation",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "running"
+    },
+    {
+      "name": "F06 pre-existing procedure snapshot remains readable",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "running",
+      "snapshotNamePreserved": true
+    },
+    {
+      "name": "F06 service reactivated for remaining T07 acceptance",
+      "passed": true,
+      "status": 200,
+      "isActive": true
+    },
+    {
+      "name": "T07 visit path saved one pending procedure",
+      "passed": true,
+      "status": 201,
+      "procedureStatus": "pending",
+      "tooth": "17",
+      "procedureId": "e3c9a8a7-6135-4feb-8d9e-059d825ec438"
+    },
+    {
+      "name": "T07 procedure persistence API login",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "both T07 paths persisted exactly once",
+      "passed": true,
+      "status": 200,
+      "count": 2,
+      "ids": [
+        "e3c9a8a7-6135-4feb-8d9e-059d825ec438",
+        "d3dddcc6-08cc-4e91-8292-e525d5620877"
+      ],
+      "duplicates": 0
+    },
+    {
+      "name": "both T07 procedures survive visit reload",
+      "passed": true,
+      "persistedChartPathCount": 1,
+      "persistedVisitPathCount": 1
+    },
+    {
+      "name": "timer target resolves to one procedure",
+      "passed": true,
+      "count": 1
+    },
+    {
+      "name": "timer transition pause persisted",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "paused"
+    },
+    {
+      "name": "timer transition resume persisted",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "running"
+    },
+    {
+      "name": "timer transition complete persisted",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "completed"
+    },
+    {
+      "name": "completed timer persists after reload",
+      "passed": true,
+      "statusVisible": true
+    },
+    {
+      "name": "second T07 procedure has one card",
+      "passed": true,
+      "count": 1
+    },
+    {
+      "name": "second T07 procedure resolved",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "visit status confirmed saved",
+      "passed": true,
+      "status": 200,
+      "appointmentStatus": "confirmed"
+    },
+    {
+      "name": "visit status arrived saved",
+      "passed": true,
+      "status": 200,
+      "appointmentStatus": "arrived"
+    },
+    {
+      "name": "visit status in_progress saved",
+      "passed": true,
+      "status": 200,
+      "appointmentStatus": "in_progress"
+    },
+    {
+      "name": "visit closed as a separate action",
+      "passed": true,
+      "status": 200,
+      "appointmentStatus": "completed"
+    },
+    {
+      "name": "manager cannot see doctor draft in UI",
+      "passed": true,
+      "privateFindingId": "c13b1375-1ff0-46b8-8925-582df1444f5f"
+    },
+    {
+      "name": "manager API login",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "manager GET excludes doctor draft",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "manager cannot edit/finalize doctor draft",
+      "passed": true,
+      "patch": 404,
+      "finalize": 404
+    },
+    {
+      "name": "manager may correct finalized finding",
+      "passed": true,
+      "status": 200,
+      "revisionAuthor": "Mara Demo"
+    },
+    {
+      "name": "manager creates own finding",
+      "passed": true,
+      "status": 201,
+      "author": "Mara Demo"
+    },
+    {
+      "name": "reception UI has no odontogram",
+      "passed": true,
+      "patientA": "56824449-1526-53b1-8afb-a975772ceee6"
+    },
+    {
+      "name": "reception API login",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "reception API denied odontogram",
+      "passed": true,
+      "status": 403
+    },
+    {
+      "name": "no browser page errors",
+      "passed": true,
+      "count": 0
+    }
+  ],
+  "artifacts": [
+    "/home/raul/.local/share/dentacare-pilot-consolidated/browser-evidence/2026-11-19T17-56-40.399Z-doctor-patient-a.png",
+    "/home/raul/.local/share/dentacare-pilot-consolidated/browser-evidence/2026-11-19T17-56-40.399Z-doctor-draft-after-reload.png",
+    "/home/raul/.local/share/dentacare-pilot-consolidated/browser-evidence/2026-11-19T17-56-40.399Z-doctor-timeline-after-reload.png",
+    "/home/raul/.local/share/dentacare-pilot-consolidated/browser-evidence/2026-11-19T17-56-40.399Z-doctor-visit-timer-and-close.png"
+  ],
+  "errors": [],
+  "result": "passed",
+  "diagnostics": {
+    "pageErrors": [],
+    "consoleErrors": [
+      {
+        "role": "doctor",
+        "message": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "sourcePath": "/favicon.ico"
+      },
+      {
+        "role": "doctor",
+        "message": "Failed to load resource: the server responded with a status of 409 (Conflict)",
+        "sourcePath": "/api/performed-procedures"
+      }
+    ],
+    "apiResponses": [
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinic",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6/timeline",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/patients/56824449-1526-53b1-8afb-a975772ceee6/history",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/periodontal/patients/56824449-1526-53b1-8afb-a975772ceee6/assessments",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/odontogram/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6/record",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/odontogram/patients/56824449-1526-53b1-8afb-a975772ceee6/findings",
+        "status": 201
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/odontogram/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/clinical-notes",
+        "status": 201
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6/timeline",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6/record",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/clinical-notes/97b95d20-b993-46fc-8f17-b10944c60d45/finalize",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6/timeline",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6/record",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/src/api/client.ts",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinic",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/patients/56824449-1526-53b1-8afb-a975772ceee6/history",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6/record",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/periodontal/patients/56824449-1526-53b1-8afb-a975772ceee6/assessments",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/periodontal/patients/56824449-1526-53b1-8afb-a975772ceee6/assessments",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/treatment-plans/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/procedures",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/documents/limits",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/odontogram/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/documents/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6/timeline",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/documents/patients/56824449-1526-53b1-8afb-a975772ceee6/visit-options",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/procedures",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/performed-procedures",
+        "status": 201
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/src/api/client.ts",
+        "status": 304
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/src/api/client.ts",
+        "status": 304
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/procedures",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/performed-procedures",
+        "status": 409,
+        "errorDetail": "Cannot create a performed procedure from an inactive catalog service"
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/performed-procedures/d3dddcc6-08cc-4e91-8292-e525d5620877/start",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/performed-procedures",
+        "status": 201
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/src/api/client.ts",
+        "status": 304
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/procedures",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/performed-procedures/d3dddcc6-08cc-4e91-8292-e525d5620877/pause",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/performed-procedures/d3dddcc6-08cc-4e91-8292-e525d5620877/resume",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/performed-procedures/d3dddcc6-08cc-4e91-8292-e525d5620877/complete",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/src/api/client.ts",
+        "status": 304
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/procedures",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/performed-procedures/e3c9a8a7-6135-4feb-8d9e-059d825ec438/cancel",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "PATCH",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/status",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "PATCH",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/status",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "PATCH",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/status",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "PATCH",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/status",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/appointments/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a",
+        "status": 200
+      },
+      {
+        "role": "doctor",
+        "method": "GET",
+        "path": "/api/performed-procedures/visit/5f9f5240-b5c6-5e9c-99fe-4aa64521ab4a/summary",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/src/api/client.ts",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "POST",
+        "path": "/api/auth/login",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/patients/count",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/appointments",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/patients",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/clinic",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/patients/56824449-1526-53b1-8afb-a975772ceee6/history",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6/record",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/periodontal/patients/56824449-1526-53b1-8afb-a975772ceee6/assessments",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/periodontal/patients/56824449-1526-53b1-8afb-a975772ceee6/assessments",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/treatment-plans/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/odontogram/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/documents/limits",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/procedures",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/documents/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/documents/patients/56824449-1526-53b1-8afb-a975772ceee6/visit-options",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/clinical-notes/patients/56824449-1526-53b1-8afb-a975772ceee6/timeline",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "POST",
+        "path": "/api/odontogram/findings/adeb76b4-24cf-47db-a995-376f0aeb68f7/corrections",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/odontogram/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "manager",
+        "method": "POST",
+        "path": "/api/odontogram/patients/56824449-1526-53b1-8afb-a975772ceee6/findings",
+        "status": 201
+      },
+      {
+        "role": "manager",
+        "method": "GET",
+        "path": "/api/odontogram/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      },
+      {
+        "role": "reception",
+        "method": "GET",
+        "path": "/src/api/client.ts",
+        "status": 200
+      },
+      {
+        "role": "reception",
+        "method": "POST",
+        "path": "/api/auth/login",
+        "status": 200
+      },
+      {
+        "role": "reception",
+        "method": "GET",
+        "path": "/api/auth/me",
+        "status": 200
+      },
+      {
+        "role": "reception",
+        "method": "GET",
+        "path": "/api/patients/count",
+        "status": 200
+      },
+      {
+        "role": "reception",
+        "method": "GET",
+        "path": "/api/appointments",
+        "status": 200
+      },
+      {
+        "role": "reception",
+        "method": "GET",
+        "path": "/api/patients",
+        "status": 200
+      },
+      {
+        "role": "reception",
+        "method": "GET",
+        "path": "/api/patients/56824449-1526-53b1-8afb-a975772ceee6",
+        "status": 200
+      }
+    ],
+    "httpFailures": [
+      {
+        "role": "doctor",
+        "method": "POST",
+        "path": "/api/performed-procedures",
+        "status": 409,
+        "errorDetail": "Cannot create a performed procedure from an inactive catalog service"
+      }
+    ],
+    "visibleErrors": []
+  }
+}

@@ -1,0 +1,14 @@
+CHECKOUT: /home/raul/Projects/worktrees/aplica-ie-pilot-consolidated | SHA: 158dc4d4d5b0eaa00de43150c4a5263ae56877b0 | CLEAN
+Oprit api PID 372368
+Oprit web PID 372369
+stop rc=0
+CHECKOUT: /home/raul/Projects/worktrees/aplica-ie-pilot-consolidated | SHA: 158dc4d4d5b0eaa00de43150c4a5263ae56877b0 | CLEAN
+Backup valid: DB ok, 4 documente T11 verificate, 4 fișiere, 0 fișiere fără rând.
+Backup (DB + documente T11): /home/raul/.local/share/dentacare-pilot-consolidated/final-158dc4d/backup-pilot
+backup rc=0
+CHECKOUT: /home/raul/Projects/worktrees/aplica-ie-pilot-consolidated | SHA: 158dc4d4d5b0eaa00de43150c4a5263ae56877b0 | CLEAN
+Restore valid: DB ok, 4 documente T11 cu fișier și SHA-256 corecte, 0 fișiere fără rând.
+Copie restaurată la: /home/raul/.local/share/dentacare-pilot-consolidated/final-158dc4d/restore-copy (sursa păstrată; destinația nu a fost suprascrisă).
+Pentru a o folosi: PILOT_DB_PATH=/home/raul/.local/share/dentacare-pilot-consolidated/final-158dc4d/restore-copy/fictional-clinic.sqlite3 PILOT_DOCUMENTS_DIR=/home/raul/.local/share/dentacare-pilot-consolidated/final-158dc4d/restore-copy/documents în config.
+restore rc=0
+/home/raul/.local/share/dentacare-pilot-consolidated/final-158dc4d/fictional-clinic.sqlite3: OK
