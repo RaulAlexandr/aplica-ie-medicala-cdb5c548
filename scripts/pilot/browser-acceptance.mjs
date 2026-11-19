@@ -83,12 +83,13 @@ async function authApi(account, role) {
   const login = await ctx.post(`${api}/auth/login`, { data: { email: account.email, password: account.password } });
   check(`${role} API login`, login.ok(), { status: login.status() });
   const body = await login.json();
-  await ctx.setExtraHTTPHeaders({ Authorization: `Bearer ${body.access_token}` });
+  await ctx.dispose();
+  const authenticated = await request.newContext({ extraHTTPHeaders: { Authorization: `Bearer ${body.access_token}` } });
   return {
-    get: (route, options) => ctx.get(`${api}${route}`, options),
-    post: (route, options) => ctx.post(`${api}${route}`, options),
-    patch: (route, options) => ctx.patch(`${api}${route}`, options),
-    dispose: () => ctx.dispose(),
+    get: (route, options) => authenticated.get(`${api}${route}`, options),
+    post: (route, options) => authenticated.post(`${api}${route}`, options),
+    patch: (route, options) => authenticated.patch(`${api}${route}`, options),
+    dispose: () => authenticated.dispose(),
   };
 }
 try {
