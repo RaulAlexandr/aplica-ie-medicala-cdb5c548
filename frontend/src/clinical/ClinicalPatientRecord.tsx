@@ -23,8 +23,9 @@ function timelineBounds(start: string, end: string, timezone: string) {
   };
 }
 
-function formatClinicDate(value: string | null | undefined, timezone: string) {
+function formatClinicDate(value: string | null | undefined, timezone?: string) {
   if (!value) return 'Not recorded';
+  if (!timezone) return 'Clinic time unavailable';
   return new Intl.DateTimeFormat('ro-RO', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date(value));
 }
 
@@ -32,7 +33,7 @@ function Field({ label, value }: { label: string; value: string | null | undefin
   return <div className="clinical-field"><dt>{label}</dt><dd>{value?.trim() || 'Not recorded'}</dd></div>;
 }
 
-function TimelineSection({ patientId, timezone }: { patientId: string; timezone: string }) {
+function TimelineSection({ patientId, timezone }: { patientId: string; timezone?: string }) {
   const [eventType, setEventType] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -40,6 +41,7 @@ function TimelineSection({ patientId, timezone }: { patientId: string; timezone:
   let bounds = { start_date: undefined as string | undefined, end_date: undefined as string | undefined };
   let dateError = '';
   try {
+    if (!timezone) throw new Error('Clinic time zone is unavailable.');
     bounds = timelineBounds(startDate, endDate, timezone);
   } catch (error) {
     dateError = error instanceof Error ? error.message : 'The selected local time is invalid.';
@@ -47,7 +49,7 @@ function TimelineSection({ patientId, timezone }: { patientId: string; timezone:
   const query = useQuery({
     queryKey: ['patient-timeline', patientId, eventType, bounds.start_date, bounds.end_date, page],
     queryFn: () => listPatientTimeline(patientId, { event_type: eventType || undefined, ...bounds, limit: pageSize, offset: page * pageSize }),
-    enabled: !dateError && (!startDate || !endDate || startDate <= endDate),
+    enabled: Boolean(timezone) && !dateError && (!startDate || !endDate || startDate <= endDate),
   });
   const changeFilter = (update: () => void) => { update(); setPage(0); };
   return <section className="card clinical-record-section">
@@ -71,7 +73,7 @@ function TimelineSection({ patientId, timezone }: { patientId: string; timezone:
   </section>;
 }
 
-function TimelineItem({ event, timezone }: { event: PatientTimelineEvent; timezone: string }) {
+function TimelineItem({ event, timezone }: { event: PatientTimelineEvent; timezone?: string }) {
   return <article className="clinical-list-item">
     <div className="detail-heading"><div><p className="eyebrow">{event.event_type.replace('_', ' ')}</p><h3>{event.title}</h3></div></div>
     {event.description && <p className="clinical-note-text">{event.description}</p>}
@@ -82,7 +84,7 @@ function TimelineItem({ event, timezone }: { event: PatientTimelineEvent; timezo
 
 export function ClinicalPatientRecord({ patientId, appointmentId, user }: { patientId: string; appointmentId?: string; user: User }) {
   const clinic = useQuery({ queryKey: ['clinic'], queryFn: getClinic });
-  const timezone = clinic.data?.timezone ?? 'UTC';
+  const timezone = clinic.data?.timezone;
   const record = useQuery({ queryKey: ['patient-record', patientId], queryFn: () => getPatientRecord(patientId) });
   const revisions = useQuery({ queryKey: ['patient-revisions', patientId], queryFn: () => getPatientRevisions(patientId) });
   const [showPatientRevisions, setShowPatientRevisions] = useState(false);
@@ -128,9 +130,9 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
           <Link className="button secondary" to={`/appointments/${procedure.appointment_id}/visit`}>Open visit</Link>
         </article>)}</div>
       </section>
-      <TreatmentPlansPanel key={`${patientId}:treatment-plans`} patientId={patientId} timezone={timezone} />
+      {timezone && <TreatmentPlansPanel key={`${patientId}:treatment-plans`} patientId={patientId} timezone={timezone} />}
     </>}
-    <PatientOdontogram
+    {timezone && <PatientOdontogram
       key={`${patientId}:odontogram`}
       patientId={patientId}
       user={user}
@@ -138,9 +140,9 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
       patientName={patientFields ? `${patientFields.first_name} ${patientFields.last_name}` : undefined}
       appointmentSearchTerm={patientFields ? (patientFields.phone || patientFields.email || patientFields.last_name) : undefined}
       appointmentId={appointmentId}
-    />
-    <ClinicalNotesPanel key={`${patientId}:${appointmentId ?? 'patient'}`} patientId={patientId} appointmentId={appointmentId} user={user} timezone={timezone} />
+    />}
+    {timezone && <ClinicalNotesPanel key={`${patientId}:${appointmentId ?? 'patient'}`} patientId={patientId} appointmentId={appointmentId} user={user} timezone={timezone} />}
     <TimelineSection key={`${patientId}:timeline`} patientId={patientId} timezone={timezone} />
-    {clinic.isError && <p className="error" role="alert">Clinic time zone could not be loaded: {apiErrorMessage(clinic.error)}</p>}
+    {!timezone && <p className="error" role="alert">Clinic time zone could not be loaded{clinic.isError ? `: ${apiErrorMessage(clinic.error)}` : '.'} Clinic-local clinical dates are hidden until this context is available. <button className="secondary" onClick={() => void clinic.refetch()}>Retry</button></p>}
   </div>;
 }

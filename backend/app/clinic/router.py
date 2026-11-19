@@ -45,7 +45,7 @@ class ClinicUpdate(BaseModel):
 
 
 @router.get("", response_model=ClinicResponse)
-async def get_clinic(user: User = Depends(require_roles("clinic_manager", "administrator")), db: AsyncSession = Depends(get_db)) -> ClinicResponse:
+async def get_clinic(user: User = Depends(require_roles("clinic_manager", "administrator", "doctor", "assistant", "reception")), db: AsyncSession = Depends(get_db)) -> ClinicResponse:
     clinic = await db.get(Clinic, user.clinic_id)
     if not clinic:
         raise HTTPException(404, "Clinic not found")

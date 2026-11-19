@@ -5,6 +5,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.auth.service import hash_password
 from app.database import Base, StaffInvitation, User, get_db
 from app.main import app
 
@@ -51,6 +52,64 @@ async def test_clinic_settings_and_cross_clinic_authorization(client):
 
 
 @pytest.mark.asyncio
+async def test_clinic_context_is_available_to_staff_but_settings_remain_restricted(client):
+    _, manager_headers = await register_manager(client, "Staff Clinic", "t01-context-manager@example.com")
+    _, other_manager_headers = await register_manager(client, "Other Clinic", "t01-context-other@example.com")
+    other_context = (await client.get("/api/clinic", headers=other_manager_headers)).json()
+
+    staff_headers = {}
+    for role in ("doctor", "assistant", "reception"):
+        invitation = await client.post("/api/staff/invitations", headers=manager_headers, json={
+            "email": f"context-{role}@example.com", "full_name": f"Context {role}", "role": role,
+        })
+        assert invitation.status_code == 201
+        token = parse_qs(urlparse(invitation.json()["invitation_url"]).query)["token"][0]
+        accepted = await client.post("/api/staff/invitations/accept", params={"token": token}, json={"password": "correct horse battery staple"})
+        assert accepted.status_code == 200
+        login = await client.post("/api/auth/login", json={"email": f"context-{role}@example.com", "password": "correct horse battery staple"})
+        assert login.status_code == 200
+        staff_headers[role] = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    for role, headers in staff_headers.items():
+        response = await client.get("/api/clinic", headers=headers)
+        assert response.status_code == 200
+        assert response.json()["timezone"] == "Europe/Bucharest"
+        assert response.json()["id"] != other_context["id"]
+        assert set(response.json()) == {"id", "name", "timezone", "created_at", "updated_at"}
+        assert (await client.patch("/api/clinic", headers=headers, json={"name": f"Changed {role}", "timezone": "America/Los_Angeles"})).status_code == 403
+
+    assert (await client.get("/api/clinic")).status_code == 401
+    assert (await client.get("/api/clinic", headers=manager_headers)).status_code == 200
+    assert (await client.patch("/api/clinic", headers=manager_headers, json={"name": "Manager Updated", "timezone": "America/Los_Angeles"})).status_code == 200
+
+    manager = (await client.get("/api/auth/me", headers=other_manager_headers)).json()
+    sessions = T01_SESSIONS[id(client)]
+    async with sessions() as session:
+        session.add(User(
+            clinic_id=manager["clinic_id"], email="context-admin@example.com",
+            password_hash=hash_password("correct horse battery staple"), full_name="Context Admin", role="administrator",
+        ))
+        await session.commit()
+    admin_login = await client.post("/api/auth/login", json={"email": "context-admin@example.com", "password": "correct horse battery staple"})
+    admin_headers = {"Authorization": f"Bearer {admin_login.json()['access_token']}"}
+    admin_context = await client.get("/api/clinic", headers=admin_headers)
+    assert admin_context.status_code == 200 and admin_context.json()["id"] == other_context["id"]
+    assert (await client.patch("/api/clinic", headers=admin_headers, json={"name": "Admin Updated", "timezone": "America/New_York"})).status_code == 200
+
+    inactive_role = await client.post("/api/staff/invitations", headers=manager_headers, json={
+        "email": "inactive-context@example.com", "full_name": "Inactive Context", "role": "doctor",
+    })
+    inactive_token = parse_qs(urlparse(inactive_role.json()["invitation_url"]).query)["token"][0]
+    inactive_user = await client.post("/api/staff/invitations/accept", params={"token": inactive_token}, json={"password": "correct horse battery staple"})
+    inactive_login = await client.post("/api/auth/login", json={"email": "inactive-context@example.com", "password": "correct horse battery staple"})
+    async with sessions() as session:
+        user = await session.get(User, inactive_user.json()["id"])
+        user.is_active = False
+        await session.commit()
+    assert (await client.get("/api/clinic", headers={"Authorization": f"Bearer {inactive_login.json()['access_token']}"})).status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_invitation_acceptance_expiry_revocation_reuse_and_role_tampering(client):
     _, headers = await register_manager(client, "Invitation Clinic", "t01-invite@example.com")
     response = await client.post("/api/staff/invitations", headers=headers, json={"email": "doctor.t01@example.com", "full_name": "Doctor T01", "role": "administrator"})
@@ -63,7 +122,7 @@ async def test_invitation_acceptance_expiry_revocation_reuse_and_role_tampering(
     assert accepted.status_code == 200 and accepted.json()["role"] == "doctor"
     doctor_login = await client.post("/api/auth/login", json={"email": "doctor.t01@example.com", "password": "correct horse battery staple"})
     doctor_headers = {"Authorization": f"Bearer {doctor_login.json()['access_token']}"}
-    assert (await client.get("/api/clinic", headers=doctor_headers)).status_code == 403
+    assert (await client.get("/api/clinic", headers=doctor_headers)).status_code == 200
     assert (await client.post("/api/staff/invitations", headers=doctor_headers, json={"email": "tamper@example.com", "full_name": "Tamper", "role": "doctor"})).status_code == 403
     reused = await client.post("/api/staff/invitations/accept", params={"token": token}, json={"password": "correct horse battery staple"})
     assert reused.status_code == 400
