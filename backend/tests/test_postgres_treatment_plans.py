@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import get_db
 from app.main import app
-from tests.alembic_helpers import configured_alembic_head
+from tests.alembic_helpers import configured_alembic_head, revision_is_in_head_lineage
 
 pytestmark = pytest.mark.postgres
 TIMEOUT = 10
@@ -72,7 +72,9 @@ async def test_t08_migration_preserves_t00_t07_data_and_enforces_link_uniqueness
     assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
     conn = await asyncpg.connect(_dsn(url, name))
     try:
-        assert await conn.fetchval("SELECT version_num FROM alembic_version") == configured_alembic_head() == "t08_add_treatment_plans"
+        # The configured head may be a later additive module (e.g. T11); T08 must be part of it.
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == configured_alembic_head()
+        assert revision_is_in_head_lineage("t08_add_treatment_plans")
         assert await conn.fetchval("SELECT content FROM clinical_notes WHERE id = $1", ids["note"]) == "Plan vechi ca notă"
         assert await conn.fetchval("SELECT status FROM performed_procedures WHERE id = $1", ids["performed"]) == "completed"
         assert await conn.fetchval("SELECT description FROM odontogram_findings WHERE id = $1", ids["finding"]) == "Fictiv"

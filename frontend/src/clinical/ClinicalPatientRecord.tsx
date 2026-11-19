@@ -5,6 +5,7 @@ import { apiErrorMessage, getClinic, type User } from '../api/client';
 import { clinicLocalToUtc } from '../timezone';
 import { ClinicalNotesPanel } from './ClinicalNotesPanel';
 import { PatientOdontogram } from '../odontogram/PatientOdontogram';
+import { PeriodontalSection } from '../periodontal/PeriodontalSection';
 import { TreatmentPlansPanel } from '../treatment-plans/TreatmentPlansPanel';
 import { getPatientRecord, getPatientRevisions, listPatientTimeline, type PatientTimelineEvent } from './api';
 
@@ -132,6 +133,7 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
       </section>
       {timezone && <TreatmentPlansPanel key={`${patientId}:treatment-plans`} patientId={patientId} timezone={timezone} />}
     </>}
+    {(['doctor', 'clinic_manager', 'administrator'].includes(user.role)) && <PeriodontalSection key={`${patientId}:periodontal`} patientId={patientId} user={user} />}
     {timezone && <PatientOdontogram
       key={`${patientId}:odontogram`}
       patientId={patientId}
