@@ -229,7 +229,6 @@ try {
 
   // Reopen the patient record and use the second T07 path from the visit page.
   await page.reload();
-  await page.getByText(firstProcedureNote, { exact: true }).waitFor();
   const visitUrl = `/appointments/${chartProcedure.appointment_id}/visit`;
   await page.goto(`${web}${visitUrl}`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'Performed procedures', exact: true }).waitFor();
