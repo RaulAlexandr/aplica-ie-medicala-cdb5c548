@@ -29,7 +29,13 @@ parse_common_args() {
   PILOT_API_PORT="${PILOT_API_PORT:-8018}" PILOT_WEB_PORT="${PILOT_WEB_PORT:-5188}"
   PILOT_API_URL="http://${PILOT_API_HOST}:${PILOT_API_PORT}" PILOT_WEB_URL="http://${PILOT_WEB_HOST}:${PILOT_WEB_PORT}"
   mkdir -p "$(dirname "$PILOT_DB_PATH")"
+  # T11: protected document files live next to the DB, outside the repository; never served statically.
+  PILOT_DOCUMENTS_DIR="${PILOT_DOCUMENTS_DIR:-$PILOT_ROOT/documents}"
+  case "$PILOT_DOCUMENTS_DIR" in /*) ;; *) echo "PILOT_DOCUMENTS_DIR trebuie să fie cale absolută." >&2; exit 2 ;; esac
+  case "$PILOT_DOCUMENTS_DIR/" in "$CHECKOUT"/*) echo "PILOT_DOCUMENTS_DIR nu poate fi în checkout." >&2; exit 2 ;; esac
+  mkdir -p "$PILOT_DOCUMENTS_DIR"; chmod 700 "$PILOT_DOCUMENTS_DIR"
   PILOT_CHECKOUT="$CHECKOUT"
+  export PILOT_DOCUMENTS_DIR
   export CHECKOUT PILOT_CHECKOUT CONFIG ALLOW_DIRTY PILOT_SHA PILOT_ROOT PILOT_DB_PATH PILOT_API_HOST PILOT_WEB_HOST PILOT_API_PORT PILOT_WEB_PORT PILOT_API_URL PILOT_WEB_URL
 }
 python_for_checkout() {
