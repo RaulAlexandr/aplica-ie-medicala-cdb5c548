@@ -39,6 +39,11 @@ function tree(qc: QueryClient, patientId: string) {
 async function render(qc = client(), patientId = 'patient-a') {
   let renderer!: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(tree(qc, patientId)); await flush(); });
+  // A fixed 20 ms flush is not always enough under a loaded parallel run: wait (bounded) for the limits query.
+  const rules = () => text(renderer.root.findByProps({ 'data-testid': 'document-rules' }));
+  for (let attempt = 0; attempt < 50 && !rules().includes(' px'); attempt += 1) {
+    await act(async () => { await flush(); });
+  }
   return renderer;
 }
 function byLabel(r: TestRenderer.ReactTestRenderer, label: string) { return r.root.findByProps({ 'aria-label': label }); }

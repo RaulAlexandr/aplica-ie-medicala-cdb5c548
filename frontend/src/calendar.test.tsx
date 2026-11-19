@@ -64,6 +64,10 @@ async function renderCalendar(): Promise<TestRenderer.ReactTestRenderer> {
     renderer = TestRenderer.create(provider(<Calendar canManage />));
     await new Promise(resolve => setTimeout(resolve, 10));
   });
+  // A fixed 10 ms tick is not always enough under a loaded parallel run: wait (bounded) for both fixture appointments.
+  for (let attempt = 0; attempt < 50 && calendarEvents(renderer).length < 2; attempt += 1) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  }
   return renderer;
 }
 

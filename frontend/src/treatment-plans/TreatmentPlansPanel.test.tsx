@@ -73,6 +73,10 @@ function mount(client: QueryClient, patientId = 'patient-1') {
 async function render(client = queryClient(), patientId = 'patient-1') {
   let renderer!: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(mount(client, patientId)); await flush(); });
+  // A fixed 20 ms flush is not always enough under a loaded parallel run: wait (bounded) for the initial list query.
+  for (let attempt = 0; attempt < 50 && text(renderer.root).includes('Se încarcă planurile'); attempt += 1) {
+    await act(async () => { await flush(); });
+  }
   return renderer;
 }
 function axiosError(status: number, detail: string) {
