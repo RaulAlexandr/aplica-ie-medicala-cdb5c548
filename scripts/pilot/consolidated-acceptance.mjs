@@ -286,7 +286,7 @@ try {
   const docItem = docs.locator('article.doc-item', { hasText: rx.name });
   await docItem.waitFor();
   const docText = await docItem.innerText();
-  check('visit time on the document shown in the clinic zone', docText.includes(clinicTime) && !docText.includes(`, ${utcTime}`), { clinicTime, utcTime });
+  check('visit time on the document shown in the clinic zone', docText.includes(clinicTime) && (SAME_ZONE_RUN || !docText.includes(`, ${utcTime}`)), { clinicTime, utcTime });
   await docItem.getByRole('button', { name: 'Vizualizează' }).click();
   const viewer = docs.getByLabel('Vizualizare imagine');
   await page.waitForFunction(() => { const el = document.querySelector('.doc-viewer img'); return el && el.complete && el.naturalWidth > 0; });
