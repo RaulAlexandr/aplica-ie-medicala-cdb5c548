@@ -114,7 +114,7 @@ try {
   const newFindingForm = page.locator('form.og-new-finding');
   await newFindingForm.getByLabel('Tipul constatării').selectOption({ label: 'Carie' });
   await newFindingForm.getByLabel('Descriere', { exact: true }).fill(draftDescription);
-  await newFindingForm.getByRole('button', { name: /^Ocluzală/ }).click();
+  await newFindingForm.locator('button.og-surface[aria-label="Ocluzală (occlusal)"]').click();
   const createResponse = await observeAction(page, 'create doctor finding draft', r => r.request().method() === 'POST' && /\/odontogram\/patients\/[^/]+\/findings$/.test(new URL(r.url()).pathname), () => newFindingForm.getByRole('button', { name: 'Salvează ciornă' }).click());
   check('doctor finding draft created', createResponse.status() === 201, { status: createResponse.status() });
   let finding = await createResponse.json();
