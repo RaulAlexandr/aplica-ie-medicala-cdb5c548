@@ -85,6 +85,8 @@ try {
   await page.goto(`${web}/patients/${patientA}`);
   await page.getByRole('heading', { name: 'Evaluare parodontală' }).waitFor();
   await page.getByRole('heading', { name: 'Planuri de tratament' }).waitFor();
+  // Integrated record (#20): panels mount after the clinic context; wait for the odontogram's own load before counting.
+  await page.locator('.patient-odontogram').first().waitFor();
   const periodontalPanels = await page.locator('.periodontal-section').count();
   const odontograms = await page.locator('.patient-odontogram').count();
   check('one periodontal panel and one odontogram', periodontalPanels === 1 && odontograms === 1, { periodontalPanels, odontograms });
