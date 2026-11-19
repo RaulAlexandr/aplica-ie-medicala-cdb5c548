@@ -246,7 +246,7 @@ try {
   const visitCatalogOptions = await visitProcedureForm.getByLabel('Procedure from active catalog').locator('option').evaluateAll(options => options.map(option => option.value).filter(Boolean));
   check('T07 visit path has active procedure', visitCatalogOptions.length > 0, { catalogCount: visitCatalogOptions.length });
   await visitProcedureForm.getByLabel('Procedure from active catalog').selectOption(visitCatalogOptions[0]);
-  await visitProcedureForm.getByLabel('Tooth FDI (optional)').selectOption('17');
+  await visitProcedureForm.getByLabel('Procedure tooth').selectOption('17');
   const secondProcedureNote = uniq('T07 visit path');
   await visitProcedureForm.getByLabel('Procedure notes (optional)').fill(secondProcedureNote);
   const visitCreate = await observeAction(page, 'create procedure from visit', r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures', () => visitProcedureForm.getByRole('button', { name: 'Save procedure' }).click());
