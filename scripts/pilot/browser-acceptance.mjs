@@ -245,13 +245,45 @@ try {
   await visitProcedureForm.waitFor();
   const visitCatalogOptions = await visitProcedureForm.getByLabel('Procedure from active catalog').locator('option').evaluateAll(options => options.map(option => option.value).filter(Boolean));
   check('T07 visit path has active procedure', visitCatalogOptions.length > 0, { catalogCount: visitCatalogOptions.length });
-  await visitProcedureForm.getByLabel('Procedure from active catalog').selectOption(visitCatalogOptions[0]);
+  const visitCatalogSelect = visitProcedureForm.getByLabel('Procedure from active catalog');
+  const selectedCatalogId = chartProcedure.procedure_catalog_id;
+  check('F06 selected service is the pre-existing procedure service', visitCatalogOptions.includes(selectedCatalogId), { selectedCatalogId });
+  await visitCatalogSelect.selectOption(selectedCatalogId);
   await visitProcedureForm.getByLabel('Procedure tooth').selectOption('17');
   const secondProcedureNote = uniq('T07 visit path');
-  await visitProcedureForm.getByLabel('Procedure notes (optional)').fill(secondProcedureNote);
-  const visitCreate = await observeAction(page, 'create procedure from visit', r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures', () => visitProcedureForm.getByRole('button', { name: 'Save procedure' }).click());
+  const visitProcedureNotes = visitProcedureForm.getByLabel('Procedure notes (optional)');
+  await visitProcedureNotes.fill(secondProcedureNote);
+
+  // F06: a stale active-catalog selection cannot create after deactivation.
+  const f06ManagerApi = await authApi(creds.manager, 'F06 catalog lifecycle');
+  const f06DoctorApi = await authApi(creds.doctor, 'F06 procedure preservation');
+  const deactivatedCatalog = await f06ManagerApi.post(`/procedures/${selectedCatalogId}/deactivate`);
+  const deactivatedCatalogJson = await deactivatedCatalog.json();
+  check('F06 service deactivated while visit form remains open', deactivatedCatalog.status() === 200 && deactivatedCatalogJson.is_active === false, { status: deactivatedCatalog.status(), isActive: deactivatedCatalogJson.is_active });
+  const staleCreate = await observeAction(page, 'reject stale inactive service selection', r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures', () => visitProcedureForm.getByRole('button', { name: 'Save procedure' }).click());
+  const staleFormAlert = page.getByRole('alert').filter({ hasText: 'inactive catalog service' });
+  await staleFormAlert.waitFor();
+  check('F06 stale selection rejected with controlled message', staleCreate.status() === 409 && await staleFormAlert.count() === 1, { status: staleCreate.status(), visibleMessage: (await staleFormAlert.innerText()).trim() });
+  check('F06 rejected create preserves selected service and form fields', await visitCatalogSelect.inputValue() === selectedCatalogId && await visitProcedureForm.getByLabel('Procedure tooth').inputValue() === '17' && await visitProcedureNotes.inputValue() === secondProcedureNote, { selectedServicePreserved: await visitCatalogSelect.inputValue() === selectedCatalogId, toothPreserved: await visitProcedureForm.getByLabel('Procedure tooth').inputValue() === '17', notesPreserved: await visitProcedureNotes.inputValue() === secondProcedureNote });
+  const proceduresBeforeRetryResponse = await f06DoctorApi.get(`/performed-procedures?appointment_id=${chartProcedure.appointment_id}`);
+  const proceduresBeforeRetry = await proceduresBeforeRetryResponse.json();
+  check('F06 rejected create has no new procedure side effect', proceduresBeforeRetryResponse.ok() && !proceduresBeforeRetry.some(item => item.notes === secondProcedureNote), { status: proceduresBeforeRetryResponse.status(), matchingProcedures: proceduresBeforeRetry.filter(item => item.notes === secondProcedureNote).length });
+  const existingProcedureCard = page.locator('article.procedure-card').filter({ hasText: firstProcedureNote });
+  check('F06 pre-existing procedure remains visible while service is disabled', await existingProcedureCard.count() === 1 && await existingProcedureCard.getByText('pending', { exact: true }).count() > 0, { cardCount: await existingProcedureCard.count() });
+  const existingProcedureStart = await observeAction(page, 'execute pre-existing procedure after catalog deactivation', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/performed-procedures/${chartProcedure.id}/start`), () => existingProcedureCard.getByRole('button', { name: 'Start', exact: true }).click());
+  const startedExistingProcedure = await existingProcedureStart.json();
+  check('F06 pre-existing procedure remains executable after deactivation', existingProcedureStart.status() === 200 && startedExistingProcedure.status === 'running', { status: existingProcedureStart.status(), procedureStatus: startedExistingProcedure.status });
+  const existingAfterDeactivate = await f06DoctorApi.get(`/performed-procedures/${chartProcedure.id}`);
+  const existingAfterDeactivateJson = await existingAfterDeactivate.json();
+  check('F06 pre-existing procedure snapshot remains readable', existingAfterDeactivate.ok() && existingAfterDeactivateJson.procedure_catalog_id === selectedCatalogId && existingAfterDeactivateJson.procedure_name === chartProcedure.procedure_name && existingAfterDeactivateJson.status === 'running', { status: existingAfterDeactivate.status(), procedureStatus: existingAfterDeactivateJson.status, snapshotNamePreserved: existingAfterDeactivateJson.procedure_name === chartProcedure.procedure_name });
+  const reactivatedCatalog = await f06ManagerApi.post(`/procedures/${selectedCatalogId}/activate`);
+  const reactivatedCatalogJson = await reactivatedCatalog.json();
+  check('F06 service reactivated for remaining T07 acceptance', reactivatedCatalog.status() === 200 && reactivatedCatalogJson.is_active === true, { status: reactivatedCatalog.status(), isActive: reactivatedCatalogJson.is_active });
+  const visitCreate = await observeAction(page, 'create procedure from visit after service reactivation', r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures', () => visitProcedureForm.getByRole('button', { name: 'Save procedure' }).click());
   const visitProcedure = await visitCreate.json();
   check('T07 visit path saved one pending procedure', visitCreate.status() === 201 && visitProcedure.status === 'pending' && visitProcedure.tooth_fdi === '17', { status: visitCreate.status(), procedureStatus: visitProcedure.status, tooth: visitProcedure.tooth_fdi, procedureId: visitProcedure.id });
+  await f06ManagerApi.dispose();
+  await f06DoctorApi.dispose();
   const visitApi = await authApi(creds.doctor, 'T07 procedure persistence');
   const visitProceduresResponse = await visitApi.get(`/performed-procedures?appointment_id=${chartProcedure.appointment_id}`);
   const savedVisitProcedures = await visitProceduresResponse.json();
@@ -267,7 +299,7 @@ try {
   const timerCard = page.locator('article.procedure-card').filter({ hasText: firstProcedureNote });
   check('timer target resolves to one procedure', await timerCard.count() === 1, { count: await timerCard.count() });
   const timerActions = [
-    ['start', 'Start', 'running'], ['pause', 'Pause', 'paused'], ['resume', 'Resume', 'running'], ['complete', 'Complete', 'completed'],
+    ['pause', 'Pause', 'paused'], ['resume', 'Resume', 'running'], ['complete', 'Complete', 'completed'],
   ];
   for (const [transition, label, expectedStatus] of timerActions) {
     const response = await observeAction(page, `explicit procedure timer ${transition}`, r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/performed-procedures/${chartProcedure.id}/${transition}`), () => timerCard.getByRole('button', { name: label, exact: true }).click());
