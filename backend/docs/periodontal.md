@@ -1,0 +1,7 @@
+# Periodontal assessments (T09–T10)
+
+A draft belongs to its creator; clinical managers and administrators do not bypass this rule. Drafts can be replaced while authored by the current user. Finalization is explicit and immutable. A correction or follow-up starts a new draft linked to a finalized assessment; corrections require a reason. Clinical date is separate from server-recorded timestamps.
+
+Each included permanent FDI tooth records exactly six sites: `buccal_mesial`, `buccal_mid`, `buccal_distal`, `oral_mesial`, `oral_mid`, `oral_distal`. Oral denotes the lingual side in mandibular teeth and palatal side in maxillary teeth. Depth and signed recession are millimetres stored to two decimal places, with technical storage precision up to five integer digits. Depth is non-negative; recession is signed and never normalized. BOP, plaque, and suppuration are nullable booleans: `null` means unknown/not measured; `false` means measured absent. Excluded teeth carry no measurements. Mobility uses grades `0`–`3`; furcation uses `I`–`III`; these are data-entry conventions and are not a clinic-validated protocol.
+
+Comparison exposes per-field differences only when both values are known. Numeric change is second minus first; binary differences are booleans indicating a changed value. BOP prevalence reports positive count, known-site denominator, and percentage for the second assessment; percentage is null when denominator is zero. This module does not generate diagnoses or treatment recommendations.

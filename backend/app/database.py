@@ -436,3 +436,44 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 async def get_db() -> AsyncIterator[AsyncSession]:
     async with SessionLocal() as session:
         yield session
+
+
+class PeriodontalAssessment(Base):
+    __tablename__ = "periodontal_assessments"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    clinical_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    previous_assessment_id: Mapped[UUID | None] = mapped_column(ForeignKey("periodontal_assessments.id", ondelete="RESTRICT"))
+    relationship_kind: Mapped[str | None] = mapped_column(String(16))
+    change_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (Index("ix_periodontal_patient_date", "clinic_id", "patient_id", "clinical_date"),)
+
+
+class PeriodontalAssessmentTooth(Base):
+    __tablename__ = "periodontal_assessment_teeth"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    assessment_id: Mapped[UUID] = mapped_column(ForeignKey("periodontal_assessments.id", ondelete="CASCADE"), nullable=False, index=True)
+    tooth_fdi: Mapped[str] = mapped_column(String(2), nullable=False)
+    is_excluded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    mobility: Mapped[str | None] = mapped_column(String(8))
+    furcation: Mapped[str | None] = mapped_column(String(8))
+    __table_args__ = (UniqueConstraint("assessment_id", "tooth_fdi", name="uq_periodontal_assessment_tooth"),)
+
+
+class PeriodontalSiteMeasurement(Base):
+    __tablename__ = "periodontal_site_measurements"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    tooth_id: Mapped[UUID] = mapped_column(ForeignKey("periodontal_assessment_teeth.id", ondelete="CASCADE"), nullable=False, index=True)
+    site: Mapped[str] = mapped_column(String(24), nullable=False)
+    probing_depth_mm: Mapped[Decimal | None] = mapped_column(Numeric(7, 2))
+    recession_mm: Mapped[Decimal | None] = mapped_column(Numeric(7, 2))
+    bop: Mapped[bool | None] = mapped_column(Boolean)
+    plaque: Mapped[bool | None] = mapped_column(Boolean)
+    suppuration: Mapped[bool | None] = mapped_column(Boolean)
+    __table_args__ = (UniqueConstraint("tooth_id", "site", name="uq_periodontal_tooth_site"),)
