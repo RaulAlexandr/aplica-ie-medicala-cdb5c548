@@ -85,12 +85,23 @@ try {
   const rooms = (await doctorApi.call('GET', '/rooms')).body;
   const patientA = (await doctorApi.call('POST', '/patients', { first_name: 'Ilinca', last_name: `T11Fictiv${tag.replaceAll(':', '')}` })).body;
   const patientB = (await doctorApi.call('POST', '/patients', { first_name: 'Radu', last_name: `T11Altul${tag.replaceAll(':', '')}` })).body;
-  // Random future slot so repeated runs on the same fictional DB do not collide in the calendar.
-  const start = new Date(Date.now() + (2 + Math.floor(Math.random() * 120)) * 86400000); start.setUTCHours(6 + Math.floor(Math.random() * 6), Math.floor(Math.random() * 6) * 10, 0, 0);
-  const visit = await doctorApi.call('POST', '/appointments', { patient_id: patientA.id, doctor_id: me.id, room_id: rooms[0].id, starts_at: start.toISOString(), duration_minutes: 30, appointment_type: 'Control T11 fictiv' });
-  check('setup: fictional visit for patient A via T02 API', visit.status === 201, { status: visit.status });
-  const visitB = await doctorApi.call('POST', '/appointments', { patient_id: patientB.id, doctor_id: me.id, room_id: rooms[rooms.length > 1 ? 1 : 0].id, starts_at: new Date(start.getTime() + 2 * 3600000).toISOString(), duration_minutes: 30, appointment_type: 'Control B fictiv' });
-  check('setup: fictional visit for patient B', visitB.status === 201, { status: visitB.status });
+  // Random future weekday slots, retried on 409, so repeated runs on the same fictional DB do not
+  // collide with earlier bookings or fall outside working hours.
+  async function bookVisit(patientId, type) {
+    let last = null;
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const start = new Date(Date.now() + (2 + Math.floor(Math.random() * 180)) * 86400000);
+      if ([0, 6].includes(start.getUTCDay())) continue;
+      start.setUTCHours(7 + Math.floor(Math.random() * 6), Math.floor(Math.random() * 6) * 10, 0, 0);
+      last = await doctorApi.call('POST', '/appointments', { patient_id: patientId, doctor_id: me.id, room_id: rooms[attempt % rooms.length].id, starts_at: start.toISOString(), duration_minutes: 30, appointment_type: type });
+      if (last.status !== 409) return last;
+    }
+    return last;
+  }
+  const visit = await bookVisit(patientA.id, 'Control T11 fictiv');
+  check('setup: fictional visit for patient A via T02 API', visit?.status === 201, { status: visit?.status, detail: visit?.body?.detail });
+  const visitB = await bookVisit(patientB.id, 'Control B fictiv');
+  check('setup: fictional visit for patient B', visitB?.status === 201, { status: visitB?.status, detail: visitB?.body?.detail });
   const docsOf = async patientId => (await doctorApi.call('GET', `/documents/patients/${patientId}?include_archived=true`)).body;
 
   // ---- Doctor: upload with visit + tooth, error keeps form, single save ----
