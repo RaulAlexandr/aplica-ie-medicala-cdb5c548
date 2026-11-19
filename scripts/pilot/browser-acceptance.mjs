@@ -187,7 +187,15 @@ try {
   const note = await noteCreate.json();
   const noteCard = page.locator('.clinical-list-item').filter({ has: page.getByRole('heading', { name: noteTitle, exact: true }) });
   await noteCard.waitFor();
-  const timelineResponseP = page.waitForResponse(r => r.request().method() === 'GET' && new URL(r.url()).pathname.endsWith(`/api/clinical-notes/patients/${patientA}/timeline`), { timeout: 8000 }).then(response => response, () => null);
+  let noteFinalizeObserved = false;
+  const timelineResponseP = page.waitForResponse(r => {
+    const pathname = new URL(r.url()).pathname;
+    if (r.request().method() === 'POST' && pathname.endsWith(`/api/clinical-notes/${note.id}/finalize`) && r.status() === 200) {
+      noteFinalizeObserved = true;
+      return false;
+    }
+    return noteFinalizeObserved && r.request().method() === 'GET' && pathname.endsWith(`/api/clinical-notes/patients/${patientA}/timeline`);
+  }, { timeout: 8000 }).then(response => response, () => null);
   const noteFinalize = await observeAction(page, 'finalize T05 note', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/clinical-notes/${note.id}/finalize`), () => noteCard.getByRole('button', { name: 'Finalize note' }).click());
   const timelineRes = await timelineResponseP;
   check('timeline request observed after finalize', Boolean(timelineRes), { requestObserved: Boolean(timelineRes) });
