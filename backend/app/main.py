@@ -15,6 +15,7 @@ from app.performed_procedures.router import router as performed_procedures_route
 from app.procedures.router import router as procedures_router
 from app.rooms_router import router as rooms_router
 from app.staff.router import router as staff_management_router
+from app.treatment_plans.router import router as treatment_plans_router
 
 
 @asynccontextmanager
@@ -32,6 +33,7 @@ app.include_router(procedures_router, prefix="/api")
 app.include_router(performed_procedures_router, prefix="/api")
 app.include_router(clinical_notes_router, prefix="/api")
 app.include_router(odontogram_router, prefix="/api")
+app.include_router(treatment_plans_router, prefix="/api")
 app.include_router(availability_router, prefix="/api")
 app.include_router(rooms_router, prefix="/api")
 app.include_router(staff_router, prefix="/api")

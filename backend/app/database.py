@@ -429,6 +429,114 @@ class PatientTimelineEvent(Base):
     )
 
 
+class TreatmentPlan(Base):
+    """T08 structured treatment plan. Content edits bump ``version``; acceptance freezes one version."""
+
+    __tablename__ = "treatment_plans"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="RESTRICT"), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    accepted_version: Mapped[int | None] = mapped_column(Integer)
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(36))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    cancel_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    __table_args__ = (
+        Index("ix_treatment_plans_clinic_patient", "clinic_id", "patient_id", "created_at"),
+        UniqueConstraint("clinic_id", "created_by_id", "idempotency_key", name="uq_treatment_plan_retry"),
+    )
+
+
+class TreatmentPlanStage(Base):
+    __tablename__ = "treatment_plan_stages"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("treatment_plans.id", ondelete="CASCADE"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    __table_args__ = (Index("ix_treatment_plan_stages_plan", "plan_id", "position"),)
+
+
+class TreatmentPlanItem(Base):
+    """Planned procedure. Estimate fields are a catalog snapshot; links never create T04 records."""
+
+    __tablename__ = "treatment_plan_items"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("treatment_plans.id", ondelete="CASCADE"), nullable=False)
+    stage_id: Mapped[UUID] = mapped_column(ForeignKey("treatment_plan_stages.id", ondelete="CASCADE"), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    procedure_catalog_id: Mapped[UUID] = mapped_column(ForeignKey("procedure_catalog.id", ondelete="RESTRICT"), nullable=False)
+    procedure_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    procedure_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    estimated_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    estimated_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    tooth_fdi: Mapped[str | None] = mapped_column(String(3))
+    tooth_surface: Mapped[str | None] = mapped_column(String(100))
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="normal")
+    notes: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    cancel_reason: Mapped[str | None] = mapped_column(Text)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    appointment_id: Mapped[UUID | None] = mapped_column(ForeignKey("appointments.id", ondelete="RESTRICT"))
+    appointment_linked_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    appointment_linked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    performed_procedure_id: Mapped[UUID | None] = mapped_column(ForeignKey("performed_procedures.id", ondelete="RESTRICT"))
+    performed_linked_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    performed_linked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    idempotency_key: Mapped[str | None] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    __table_args__ = (
+        Index("ix_treatment_plan_items_plan", "plan_id", "stage_id", "position"),
+        UniqueConstraint("performed_procedure_id", name="uq_treatment_plan_item_performed"),
+        UniqueConstraint("plan_id", "idempotency_key", name="uq_treatment_plan_item_retry"),
+    )
+
+
+class TreatmentPlanAcceptance(Base):
+    """Internal staff record that a given plan version was accepted; not an e-signature."""
+
+    __tablename__ = "treatment_plan_acceptances"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("treatment_plans.id", ondelete="CASCADE"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    accepted_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False)
+    snapshot: Mapped[dict] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    __table_args__ = (UniqueConstraint("plan_id", "version", name="uq_treatment_plan_acceptance_version"),)
+
+
+class TreatmentPlanEvent(Base):
+    __tablename__ = "treatment_plan_events"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    plan_id: Mapped[UUID] = mapped_column(ForeignKey("treatment_plans.id", ondelete="CASCADE"), nullable=False)
+    item_id: Mapped[UUID | None] = mapped_column(UUIDType)
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    plan_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    details: Mapped[dict] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    __table_args__ = (Index("ix_treatment_plan_events_plan", "plan_id", "occurred_at"),)
+
+
 engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
