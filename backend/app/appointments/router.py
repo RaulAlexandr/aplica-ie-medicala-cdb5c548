@@ -28,6 +28,7 @@ from app.database import (
     AppointmentHistory,
     AuditEvent,
     Clinic,
+    ClinicalDocument,
     ClinicalNote,
     Patient,
     PerformedProcedure,
@@ -215,7 +216,15 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, d
                 PerformedProcedure.clinic_id == user.clinic_id,
             ).limit(1)
         )
-        if has_note or has_procedure:
+        # T11: documents (active or archived) keep the visit's patient identity. The appointment
+        # row is locked above (FOR UPDATE); T11 upload takes the same lock before saving.
+        has_document = await db.scalar(
+            select(ClinicalDocument.id).where(
+                ClinicalDocument.appointment_id == item.id,
+                ClinicalDocument.clinic_id == user.clinic_id,
+            ).limit(1)
+        )
+        if has_note or has_procedure or has_document:
             raise HTTPException(409, "Cannot change patient after clinical data has been recorded for this appointment")
     await refs(db, user.clinic_id, patient_id, doctor_id, assistant_id, room_id)
     if item.status in ACTIVE_STATUSES: await validate_slot(db, user.clinic_id, start, duration, doctor_id, room_id, assistant_id, item.id)

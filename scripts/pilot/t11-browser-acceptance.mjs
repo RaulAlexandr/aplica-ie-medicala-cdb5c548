@@ -5,6 +5,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const required = ['DENTACARE_PILOT_HOME', 'DENTACARE_APP_SHA', 'PILOT_WEB_URL', 'PILOT_API_URL', 'PILOT_CREDENTIALS', 'PLAYWRIGHT_MODULE', 'CHROMIUM_EXECUTABLE'];
@@ -35,10 +36,13 @@ function png(width, height, shade) {
 const pdf = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [] /Count 0 >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n');
 const files = {
   rx: { name: `radiografie-16-${tag}.png`, data: png(1600, 1000, 60) },
-  photo: { name: `foto-intraoral-${tag}.png`, data: png(1200, 900, 120) },
+  // Real baseline JPEG produced by Pillow from the pilot venv (the API's own decoder dependency).
+  photo: { name: `foto-intraoral-${tag}.jpg`, data: execFileSync(process.env.T11_FIXTURE_PYTHON || path.join(process.env.DENTACARE_PILOT_HOME, 'venv', 'bin', 'python'), ['-I', '-c',
+    'import io,sys\nfrom PIL import Image, ImageDraw\nim=Image.new("RGB",(1200,900),(196,150,120))\nd=ImageDraw.Draw(im)\nfor x in range(0,1200,60): d.rectangle([x,0,x+29,899],fill=(90,60,160))\nfor y in range(0,900,90): d.ellipse([500,y,700,y+60],fill=(240,240,240))\nb=io.BytesIO(); im.save(b,"JPEG",quality=85); sys.stdout.buffer.write(b.getvalue())'], { maxBuffer: 10 * 1024 * 1024 }) },
   pdf: { name: `consimtamant-fictiv-${tag}.pdf`, data: pdf },
   svg: { name: `activ-${tag}.svg`, data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>') },
 };
+files.broken = { name: `radiografie-defecta-${tag}.png`, data: Buffer.concat([files.rx.data.subarray(0, 33), files.rx.data.subarray(files.rx.data.length - 12)]) };
 for (const file of Object.values(files)) { file.path = path.join(fixtureDir, file.name); await fs.writeFile(file.path, file.data, { mode: 0o600 }); }
 
 async function apiSession(account) {
@@ -145,9 +149,25 @@ try {
   check('server stored visit, tooth, dimensions and distinct clinical/recorded dates', rows[0].appointment?.id === visit.body.id && rows[0].tooth_fdi === '16'
     && rows[0].width === 1600 && rows[0].height === 1000 && rows[0].clinical_date === '2026-11-18' && Boolean(rows[0].uploaded_at) && rows[0].original_filename === files.rx.name);
 
+  // Damaged image (plausible PNG headers, no pixel data): server refuses, form kept, nothing saved.
+  await panel.getByLabel('Fișier').setInputFiles(files.broken.path);
+  await panel.getByLabel('Categorie', { exact: true }).selectOption('radiograph');
+  await panel.getByLabel('Dinte', { exact: true }).selectOption('26');
+  await panel.getByLabel('Descriere').fill('Imagine defectă fictivă');
+  await panel.getByRole('button', { name: 'Salvează în dosar' }).click();
+  await panel.getByTestId('document-form-error').waitFor();
+  const brokenError = await panel.getByTestId('document-form-error').innerText();
+  check('damaged image refused by server with form kept and no document', /damaged or cannot be decoded/.test(brokenError)
+    && (await panel.getByTestId('selected-file').innerText()).includes(files.broken.name)
+    && await panel.getByLabel('Dinte', { exact: true }).inputValue() === '26'
+    && await panel.getByLabel('Descriere').inputValue() === 'Imagine defectă fictivă'
+    && (await docsOf(patientA.id)).length === 1, { brokenError });
+  await shot(page, 'damaged-image-refused');
+
   await panel.getByLabel('Fișier').setInputFiles(files.photo.path);
   await panel.getByLabel('Categorie', { exact: true }).selectOption('photo');
   await panel.getByLabel('Dinte', { exact: true }).selectOption('16');
+  await panel.getByLabel('Descriere').fill('');
   await panel.getByRole('button', { name: 'Salvează în dosar' }).click();
   await panel.getByText('Fișier salvat în dosarul pacientului.').waitFor();
   await panel.getByLabel('Fișier').setInputFiles(files.pdf.path);
@@ -157,7 +177,11 @@ try {
   await panel.getByText('Fișier salvat în dosarul pacientului.').waitFor();
   await itemOf(panel, files.pdf.name).waitFor();
   rows = await docsOf(patientA.id);
-  check('image and PDF uploaded through the UI', rows.length === 3 && rows.filter(r => r.is_image).length === 2 && rows.some(r => r.content_type === 'application/pdf'));
+  check('real PNG, real JPEG and PDF uploaded through the UI', rows.length === 3 && rows.filter(r => r.is_image).length === 2 && rows.some(r => r.content_type === 'application/pdf')
+    && rows.some(r => r.content_type === 'image/jpeg' && r.width === 1200 && r.height === 900 && r.original_filename === files.photo.name));
+  const reassign = await doctorApi.call('PATCH', `/appointments/${visit.body.id}`, { patient_id: patientB.id });
+  const visitAfter = (await doctorApi.call('GET', `/appointments/${visit.body.id}`)).body;
+  check('visit with documents cannot be reassigned to another patient', reassign.status === 409 && visitAfter.patient_id === patientA.id, { status: reassign.status });
   check('PDF has download but no in-app viewer', await itemOf(panel, files.pdf.name).getByRole('button', { name: 'Vizualizează' }).count() === 0
     && await itemOf(panel, files.pdf.name).getByRole('button', { name: 'Descarcă' }).count() === 1);
   await shot(page, 'documents-list');
@@ -187,7 +211,8 @@ try {
   const compare = panel.getByLabel('Comparație imagini');
   const panes = compare.getByTestId('compare-pane');
   await page.waitForFunction(() => [...document.querySelectorAll('.doc-compare img')].filter(el => el.complete && el.naturalWidth > 0).length === 2);
-  check('two images side by side', await panes.count() === 2);
+  const compareNatural = await compare.locator('img').evaluateAll(els => els.map(el => el.naturalWidth));
+  check('real PNG and real JPEG decoded side by side', await panes.count() === 2 && compareNatural.join(',') === '1600,1200', { compareNatural });
   await panes.nth(0).getByRole('button', { name: 'Mărește' }).click();
   check('synchronized zoom applies to both images', (await compare.getByTestId('zoom-level').allInnerTexts()).join(',') === '125%,125%');
   await compare.getByLabel('Zoom sincronizat').uncheck();

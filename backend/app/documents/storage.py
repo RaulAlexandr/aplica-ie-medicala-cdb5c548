@@ -12,14 +12,18 @@ import hashlib
 import os
 import re
 import secrets
-import struct
 import unicodedata
+import warnings
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import UUID
 
+from PIL import Image, ImageFile
+
 from app.config import settings
+
+ImageFile.LOAD_TRUNCATED_IMAGES = False
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 KEY_PATTERN = re.compile(r"^[0-9a-f]{32}$")
@@ -131,73 +135,51 @@ def discard(path: Path | None) -> None:
 
 
 def inspect_content(staged: StagedFile) -> None:
-    """Detect the real type from the bytes and enforce image/PDF rules. Raises ContentRejected."""
+    """Detect the real type from the bytes and enforce image/PDF rules. Raises ContentRejected.
+
+    Images are opened with Pillow: the format must match the signature, dimensions are checked
+    against the configured limits from the header *before* decoding, then the file is verified
+    (chunk/marker structure, PNG CRCs) and fully decoded. Truncated or pixel-less files fail.
+    """
     with staged.path.open("rb") as handle:
         head = handle.read(16)
         if head.startswith(b"\x89PNG\r\n\x1a\n"):
             staged.content_type = "image/png"
-            staged.width, staged.height = _png_size(handle)
         elif head.startswith(b"\xff\xd8\xff"):
             staged.content_type = "image/jpeg"
-            staged.width, staged.height = _jpeg_size(handle)
         elif head.startswith(b"%PDF-"):
             staged.content_type = "application/pdf"
             _check_pdf(handle, staged.size)
+            return
         else:
             raise ContentRejected(415, "Unsupported file type: only JPEG, PNG and PDF are accepted")
-    if staged.content_type in IMAGE_TYPES:
-        width, height = staged.width or 0, staged.height or 0
-        if width < 1 or height < 1:
-            raise ContentRejected(415, "Image dimensions could not be read")
-        side = settings.document_max_image_side
-        if width > side or height > side or width * height > settings.document_max_image_pixels:
-            raise ContentRejected(413, f"Image dimensions {width}×{height} exceed the configured limit")
+    staged.width, staged.height = _decode_image(staged.path, PIL_FORMATS[staged.content_type])
 
 
-def _png_size(handle) -> tuple[int, int]:
-    handle.seek(8)
-    header = handle.read(8 + 13)
-    if len(header) < 21 or header[4:8] != b"IHDR":
-        raise ContentRejected(415, "Invalid PNG header")
-    width, height = struct.unpack(">II", header[8:16])
-    handle.seek(-12, os.SEEK_END)
-    if handle.read(12)[4:8] != b"IEND":
-        raise ContentRejected(415, "Truncated or invalid PNG")
+PIL_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG"}
+
+
+def _decode_image(path: Path, expected_format: str) -> tuple[int, int]:
+    side, max_pixels = settings.document_max_image_side, settings.document_max_image_pixels
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(path, formats=[expected_format]) as image:
+                width, height = image.size  # header only, nothing decoded yet
+                if width < 1 or height < 1:
+                    raise ContentRejected(415, "Image dimensions could not be read")
+                if width > side or height > side or width * height > max_pixels:
+                    raise ContentRejected(413, f"Image dimensions {width}×{height} exceed the configured limit")
+                image.verify()
+            with Image.open(path, formats=[expected_format]) as image:
+                image.load()  # full decode; LOAD_TRUNCATED_IMAGES stays False
+    except ContentRejected:
+        raise
+    except Exception as exc:
+        # Pillow raises varied types for malformed input (OSError, SyntaxError, IndexError, …),
+        # including DecompressionBombError/Warning above its own pixel guard.
+        raise ContentRejected(415, "Image is damaged or cannot be decoded") from exc
     return width, height
-
-
-def _jpeg_size(handle) -> tuple[int, int]:
-    handle.seek(2)
-    while True:
-        byte = handle.read(1)
-        if not byte:
-            break
-        if byte != b"\xff":
-            raise ContentRejected(415, "Invalid JPEG structure")
-        marker = handle.read(1)
-        while marker == b"\xff":
-            marker = handle.read(1)
-        if not marker:
-            break
-        code = marker[0]
-        if code in (0xD8, 0x01) or 0xD0 <= code <= 0xD7:
-            continue
-        if code in (0xD9, 0xDA):
-            break
-        raw_length = handle.read(2)
-        if len(raw_length) < 2:
-            break
-        length = struct.unpack(">H", raw_length)[0]
-        if length < 2:
-            raise ContentRejected(415, "Invalid JPEG segment")
-        if 0xC0 <= code <= 0xCF and code not in (0xC4, 0xC8, 0xCC):
-            data = handle.read(5)
-            if len(data) < 5:
-                break
-            height, width = struct.unpack(">HH", data[1:5])
-            return width, height
-        handle.seek(length - 2, os.SEEK_CUR)
-    raise ContentRejected(415, "JPEG dimensions could not be read")
 
 
 def _check_pdf(handle, size: int) -> None:

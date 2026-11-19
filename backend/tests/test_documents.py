@@ -1,6 +1,7 @@
 """T11 protected documents/images: authorization, clinic isolation, references, formats, limits,
 dangerous names, storage/DB failure rollback, idempotency and persistence."""
 
+import io
 import os
 import stat
 import struct
@@ -10,6 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from PIL import Image
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -40,9 +42,25 @@ def png(width: int = 4, height: int = 3) -> bytes:
 
 
 def jpeg(width: int = 640, height: int = 480) -> bytes:
+    """A real, decodable baseline JPEG (Pillow encoder)."""
+    image = Image.new("RGB", (width, height), (180, 120, 90))
+    for x in range(0, width, 16):
+        image.paste((40, 60, 200), (x, 0, min(width, x + 8), height))
+    out = io.BytesIO()
+    image.save(out, format="JPEG", quality=80)
+    return out.getvalue()
+
+
+def jpeg_without_scan(width: int = 640, height: int = 480) -> bytes:
+    """Plausible SOI/APP0/SOF/EOI headers with no SOS marker and no scan data."""
     app0 = b"\xff\xe0" + struct.pack(">H", 16) + b"JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
     sof = b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, height, width, 1) + b"\x01\x11\x00"
     return b"\xff\xd8" + app0 + sof + b"\xff\xd9"
+
+
+def png_without_idat() -> bytes:
+    body = png()
+    return body[:33] + body[-12:]  # signature + IHDR + IEND, zero pixel data
 
 
 def pdf(extra: bytes = b"") -> bytes:
@@ -250,6 +268,10 @@ async def test_other_clinic_and_foreign_visit_are_refused_without_partial_record
     (b"%PDF-1.4\n1 0 obj << >> endobj\n", "trunchiat.pdf", "document", 415),
     (png()[:-12], "trunchiat.png", "photo", 415),
     (b"\xff\xd8\xff\xd9", "fara-dimensiuni.jpg", "photo", 415),
+    (png_without_idat(), "fara-pixeli.png", "photo", 415),
+    (jpeg_without_scan(), "fara-scan.jpg", "photo", 415),
+    (jpeg()[: len(jpeg()) // 2], "jpeg-trunchiat.jpg", "photo", 415),
+    (png()[:-20] + png()[-12:], "png-crc-stricat.png", "photo", 415),
     (pdf(), "raport.pdf", "radiograph", 422),  # radiographs/photos must be raster images
     (b"", "gol.png", "photo", 422),
 ])
@@ -413,3 +435,37 @@ async def test_missing_file_on_disk_is_reported_without_internal_paths(env):
         os.remove(path)
     response = await client.get(f"/api/documents/{doc['id']}/content", headers=ctx["auth"])
     assert response.status_code == 404 and str(store) not in response.text
+
+
+async def test_visit_with_documents_cannot_change_patient_even_when_archived(env):
+    """Appointments guard (T11 extension): documents keep the visit's patient identity."""
+    client, _sessions, _store = env
+    ctx = await clinic(client, "t11-reassign@example.com")
+    a, b = await patient(client, ctx["auth"], "Ana"), await patient(client, ctx["auth"], "Bianca")
+    v_active, v_archived, v_free = await visit(client, ctx, a, 3), await visit(client, ctx, a, 4), await visit(client, ctx, a, 5)
+    active = await upload(client, ctx["auth"], a, png(), appointment_id=v_active)
+    archived = await upload(client, ctx["auth"], a, jpeg(), "arhivat.jpg", appointment_id=v_archived)
+    assert active.status_code == 201 and archived.status_code == 201
+    assert (await client.post(f"/api/documents/{archived.json()['id']}/archive", headers=ctx["auth"], json={"reason": "Test"})).status_code == 200
+    for vid in (v_active, v_archived):
+        response = await client.patch(f"/api/appointments/{vid}", headers=ctx["auth"], json={"patient_id": b})
+        assert response.status_code == 409, response.text
+        assert (await client.get(f"/api/appointments/{vid}", headers=ctx["auth"])).json()["patient_id"] == a
+    for doc in (active.json(), archived.json()):
+        assert (await client.get(f"/api/documents/{doc['id']}", headers=ctx["auth"])).json()["patient_id"] == a
+    # Other changes of the same visit and reassignment of a visit without documents still work.
+    assert (await client.patch(f"/api/appointments/{v_active}", headers=ctx["auth"], json={"notes": "Notă fictivă"})).status_code == 200
+    assert (await client.patch(f"/api/appointments/{v_free}", headers=ctx["auth"], json={"patient_id": b})).status_code == 200
+
+
+async def test_upload_after_visit_reassignment_is_refused_without_residue(env):
+    client, sessions, store = env
+    ctx = await clinic(client, "t11-reassign-first@example.com")
+    a, b = await patient(client, ctx["auth"], "Ana"), await patient(client, ctx["auth"], "Bianca")
+    vid = await visit(client, ctx, a)
+    assert (await client.patch(f"/api/appointments/{vid}", headers=ctx["auth"], json={"patient_id": b})).status_code == 200
+    response = await upload(client, ctx["auth"], a, png(), appointment_id=vid)
+    assert response.status_code == 422
+    assert await doc_count(sessions) == 0 and stored_files(store) == []
+    async with sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(AuditEvent).where(AuditEvent.entity_type == "clinical_document")) == 0

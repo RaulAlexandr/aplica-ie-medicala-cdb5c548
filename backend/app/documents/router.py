@@ -9,6 +9,7 @@ Roles: clinic_manager, doctor, administrator. Reception and assistants receive 4
 route in the pilot. Other clinics' documents are 404.
 """
 
+import asyncio
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 from urllib.parse import quote, unquote
@@ -105,14 +106,20 @@ async def _patient(db: AsyncSession, patient_id: UUID, user: User) -> Patient:
     return patient
 
 
-async def _validate_refs(db: AsyncSession, clinic_id: UUID, patient_id: UUID, appointment_id: UUID | None) -> None:
+async def _validate_refs(db: AsyncSession, clinic_id: UUID, patient_id: UUID, appointment_id: UUID | None,
+                         *, lock: bool = False) -> None:
+    """With ``lock=True`` the visit row is locked (FOR UPDATE) for the rest of the transaction, the
+    same lock taken by appointment reassignment, so the visit cannot change patient between this
+    check and the commit of the document. Only a column is selected so the value is always fresh."""
     patient = await db.scalar(select(Patient.id).where(Patient.id == patient_id, Patient.clinic_id == clinic_id))
     if not patient:
         raise HTTPException(404, "Patient not found or access denied")
     if appointment_id is not None:
-        appointment = await db.scalar(select(Appointment).where(
-            Appointment.id == appointment_id, Appointment.clinic_id == clinic_id))
-        if not appointment or appointment.patient_id != patient_id:
+        query = select(Appointment.patient_id).where(Appointment.id == appointment_id, Appointment.clinic_id == clinic_id)
+        if lock:
+            query = query.with_for_update()
+        visit_patient = await db.scalar(query)
+        if visit_patient is None or visit_patient != patient_id:
             raise HTTPException(422, "Visit does not belong to this patient")
 
 
@@ -241,7 +248,7 @@ async def upload_document(
     try:
         try:
             staged = await storage.stage_upload(request.stream(), max_bytes)
-            storage.inspect_content(staged)
+            await asyncio.to_thread(storage.inspect_content, staged)  # full decode off the event loop
             storage.check_extension(display_name, staged.content_type)
         except storage.ContentRejected as exc:
             raise HTTPException(exc.status_code, exc.detail) from exc
@@ -257,8 +264,9 @@ async def upload_document(
                     raise HTTPException(409, "Idempotency-Key was already used with a different upload")
                 return (await _serialize(db, [existing]))[0]
 
-        # Authoritative validation in the same transaction as the insert.
-        await _validate_refs(db, clinic_id, patient_id, appointment_id)
+        # Authoritative validation under the visit row lock, in the same transaction as the insert.
+        # The lock is taken only now, after the body was streamed and inspected.
+        await _validate_refs(db, clinic_id, patient_id, appointment_id, lock=True)
         storage_key = storage.new_storage_key()
         document = ClinicalDocument(
             clinic_id=clinic_id, patient_id=patient_id, appointment_id=appointment_id, tooth_fdi=tooth,
