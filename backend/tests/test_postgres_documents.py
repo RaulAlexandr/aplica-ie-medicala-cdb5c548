@@ -151,15 +151,16 @@ async def test_t11_api_references_and_persistence_on_postgresql(temp_database, t
             async def patient(ctx, first):
                 return (await client.post("/api/patients", headers=ctx["auth"], json={"first_name": first, "last_name": "PG"})).json()["id"]
 
-            async def visit(ctx, patient_id):
+            async def visit(ctx, patient_id, starts_at):
                 response = await client.post("/api/appointments", headers=ctx["auth"], json={
                     "patient_id": patient_id, "doctor_id": ctx["me"]["id"], "room_id": ctx["room"],
-                    "starts_at": "2026-12-05T09:00:00+00:00", "duration_minutes": 30, "appointment_type": "Control"})
+                    "starts_at": starts_at, "duration_minutes": 30, "appointment_type": "Control"})
                 assert response.status_code == 201, response.text
                 return response.json()["id"]
 
             p1, p2, pb = await patient(a, "Ana"), await patient(a, "Bianca"), await patient(b, "Corina")
-            v1, v2, vb = await visit(a, p1), await visit(a, p2), await visit(b, pb)
+            slot_9, slot_10 = "2026-12-05T09:00:00+00:00", "2026-12-05T10:00:00+00:00"
+            v1, v2, vb = await visit(a, p1, slot_9), await visit(a, p2, slot_10), await visit(b, pb, slot_9)
 
             async def upload(ctx, patient_id, **params):
                 return await client.post(f"/api/documents/patients/{patient_id}", headers={
