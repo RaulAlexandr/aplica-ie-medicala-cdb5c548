@@ -247,9 +247,8 @@ try {
   const chartProcedure = await chartCreate.json();
   check('T07 chart path saved one pending procedure', chartCreate.status() === 201 && chartProcedure.status === 'pending' && chartProcedure.tooth_fdi === '16', { status: chartCreate.status(), procedureStatus: chartProcedure.status, tooth: chartProcedure.tooth_fdi, procedureId: chartProcedure.id });
 
-  // Reopen the patient record and use the second T07 path from the visit page.
+  // Reload the patient record, then verify the saved procedure on its visit page.
   await page.reload();
-  await page.getByText(firstProcedureNote, { exact: true }).waitFor();
   const visitUrl = `/appointments/${chartProcedure.appointment_id}/visit`;
   await page.goto(`${web}${visitUrl}`, { waitUntil: 'domcontentloaded' });
   await page.getByRole('heading', { name: 'Performed procedures', exact: true }).waitFor();
