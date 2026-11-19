@@ -14,7 +14,7 @@ const draft: periodontalApi.Assessment = {
   change_reason: null, created_at: '2026-11-19T10:00:00Z', finalized_at: null, teeth: [],
 };
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('PeriodontalSection save interaction', () => {
   it('disables the save action while one persistence request is still pending', async () => {
@@ -27,7 +27,7 @@ describe('PeriodontalSection save interaction', () => {
     let renderer!: TestRenderer.ReactTestRenderer;
 
     await act(async () => {
-      renderer = TestRenderer.create(<PeriodontalSection patientId="patient-1" user={user} />);
+      renderer = TestRenderer.create(<PeriodontalSection patientId="patient-1" user={user} timezone="Europe/Bucharest" />);
       await new Promise(resolve => setTimeout(resolve, 0));
     });
     await act(async () => {
@@ -49,5 +49,36 @@ describe('PeriodontalSection save interaction', () => {
       await new Promise(resolve => setTimeout(resolve, 0));
     });
     expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the clinic time zone for the default clinical date and the finalization time', async () => {
+    // 2026-11-19T23:30Z is already 20 Nov in Bucharest but still 19 Nov in Los Angeles and in UTC.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-19T23:30:00Z'));
+    const finalized: periodontalApi.Assessment = { ...draft, status: 'finalized', finalized_at: '2026-11-19T23:15:00Z' };
+    vi.spyOn(periodontalApi, 'listAssessments').mockResolvedValue([finalized]);
+    vi.spyOn(periodontalApi, 'getAssessment').mockResolvedValue(finalized);
+    const textOf = (node: TestRenderer.ReactTestInstance): string => node.children.map(child => typeof child === 'string' ? child : textOf(child)).join('');
+    const mount = async (timezone: string) => {
+      let renderer!: TestRenderer.ReactTestRenderer;
+      await act(async () => {
+        renderer = TestRenderer.create(<PeriodontalSection patientId="patient-1" user={user} timezone={timezone} />);
+        await new Promise(resolve => setTimeout(resolve, 0));
+      });
+      return renderer;
+    };
+    const expectedTime = (timezone: string) => new Intl.DateTimeFormat('ro-RO', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date('2026-11-19T23:15:00Z'));
+
+    const bucharest = await mount('Europe/Bucharest');
+    expect(bucharest.root.findByProps({ type: 'date' }).props.value).toBe('2026-11-20');
+    const bucharestText = textOf(bucharest.root);
+    expect(bucharestText).toContain(`Finalizată ${expectedTime('Europe/Bucharest')}`);
+    expect(bucharestText).not.toContain('2026-11-19T23:15:00Z');
+    bucharest.unmount();
+
+    const losAngeles = await mount('America/Los_Angeles');
+    expect(losAngeles.root.findByProps({ type: 'date' }).props.value).toBe('2026-11-19');
+    expect(textOf(losAngeles.root)).toContain(`Finalizată ${expectedTime('America/Los_Angeles')}`);
+    expect(expectedTime('America/Los_Angeles')).not.toBe(expectedTime('Europe/Bucharest'));
   });
 });

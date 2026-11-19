@@ -6,9 +6,13 @@ import './periodontal.css';
 const fdi = Array.from({ length: 32 }, (_, i) => `${Math.floor(i / 8) + 1}${i % 8 + 1}`);
 const display = (value: unknown) => value === null || value === undefined ? '—' : typeof value === 'boolean' ? (value ? 'Da' : 'Nu') : String(value);
 const labels: Record<string, string> = { buccal_mesial: 'Vestibular · mezial', buccal_mid: 'Vestibular · mijloc', buccal_distal: 'Vestibular · distal', oral_mesial: 'Oral · mezial', oral_mid: 'Oral · mijloc', oral_distal: 'Oral · distal' };
+// Clinic-local presentation (same rule as the rest of the clinical record): server instants are shown in the
+// clinic time zone, and the default clinical date is the clinic's current calendar day, not the browser's UTC day.
+const formatClinicDateTime = (value: string, timezone: string) => new Intl.DateTimeFormat('ro-RO', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date(value));
+const clinicToday = (timezone: string, now: Date = new Date()) => new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: timezone }).format(now);
 const fields = [['probing_depth_mm', 'Adâncime (mm)', 'number'], ['recession_mm', 'Recesiune (mm)', 'number'], ['bop', 'BOP', 'boolean'], ['plaque', 'Placă', 'boolean'], ['suppuration', 'Supurație', 'boolean']] as const;
 
-export function PeriodontalSection({ patientId, user }: { patientId: string; user: User }) {
+export function PeriodontalSection({ patientId, user, timezone }: { patientId: string; user: User; timezone: string }) {
   const [history, setHistory] = useState<Assessment[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [assessment, setAssessment] = useState<Assessment | null>(null);
@@ -18,7 +22,7 @@ export function PeriodontalSection({ patientId, user }: { patientId: string; use
   const [compareFirst, setCompareFirst] = useState('');
   const [compareSecond, setCompareSecond] = useState('');
   const [comparison, setComparison] = useState<Comparison | null>(null);
-  const [clinicalDate, setClinicalDate] = useState(new Date().toISOString().slice(0, 10));
+  const [clinicalDate, setClinicalDate] = useState(() => clinicToday(timezone));
   const [correctionReason, setCorrectionReason] = useState('');
   const canCreate = ['doctor', 'clinic_manager', 'administrator'].includes(user.role);
   const refresh = async (selectId?: string) => {
@@ -44,7 +48,7 @@ export function PeriodontalSection({ patientId, user }: { patientId: string; use
     {!history.length && <p className="muted">Nu există evaluări parodontale.</p>}
     <label>Istoric<select value={selectedId} onChange={event => void run(async () => { setSelectedId(event.target.value); setAssessment(event.target.value ? await getAssessment(event.target.value) : null); })}><option value="">Alege o evaluare</option>{history.map(row => <option key={row.id} value={row.id}>{row.clinical_date} · {row.status === 'draft' ? 'Ciornă proprie' : 'Finalizată'} · {row.author_name}</option>)}</select></label>
     {assessment && <>
-      <p className="muted">Data clinică: {assessment.clinical_date} · Autor: {assessment.author_name} · {assessment.status === 'draft' ? 'Ciornă' : `Finalizată ${assessment.finalized_at ?? ''}`}{assessment.relationship_kind ? ` · ${assessment.relationship_kind}${assessment.change_reason ? `: ${assessment.change_reason}` : ''}` : ''}</p>
+      <p className="muted">Data clinică: {assessment.clinical_date} · Autor: {assessment.author_name} · {assessment.status === 'draft' ? 'Ciornă' : `Finalizată ${assessment.finalized_at ? formatClinicDateTime(assessment.finalized_at, timezone) : ''}`}{assessment.relationship_kind ? ` · ${assessment.relationship_kind}${assessment.change_reason ? `: ${assessment.change_reason}` : ''}` : ''}</p>
       {assessment.status === 'draft' && assessment.author_id === user.id && <div className="periodontal-editor">
         <label>Dinte FDI<select value={tooth} onChange={event => setTooth(event.target.value)}>{fdi.map(code => <option key={code} value={code}>{code}</option>)}</select></label>
         <label><input type="checkbox" checked={currentTooth.is_excluded} onChange={e => updateTooth(tooth, row => ({ ...row, is_excluded: e.target.checked, mobility: e.target.checked ? null : row.mobility, furcation: e.target.checked ? null : row.furcation, sites: row.sites.map(site => ({ ...site, probing_depth_mm: null, recession_mm: null, bop: null, plaque: null, suppuration: null })) }))} /> Dinte exclus din evaluare</label>

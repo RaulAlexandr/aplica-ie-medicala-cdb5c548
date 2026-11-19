@@ -135,7 +135,7 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
       {timezone && <TreatmentPlansPanel key={`${patientId}:treatment-plans`} patientId={patientId} timezone={timezone} />}
       {timezone && <DocumentsPanel key={`${patientId}:documents`} patientId={patientId} timezone={timezone} />}
     </>}
-    {(['doctor', 'clinic_manager', 'administrator'].includes(user.role)) && <PeriodontalSection key={`${patientId}:periodontal`} patientId={patientId} user={user} />}
+    {timezone && (['doctor', 'clinic_manager', 'administrator'].includes(user.role)) && <PeriodontalSection key={`${patientId}:periodontal`} patientId={patientId} user={user} timezone={timezone} />}
     {timezone && <PatientOdontogram
       key={`${patientId}:odontogram`}
       patientId={patientId}
