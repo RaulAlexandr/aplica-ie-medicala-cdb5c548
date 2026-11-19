@@ -295,7 +295,10 @@ function CompareView({ documents, timezone, onClose }: { documents: ClinicalDocu
   return <div className="doc-viewer" aria-label="Comparație imagini">
     <div className="detail-heading"><h3>Comparație</h3>
       <div className="tp-actions">
-        <label className="clinical-checkbox"><input type="checkbox" aria-label="Zoom sincronizat" checked={sync} onChange={event => setSync(event.target.checked)} />Zoom sincronizat</label>
+        <label className="clinical-checkbox"><input type="checkbox" aria-label="Zoom sincronizat" checked={sync} onChange={event => {
+          if (!event.target.checked) { setLeft(shared); setRight(shared); } else setShared(left);
+          setSync(event.target.checked);
+        }} />Zoom sincronizat</label>
         <button type="button" className="secondary" onClick={onClose}>Închide comparația</button>
       </div>
     </div>

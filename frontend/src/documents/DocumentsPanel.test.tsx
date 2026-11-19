@@ -183,7 +183,7 @@ describe('DocumentsPanel', () => {
     expect(r.root.findAllByProps({ 'data-testid': 'zoom-level' }).map(text)).toEqual(['125%', '125%']);
     act(() => byLabel(r, 'Zoom sincronizat').props.onChange({ target: { checked: false } }));
     act(() => r.root.findAllByProps({ 'data-testid': 'compare-pane' })[1].findByProps({ 'aria-label': 'Mărește' }).props.onClick());
-    expect(r.root.findAllByProps({ 'data-testid': 'zoom-level' }).map(text)).toEqual(['100%', '125%']);
+    expect(r.root.findAllByProps({ 'data-testid': 'zoom-level' }).map(text)).toEqual(['125%', '156%']); // unsync keeps the current level
   });
 
   it('requires a reason to archive and keeps traceability visible', async () => {
