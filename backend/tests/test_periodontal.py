@@ -9,9 +9,11 @@ from app.auth.service import create_access_token
 from app.database import (
     Base,
     OdontogramToothState,
+    PerformedProcedure,
     PeriodontalAssessment,
     PeriodontalAssessmentTooth,
     PeriodontalSiteMeasurement,
+    ProcedureExecutionSegment,
     User,
     get_db,
 )
@@ -95,6 +97,8 @@ async def test_periodontal_validation_draft_privacy_finalize_history_and_partial
     assert (await client.get(f"/api/periodontal/assessments/{assessment_id}", headers=peer_auth)).status_code == 404
     assert (await client.get(f"/api/periodontal/patients/{patient}/assessments", headers=peer_auth)).json() == []
     assert (await client.get(f"/api/periodontal/patients/{patient}/compare", headers=peer_auth, params={"first_id": assessment_id, "second_id": assessment_id})).status_code == 404
+    assert (await client.put(f"/api/periodontal/assessments/{assessment_id}/measurements", headers=peer_auth, json={"teeth": [tooth()]})).status_code == 404
+    assert (await client.post(f"/api/periodontal/assessments/{assessment_id}/finalize", headers=peer_auth)).status_code == 404
 
     baseline_teeth = [tooth(), tooth("17", 2.5)]
     baseline_teeth[0]["sites"][0]["plaque"] = False
@@ -113,6 +117,11 @@ async def test_periodontal_validation_draft_privacy_finalize_history_and_partial
     followup_teeth = [tooth(first_depth=1), tooth("17", 2.5)]
     followup_teeth[0]["sites"][0]["bop"] = True
     followup_teeth[0]["sites"][0]["plaque"] = True
+    missing_bop_tooth = tooth("18")
+    missing_bop_tooth["sites"][0]["recession_mm"] = 0
+    for site_row in missing_bop_tooth["sites"]:
+        site_row["bop"] = None
+    followup_teeth.append(missing_bop_tooth)
     saved2 = await client.put(f"/api/periodontal/assessments/{second.json()['id']}/measurements", headers=auth, json={"teeth": followup_teeth})
     assert saved2.status_code == 200, saved2.text
     assert (await client.post(f"/api/periodontal/assessments/{second.json()['id']}/finalize", headers=auth)).status_code == 200
@@ -129,12 +138,51 @@ async def test_periodontal_validation_draft_privacy_finalize_history_and_partial
     assert tooth16["second_bop_percent"] == 100
     assert tooth16["sites"][1]["first"]["bop"] is None
     assert tooth16["sites"][1]["differences"]["bop"] is None
+    tooth18 = next(row for row in comparison.json()["teeth"] if row["tooth_fdi"] == "18")
+    assert tooth18["second_bop_positive"] == 0
+    assert tooth18["second_bop_known_denominator"] == 0
+    assert tooth18["second_bop_percent"] is None
     assert len((await client.get(f"/api/periodontal/patients/{patient}/assessments", headers=auth)).json()) == 2
+
+    # Corrections preserve the finalized source and record a required reason.
+    no_reason = await client.post(f"/api/periodontal/patients/{patient}/assessments", headers=auth, json={
+        "clinical_date": "2026-12-20", "previous_assessment_id": assessment_id, "relationship_kind": "correction",
+    })
+    assert no_reason.status_code == 422
+    correction = await client.post(f"/api/periodontal/patients/{patient}/assessments", headers=auth, json={
+        "clinical_date": "2026-12-20", "previous_assessment_id": assessment_id,
+        "relationship_kind": "correction", "change_reason": "Corectare de măsurare fictivă",
+    })
+    assert correction.status_code == 201 and correction.json()["change_reason"] == "Corectare de măsurare fictivă"
+    correction_save = await client.put(f"/api/periodontal/assessments/{correction.json()['id']}/measurements", headers=auth, json={"teeth": [tooth(first_depth=0)]})
+    assert correction_save.status_code == 200
+    assert (await client.post(f"/api/periodontal/assessments/{correction.json()['id']}/finalize", headers=auth)).status_code == 200
+    corrected_source = await client.get(f"/api/periodontal/assessments/{assessment_id}", headers=auth)
+    assert corrected_source.json()["status"] == "finalized"
+    assert corrected_source.json()["teeth"] == saved.json()["teeth"]
+    history = await client.get(f"/api/periodontal/patients/{patient}/assessments", headers=auth)
+    assert len(history.json()) == 3
+    assert next(item for item in history.json() if item["id"] == correction.json()["id"])["relationship_kind"] == "correction"
+    another_patient = await create_patient(client, auth, first="Alt pacient")
+    wrong_patient_comparison = await client.get(
+        f"/api/periodontal/patients/{another_patient}/compare", headers=auth,
+        params={"first_id": assessment_id, "second_id": second.json()["id"]},
+    )
+    assert wrong_patient_comparison.status_code == 404
+    wrong_patient_link = await client.post(
+        f"/api/periodontal/patients/{another_patient}/assessments", headers=auth, json={
+            "clinical_date": "2026-12-21", "previous_assessment_id": assessment_id,
+            "relationship_kind": "follow_up",
+        },
+    )
+    assert wrong_patient_link.status_code == 422
     async with sessions() as db:
         assert await db.scalar(select(func.count()).select_from(OdontogramToothState)) == 0
-        assert await db.scalar(select(func.count()).select_from(PeriodontalAssessment)) == 2
-        assert await db.scalar(select(func.count()).select_from(PeriodontalAssessmentTooth)) == 4
-        assert await db.scalar(select(func.count()).select_from(PeriodontalSiteMeasurement)) == 24
+        assert await db.scalar(select(func.count()).select_from(PeriodontalAssessment)) == 3
+        assert await db.scalar(select(func.count()).select_from(PeriodontalAssessmentTooth)) == 6
+        assert await db.scalar(select(func.count()).select_from(PeriodontalSiteMeasurement)) == 36
+        assert await db.scalar(select(func.count()).select_from(PerformedProcedure)) == 0
+        assert await db.scalar(select(func.count()).select_from(ProcedureExecutionSegment)) == 0
 
 @pytest.mark.asyncio
 async def test_periodontal_role_tenant_and_patient_isolation(paro_client):
