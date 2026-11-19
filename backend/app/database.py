@@ -5,7 +5,9 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -535,6 +537,49 @@ class TreatmentPlanEvent(Base):
     details: Mapped[dict] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False, default=dict)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     __table_args__ = (Index("ix_treatment_plan_events_plan", "plan_id", "occurred_at"),)
+
+
+class ClinicalDocument(Base):
+    """T11 protected document/image metadata. Binary content lives outside the database, under a
+    server-generated storage key; the original filename is display metadata only."""
+
+    __tablename__ = "clinical_documents"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="RESTRICT"), nullable=False)
+    appointment_id: Mapped[UUID | None] = mapped_column(ForeignKey("appointments.id", ondelete="RESTRICT"))
+    tooth_fdi: Mapped[str | None] = mapped_column(String(3))
+    category: Mapped[str] = mapped_column(String(20), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    storage_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    clinical_date: Mapped[date | None] = mapped_column(Date)
+    uploaded_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(36))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    archive_reason: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (
+        Index("ix_clinical_documents_patient", "clinic_id", "patient_id", "uploaded_at"),
+        Index("ix_clinical_documents_appointment", "appointment_id"),
+        UniqueConstraint("storage_key", name="uq_clinical_document_storage_key"),
+        UniqueConstraint("clinic_id", "uploaded_by_id", "idempotency_key", name="uq_clinical_document_retry"),
+        CheckConstraint("status IN ('active', 'archived')", name="ck_clinical_document_status"),
+        CheckConstraint("category IN ('photo', 'radiograph', 'document', 'other')", name="ck_clinical_document_category"),
+        CheckConstraint("content_type IN ('image/jpeg', 'image/png', 'application/pdf')", name="ck_clinical_document_type"),
+        CheckConstraint("size_bytes > 0", name="ck_clinical_document_size"),
+        CheckConstraint(
+            "(status = 'archived') = (archived_at IS NOT NULL AND archived_by_id IS NOT NULL AND archive_reason IS NOT NULL)",
+            name="ck_clinical_document_archive",
+        ),
+    )
 
 
 engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
