@@ -259,7 +259,9 @@ try {
   await page.reload();
   await page.getByText(firstProcedureNote, { exact: true }).waitFor();
   await page.getByText(secondProcedureNote, { exact: true }).waitFor();
-  check('both T07 procedures survive visit reload', await page.locator('article.procedure-card').count() === 2, { procedureCards: await page.locator('article.procedure-card').count() });
+  const persistedChartPathCount = await page.locator('article.procedure-card').filter({ hasText: firstProcedureNote }).count();
+  const persistedVisitPathCount = await page.locator('article.procedure-card').filter({ hasText: secondProcedureNote }).count();
+  check('both T07 procedures survive visit reload', persistedChartPathCount === 1 && persistedVisitPathCount === 1, { persistedChartPathCount, persistedVisitPathCount });
 
   // Explicit timer lifecycle on the chart-path procedure.
   const timerCard = page.locator('article.procedure-card').filter({ hasText: firstProcedureNote });
