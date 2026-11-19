@@ -129,7 +129,7 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
       </section>
     </>}
     <PatientOdontogram
-      key={patientId}
+      key={`${patientId}:odontogram`}
       patientId={patientId}
       user={user}
       timezone={timezone}
@@ -138,7 +138,7 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
       appointmentId={appointmentId}
     />
     <ClinicalNotesPanel key={`${patientId}:${appointmentId ?? 'patient'}`} patientId={patientId} appointmentId={appointmentId} user={user} timezone={timezone} />
-    <TimelineSection key={patientId} patientId={patientId} timezone={timezone} />
+    <TimelineSection key={`${patientId}:timeline`} patientId={patientId} timezone={timezone} />
     {clinic.isError && <p className="error" role="alert">Clinic time zone could not be loaded: {apiErrorMessage(clinic.error)}</p>}
   </div>;
 }
