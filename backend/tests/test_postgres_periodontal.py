@@ -8,6 +8,8 @@ from uuid import uuid4
 import asyncpg
 import pytest
 
+from tests.alembic_helpers import configured_alembic_head
+
 
 def _dsn(url: str, database: str) -> str:
     parsed = urlparse(url.replace("+asyncpg", ""))
@@ -43,7 +45,7 @@ async def test_t09_migration_from_t06_preserves_existing_rows():
         result = await _alembic(url, "head")
         assert result.returncode == 0, result.stdout + result.stderr
         connection = await asyncpg.connect(_dsn(url, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "t09_add_periodontal_assessments"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == configured_alembic_head()
         assert await connection.fetchval("SELECT content FROM clinical_notes WHERE id=$1", note) == "Existing fictional note"
         assert await connection.fetchval("SELECT status FROM odontogram_tooth_states WHERE id=$1", tooth) == "present"
         for table in ("periodontal_assessments", "periodontal_assessment_teeth", "periodontal_site_measurements"):

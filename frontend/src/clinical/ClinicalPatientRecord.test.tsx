@@ -9,6 +9,7 @@ import type { PatientRecord } from './api';
 import * as odontogramApi from '../odontogram/api';
 import { ADULT_TOOTH_IDS } from '../odontogram/types';
 import { ClinicalPatientRecord } from './ClinicalPatientRecord';
+import { TreatmentPlansPanel } from '../treatment-plans/TreatmentPlansPanel';
 
 const doctor: User = { id: 'doctor-1', clinic_id: 'clinic-1', full_name: 'Dr. Sample', email: 'doctor@example.test', role: 'doctor' };
 
@@ -63,6 +64,7 @@ describe('patient clinical record integration', () => {
     const expectSingleOdontogram = () => {
       expect(renderer.root.findAll(node => node.props.className?.split(' ').includes('patient-odontogram'))).toHaveLength(1);
       expect(renderer.root.findAllByType('form').filter(form => form.props.className === 'og-new-finding')).toHaveLength(1);
+      expect(renderer.root.findAllByType(TreatmentPlansPanel)).toHaveLength(1);
     };
     expectSingleOdontogram();
     const selectedTooth = renderer.root.findAllByType('button').find(button => button.props['aria-pressed'] === true);

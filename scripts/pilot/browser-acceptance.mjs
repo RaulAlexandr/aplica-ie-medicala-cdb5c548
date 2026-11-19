@@ -15,19 +15,29 @@ const safe = { appSha: process.env.DENTACARE_APP_SHA, web, api, browser: null, c
 const check = (name, ok, details = {}) => { safe.checks.push({ name, passed: Boolean(ok), ...details }); if (!ok) throw new Error(`Acceptance failed: ${name}`); };
 const screenshot = async (page, name) => { const file = path.join(evidenceDir, `${runId}-${name}.png`); await page.screenshot({ path: file, fullPage: true }); safe.artifacts.push(file); };
 const uniq = (label) => `Pilot fictiv ${label} ${runId}`;
-const diagnostics = { pageErrors: [], consoleErrors: [], apiResponses: [], visibleErrors: [] };
+const diagnostics = { pageErrors: [], consoleErrors: [], apiResponses: [], httpFailures: [], visibleErrors: [] };
 let activePage = null;
 function observePage(page, role) {
   activePage = page;
   page.on('pageerror', error => diagnostics.pageErrors.push({ role, message: String(error.message).slice(0, 500) }));
-  page.on('console', message => { if (message.type() === 'error') diagnostics.consoleErrors.push({ role, message: message.text().slice(0, 500) }); });
+  page.on('console', message => {
+    if (message.type() !== 'error') return;
+    let sourcePath = null;
+    try { sourcePath = message.location().url ? new URL(message.location().url).pathname : null; } catch {}
+    diagnostics.consoleErrors.push({ role, message: message.text().slice(0, 500), sourcePath });
+  });
   page.on('response', response => {
     const url = new URL(response.url());
-    if (!url.pathname.includes('/api/')) return;
     const record = { role, method: response.request().method(), path: url.pathname, status: response.status() };
-    diagnostics.apiResponses.push(record);
-    if (response.status() >= 400) response.json().then(body => { record.errorDetail = String(body?.detail ?? body?.message ?? '').slice(0, 500); }).catch(() => {});
-    if (diagnostics.apiResponses.length > 80) diagnostics.apiResponses.shift();
+    if (url.pathname.includes('/api/')) {
+      diagnostics.apiResponses.push(record);
+      if (diagnostics.apiResponses.length > 120) diagnostics.apiResponses.shift();
+    }
+    if (response.status() >= 400) {
+      diagnostics.httpFailures.push(record);
+      if (url.pathname.includes('/api/')) response.json().then(body => { record.errorDetail = String(body?.detail ?? body?.message ?? '').slice(0, 500); }).catch(() => {});
+      if (diagnostics.httpFailures.length > 30) diagnostics.httpFailures.shift();
+    }
   });
 }
 async function observeAction(page, label, predicate, action) {
@@ -44,6 +54,7 @@ async function observeAction(page, label, predicate, action) {
     actionError,
     visibleErrors: diagnostics.visibleErrors,
     latestApiResponses: diagnostics.apiResponses.slice(-8),
+    latestHttpFailures: diagnostics.httpFailures.slice(-8),
     pageErrors: diagnostics.pageErrors.slice(-8),
     consoleErrors: diagnostics.consoleErrors.slice(-8),
     responseStatus: response?.status() ?? null,
@@ -236,7 +247,7 @@ try {
   const chartProcedure = await chartCreate.json();
   check('T07 chart path saved one pending procedure', chartCreate.status() === 201 && chartProcedure.status === 'pending' && chartProcedure.tooth_fdi === '16', { status: chartCreate.status(), procedureStatus: chartProcedure.status, tooth: chartProcedure.tooth_fdi, procedureId: chartProcedure.id });
 
-  // Reopen the patient record and use the second T07 path from the visit page.
+  // Reload the patient record, then verify the saved procedure on its visit page.
   await page.reload();
   const visitUrl = `/appointments/${chartProcedure.appointment_id}/visit`;
   await page.goto(`${web}${visitUrl}`, { waitUntil: 'domcontentloaded' });
@@ -245,13 +256,45 @@ try {
   await visitProcedureForm.waitFor();
   const visitCatalogOptions = await visitProcedureForm.getByLabel('Procedure from active catalog').locator('option').evaluateAll(options => options.map(option => option.value).filter(Boolean));
   check('T07 visit path has active procedure', visitCatalogOptions.length > 0, { catalogCount: visitCatalogOptions.length });
-  await visitProcedureForm.getByLabel('Procedure from active catalog').selectOption(visitCatalogOptions[0]);
+  const visitCatalogSelect = visitProcedureForm.getByLabel('Procedure from active catalog');
+  const selectedCatalogId = chartProcedure.procedure_catalog_id;
+  check('F06 selected service is the pre-existing procedure service', visitCatalogOptions.includes(selectedCatalogId), { selectedCatalogId });
+  await visitCatalogSelect.selectOption(selectedCatalogId);
   await visitProcedureForm.getByLabel('Procedure tooth').selectOption('17');
   const secondProcedureNote = uniq('T07 visit path');
-  await visitProcedureForm.getByLabel('Procedure notes (optional)').fill(secondProcedureNote);
-  const visitCreate = await observeAction(page, 'create procedure from visit', r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures', () => visitProcedureForm.getByRole('button', { name: 'Save procedure' }).click());
+  const visitProcedureNotes = visitProcedureForm.getByLabel('Procedure notes (optional)');
+  await visitProcedureNotes.fill(secondProcedureNote);
+
+  // F06: a stale active-catalog selection cannot create after deactivation.
+  const f06ManagerApi = await authApi(creds.manager, 'F06 catalog lifecycle');
+  const f06DoctorApi = await authApi(creds.doctor, 'F06 procedure preservation');
+  const deactivatedCatalog = await f06ManagerApi.post(`/procedures/${selectedCatalogId}/deactivate`);
+  const deactivatedCatalogJson = await deactivatedCatalog.json();
+  check('F06 service deactivated while visit form remains open', deactivatedCatalog.status() === 200 && deactivatedCatalogJson.is_active === false, { status: deactivatedCatalog.status(), isActive: deactivatedCatalogJson.is_active });
+  const staleCreate = await observeAction(page, 'reject stale inactive service selection', r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures', () => visitProcedureForm.getByRole('button', { name: 'Save procedure' }).click());
+  const staleFormAlert = page.getByRole('alert').filter({ hasText: 'inactive catalog service' });
+  await staleFormAlert.waitFor();
+  check('F06 stale selection rejected with controlled message', staleCreate.status() === 409 && await staleFormAlert.count() === 1, { status: staleCreate.status(), visibleMessage: (await staleFormAlert.innerText()).trim() });
+  check('F06 rejected create preserves selected service and form fields', await visitCatalogSelect.inputValue() === selectedCatalogId && await visitProcedureForm.getByLabel('Procedure tooth').inputValue() === '17' && await visitProcedureNotes.inputValue() === secondProcedureNote, { selectedServicePreserved: await visitCatalogSelect.inputValue() === selectedCatalogId, toothPreserved: await visitProcedureForm.getByLabel('Procedure tooth').inputValue() === '17', notesPreserved: await visitProcedureNotes.inputValue() === secondProcedureNote });
+  const proceduresBeforeRetryResponse = await f06DoctorApi.get(`/performed-procedures?appointment_id=${chartProcedure.appointment_id}`);
+  const proceduresBeforeRetry = await proceduresBeforeRetryResponse.json();
+  check('F06 rejected create has no new procedure side effect', proceduresBeforeRetryResponse.ok() && !proceduresBeforeRetry.some(item => item.notes === secondProcedureNote), { status: proceduresBeforeRetryResponse.status(), matchingProcedures: proceduresBeforeRetry.filter(item => item.notes === secondProcedureNote).length });
+  const existingProcedureCard = page.locator('article.procedure-card').filter({ hasText: firstProcedureNote });
+  check('F06 pre-existing procedure remains visible while service is disabled', await existingProcedureCard.count() === 1 && await existingProcedureCard.getByText('pending', { exact: true }).count() > 0, { cardCount: await existingProcedureCard.count() });
+  const existingProcedureStart = await observeAction(page, 'execute pre-existing procedure after catalog deactivation', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/performed-procedures/${chartProcedure.id}/start`), () => existingProcedureCard.getByRole('button', { name: 'Start', exact: true }).click());
+  const startedExistingProcedure = await existingProcedureStart.json();
+  check('F06 pre-existing procedure remains executable after deactivation', existingProcedureStart.status() === 200 && startedExistingProcedure.status === 'running', { status: existingProcedureStart.status(), procedureStatus: startedExistingProcedure.status });
+  const existingAfterDeactivate = await f06DoctorApi.get(`/performed-procedures/${chartProcedure.id}`);
+  const existingAfterDeactivateJson = await existingAfterDeactivate.json();
+  check('F06 pre-existing procedure snapshot remains readable', existingAfterDeactivate.ok() && existingAfterDeactivateJson.procedure_catalog_id === selectedCatalogId && existingAfterDeactivateJson.procedure_name === chartProcedure.procedure_name && existingAfterDeactivateJson.status === 'running', { status: existingAfterDeactivate.status(), procedureStatus: existingAfterDeactivateJson.status, snapshotNamePreserved: existingAfterDeactivateJson.procedure_name === chartProcedure.procedure_name });
+  const reactivatedCatalog = await f06ManagerApi.post(`/procedures/${selectedCatalogId}/activate`);
+  const reactivatedCatalogJson = await reactivatedCatalog.json();
+  check('F06 service reactivated for remaining T07 acceptance', reactivatedCatalog.status() === 200 && reactivatedCatalogJson.is_active === true, { status: reactivatedCatalog.status(), isActive: reactivatedCatalogJson.is_active });
+  const visitCreate = await observeAction(page, 'create procedure from visit after service reactivation', r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures', () => visitProcedureForm.getByRole('button', { name: 'Save procedure' }).click());
   const visitProcedure = await visitCreate.json();
   check('T07 visit path saved one pending procedure', visitCreate.status() === 201 && visitProcedure.status === 'pending' && visitProcedure.tooth_fdi === '17', { status: visitCreate.status(), procedureStatus: visitProcedure.status, tooth: visitProcedure.tooth_fdi, procedureId: visitProcedure.id });
+  await f06ManagerApi.dispose();
+  await f06DoctorApi.dispose();
   const visitApi = await authApi(creds.doctor, 'T07 procedure persistence');
   const visitProceduresResponse = await visitApi.get(`/performed-procedures?appointment_id=${chartProcedure.appointment_id}`);
   const savedVisitProcedures = await visitProceduresResponse.json();
@@ -267,7 +310,7 @@ try {
   const timerCard = page.locator('article.procedure-card').filter({ hasText: firstProcedureNote });
   check('timer target resolves to one procedure', await timerCard.count() === 1, { count: await timerCard.count() });
   const timerActions = [
-    ['start', 'Start', 'running'], ['pause', 'Pause', 'paused'], ['resume', 'Resume', 'running'], ['complete', 'Complete', 'completed'],
+    ['pause', 'Pause', 'paused'], ['resume', 'Resume', 'running'], ['complete', 'Complete', 'completed'],
   ];
   for (const [transition, label, expectedStatus] of timerActions) {
     const response = await observeAction(page, `explicit procedure timer ${transition}`, r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/performed-procedures/${chartProcedure.id}/${transition}`), () => timerCard.getByRole('button', { name: label, exact: true }).click());
