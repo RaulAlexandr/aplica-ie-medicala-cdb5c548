@@ -16,6 +16,12 @@ function provider(child: React.ReactElement) { return <QueryClientProvider clien
 afterEach(() => vi.restoreAllMocks());
 describe('calendar timezone and permissions', () => {
   it('uses the clinic timezone at a browser date boundary', () => { expect(clinicDate('2027-01-04T23:30:00Z', 'Europe/Bucharest')).toBe('2027-01-05'); expect(clinicTime('2027-01-04T23:30:00Z', 'Europe/Bucharest')).toBe('01:30'); });
+  it('formats clinic appointments in a non-Bucharest zone when the browser is UTC', () => {
+    vi.stubEnv('TZ', 'UTC');
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe('UTC');
+    expect(clinicDate('2027-01-04T23:30:00Z', 'America/Los_Angeles')).toBe('2027-01-04');
+    expect(clinicTime('2027-01-04T23:30:00Z', 'America/Los_Angeles')).toBe('15:30');
+  });
   it('rejects nonexistent and ambiguous times and resolves both Bucharest occurrences', () => {
     expect(() => clinicLocalToUtc('2027-03-28T03:30', 'Europe/Bucharest')).toThrow(/does not exist/);
     expect(() => clinicLocalToUtc('2027-10-31T03:30', 'Europe/Bucharest')).toThrow(/ambiguous/);

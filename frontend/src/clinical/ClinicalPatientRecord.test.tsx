@@ -77,4 +77,25 @@ describe('patient clinical record integration', () => {
     const selectedAfterSwitch = renderer.root.findAllByType('button').find(button => button.props['aria-pressed'] === true);
     expect(selectedAfterSwitch?.props['data-tooth-id']).toBe('16');
   });
+
+  it('does not render clinic-local clinical features or guessed UTC timestamps when clinic context fails', async () => {
+    vi.spyOn(clientApi, 'getClinic').mockRejectedValue(new Error('clinic context unavailable'));
+    vi.spyOn(clinicalApi, 'getPatientRecord').mockResolvedValue({
+      ...makeRecord('patient-A'),
+      alerts: [{ id: 'alert-1', title: 'Alert', note_type: 'medical', content: 'Fictional alert', author_name: 'Doctor', created_at: '2027-01-04T23:30:00Z' }],
+    } as PatientRecord);
+    vi.spyOn(clinicalApi, 'getPatientRevisions').mockResolvedValue([]);
+
+    const renderer = TestRenderer.create(tree('patient-A', newClient()));
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (JSON.stringify(renderer.toJSON()).includes('Fictional alert')) break;
+      await act(async () => { await flush(); });
+    }
+    const rendered = renderer.toJSON();
+    expect(JSON.stringify(rendered)).toContain('Clinic time unavailable');
+    expect(JSON.stringify(rendered)).toContain('Clinic time zone could not be loaded');
+    expect(renderer.root.findAll(node => node.props.className?.split(' ').includes('patient-odontogram'))).toHaveLength(0);
+    expect(JSON.stringify(rendered)).not.toContain('Jan 4, 2027');
+    renderer.unmount();
+  });
 });
