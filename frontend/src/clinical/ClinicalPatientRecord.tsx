@@ -7,6 +7,7 @@ import { ClinicalNotesPanel } from './ClinicalNotesPanel';
 import { PatientOdontogram } from '../odontogram/PatientOdontogram';
 import { PeriodontalSection } from '../periodontal/PeriodontalSection';
 import { TreatmentPlansPanel } from '../treatment-plans/TreatmentPlansPanel';
+import { DocumentsPanel } from '../documents/DocumentsPanel';
 import { getPatientRecord, getPatientRevisions, listPatientTimeline, type PatientTimelineEvent } from './api';
 
 const pageSize = 20;
@@ -132,6 +133,7 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
         </article>)}</div>
       </section>
       {timezone && <TreatmentPlansPanel key={`${patientId}:treatment-plans`} patientId={patientId} timezone={timezone} />}
+      {timezone && <DocumentsPanel key={`${patientId}:documents`} patientId={patientId} timezone={timezone} />}
     </>}
     {(['doctor', 'clinic_manager', 'administrator'].includes(user.role)) && <PeriodontalSection key={`${patientId}:periodontal`} patientId={patientId} user={user} />}
     {timezone && <PatientOdontogram

@@ -12,13 +12,14 @@ done
 [[ ! -e "$PILOT_ROOT/api.pid" && ! -e "$PILOT_ROOT/web.pid" ]] || { echo "PID-uri existente; inspectează logurile și rulează stop.sh." >&2; exit 1; }
 mkdir -p "$PILOT_ROOT/logs"
 export DATABASE_URL="sqlite+aiosqlite:///$PILOT_DB_PATH" ENVIRONMENT=development CORS_ORIGINS="$PILOT_WEB_URL" VITE_API_URL="$PILOT_API_URL/api"
+export DOCUMENT_STORAGE_DIR="$PILOT_DOCUMENTS_DIR"
 export PYTHONPATH="$CHECKOUT/backend${PYTHONPATH:+:$PYTHONPATH}"
 if [[ ! -f "$PILOT_ROOT/jwt-secret" ]]; then "$PYTHON" -c 'import secrets,sys; open(sys.argv[1],"w").write(secrets.token_urlsafe(48))' "$PILOT_ROOT/jwt-secret"; chmod 600 "$PILOT_ROOT/jwt-secret"; fi
 export JWT_SECRET="$(cat "$PILOT_ROOT/jwt-secret")"
 PILOT_RUN_ID="$("$PYTHON" -c 'import secrets; print(secrets.token_hex(24))')"
 export PILOT_RUN_ID
 [[ -f "$PILOT_DB_PATH" ]] || { touch "$PILOT_DB_PATH"; chmod 600 "$PILOT_DB_PATH"; }
-echo "SHA: $PILOT_SHA"; echo "API $PILOT_API_URL | Web $PILOT_WEB_URL | DB $PILOT_DB_PATH"
+echo "SHA: $PILOT_SHA"; echo "API $PILOT_API_URL | Web $PILOT_WEB_URL | DB $PILOT_DB_PATH | Documente $PILOT_DOCUMENTS_DIR"
 nohup bash -c 'cd "$1" && exec "$2" -m uvicorn app.main:app --host "$3" --port "$4"' _ "$CHECKOUT/backend" "$PILOT_ROOT/venv/bin/python" "$PILOT_API_HOST" "$PILOT_API_PORT" </dev/null >> "$PILOT_ROOT/logs/api.log" 2>&1 & API_PID=$!
 printf '%s\n%s\n' "$API_PID" "$PILOT_RUN_ID" > "$PILOT_ROOT/api.pid"
 nohup bash -c 'cd "$1" && exec "$2" "$3" --host "$4" --port "$5" --strictPort' _ "$CHECKOUT/frontend" "$NODE_BIN/node" "$CHECKOUT/frontend/node_modules/vite/bin/vite.js" "$PILOT_WEB_HOST" "$PILOT_WEB_PORT" </dev/null >> "$PILOT_ROOT/logs/web.log" 2>&1 & WEB_PID=$!
