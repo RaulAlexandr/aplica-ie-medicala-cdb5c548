@@ -84,7 +84,11 @@ const plansOf = page => page.getByRole('region', { name: 'Planuri de tratament' 
 const docsOf = page => page.getByRole('region', { name: 'Documente și imagini' });
 const paroOf = page => page.locator('.periodontal-section');
 const respond = (page, method, test) => page.waitForResponse(r => r.request().method() === method && test(new URL(r.url()).pathname), { timeout: 10000 });
-const clinicFmt = (iso, tz) => new Intl.DateTimeFormat('ro-RO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz }).format(new Date(iso));
+// Known pilot defect (SQLite runtime, pre-existing since T04): several APIs return naive ISO timestamps without an
+// offset. They are stored as UTC; the expectation therefore reads them as UTC and the summary records each naive value.
+const naiveTimestamps = [];
+const asUtc = (iso, field) => { if (/(Z|[+-]\d\d:\d\d)$/.test(iso)) return iso; naiveTimestamps.push(field); return `${iso}Z`; };
+const clinicFmt = (iso, tz, field = 'value') => new Intl.DateTimeFormat('ro-RO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz }).format(new Date(asUtc(iso, field)));
 
 const receptionApi = await apiSession(creds.reception, 'reception');
 const doctorApi = await apiSession(creds.doctor, 'doctor');
@@ -113,7 +117,7 @@ try {
   check('reception books the appointment', visit?.status === 201, { status: visit?.status, detail: visit?.body?.detail });
   const appointment = visit.body;
   summary.ids.appointment = appointment.id;
-  const clinicTime = clinicFmt(appointment.starts_at, tz);
+  const clinicTime = clinicFmt(appointment.starts_at, tz, 'appointment.starts_at');
   const utcTime = clinicFmt(appointment.starts_at, BROWSER_TZ);
   check('appointment clinic time differs from browser UTC time (observable zone)', clinicTime !== utcTime, { clinicTime, utcTime });
 
@@ -179,7 +183,13 @@ try {
     if (transition === 'pause') await page.waitForTimeout(1100);
   }
   const segments = (await doctorApi.call('GET', `/performed-procedures/${procedure.id}/segments`)).body;
-  check('timer persisted as segments (pause excluded: two active segments)', segments.length === 2 && segments.every(s => s.ended_at), { segments: segments.length });
+  const byType = segments.reduce((acc, s) => ({ ...acc, [s.segment_type]: (acc[s.segment_type] ?? 0) + 1 }), {});
+  const span = s => (new Date(s.ended_at) - new Date(s.started_at)) / 1000;
+  const pauseSeconds = segments.filter(s => s.segment_type === 'pause').reduce((sum, s) => sum + span(s), 0);
+  const runSeconds = segments.filter(s => s.segment_type === 'run').reduce((sum, s) => sum + Math.trunc(span(s)), 0);
+  const procAfter = (await doctorApi.call('GET', `/performed-procedures/${procedure.id}`)).body;
+  check('timer persisted as closed segments: two run, one pause', byType.run === 2 && byType.pause === 1 && segments.every(s => s.ended_at), { byType });
+  check('pause time is not counted in the active duration', pauseSeconds >= 1 && (procAfter.total_duration_seconds ?? 0) === runSeconds, { pauseSeconds, totalDurationSeconds: procAfter.total_duration_seconds, runSeconds });
   const apptAfterComplete = (await doctorApi.call('GET', `/appointments/${appointment.id}`)).body;
   check('completing the procedure does not close the visit', apptAfterComplete.status !== 'completed', { appointmentStatus: apptAfterComplete.status });
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -210,7 +220,7 @@ try {
   await item1.getByTestId('item-progress').filter({ hasText: 'Efectuat' }).waitFor();
   const planList = (await doctorApi.call('GET', `/treatment-plans/patients/${patient.id}`)).body;
   const plan = (await doctorApi.call('GET', `/treatment-plans/${planList[0].id}`)).body;
-  check('T08 plan item linked to the completed T07 procedure', planList.length === 1 && plan.stages[0].items[0].performed_procedure_id === procedure.id && plan.status === 'in_progress',
+  check('T08 plan item linked to the completed T07 procedure', planList.length === 1 && plan.stages[0].items[0].performed_procedure?.id === procedure.id && plan.stages[0].items[0].performed_procedure?.status === 'completed' && plan.status === 'in_progress',
     { plans: planList.length, planStatus: plan.status });
   summary.ids.plan = plan.id;
   await shot(page, 'plan-linked');
@@ -238,9 +248,12 @@ try {
   const paroRows = (await doctorApi.call('GET', `/periodontal/patients/${patient.id}/assessments`)).body.filter(r => r.status === 'finalized');
   check('two finalized assessments persisted', paroRows.length === 2, { finalized: paroRows.length });
   summary.ids.assessments = paroRows.map(r => r.id);
-  const followUp = (await doctorApi.call('GET', `/periodontal/assessments/${paroRows[0].id}`)).body;
+  const shownId = await paro.getByLabel('Istoric').inputValue();
+  const followUp = (await doctorApi.call('GET', `/periodontal/assessments/${shownId}`)).body;
+  check('displayed assessment is a finalized one from this run', paroRows.some(r => r.id === shownId) && followUp.status === 'finalized', { shownIsFollowUp: shownId === paroRows[0].id });
+  await paro.getByText(/Finalizată \d/).first().waitFor();
   const paroText = await paro.innerText();
-  check('finalization time shown in the clinic zone, not raw UTC', paroText.includes(clinicFmt(followUp.finalized_at, tz)) && !paroText.includes(followUp.finalized_at),
+  check('finalization time shown in the clinic zone, not raw UTC', paroText.includes(clinicFmt(followUp.finalized_at, tz, 'periodontal.finalized_at')) && !paroText.includes(followUp.finalized_at),
     { clinicTime: clinicFmt(followUp.finalized_at, tz), browserTime: clinicFmt(followUp.finalized_at, BROWSER_TZ) });
   await page.getByLabel('Prima evaluare').selectOption(paroRows[1].id);
   await page.getByLabel('A doua evaluare').selectOption(paroRows[0].id);
@@ -259,7 +272,10 @@ try {
   await docs.getByLabel('Descriere').fill('Radiografie control obturație (fictiv)');
   const upP = respond(page, 'POST', p => /\/api\/documents\/patients\/[^/]+$/.test(p));
   await docs.getByRole('button', { name: 'Salvează în dosar' }).click();
-  const up = await upP; const doc = await up.json();
+  const up = await upP;
+  await docs.getByText('Fișier salvat în dosarul pacientului.').waitFor();
+  const docRows = (await doctorApi.call('GET', `/documents/patients/${patient.id}`)).body;
+  const doc = docRows.find(row => row.original_filename === rx.name) ?? {};
   check('document uploaded on visit + tooth', up.status() === 201 && doc.appointment?.id === appointment.id && doc.tooth_fdi === '16', { status: up.status() });
   summary.ids.document = doc.id;
   summary.documentSha256 = doc.sha256;
@@ -372,6 +388,7 @@ try {
   await browser.close();
   const passed = summary.checks.filter(c => c.passed).length;
   summary.totals = { passed, total: summary.checks.length };
+  summary.knownDefectNaiveApiTimestamps = [...new Set(naiveTimestamps)];
   await fs.writeFile(path.join(evidenceDir, 'consolidated-summary.json'), JSON.stringify(summary, null, 2), { mode: 0o600 });
   console.log(`Consolidated browser ${summary.result}: ${passed}/${summary.checks.length} checks · page errors ${summary.pageErrors.length} · console/http errors ${summary.consoleErrors.length} · evidence ${evidenceDir}`);
   if (summary.errors.length) console.log(summary.errors.join('\n'));
