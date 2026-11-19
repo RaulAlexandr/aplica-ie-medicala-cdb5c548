@@ -36,10 +36,15 @@ const browser = await chromium.launch({ headless: true, executablePath: process.
 summary.browser = browser.version();
 const posts = { planCreate: 0, accept: 0, appointmentLink: 0, performedLink: 0 };
 const pageErrors = [];
+// Console errors are recorded (not asserted) so each one can be classified as expected or defect in the report.
+const consoleErrors = [];
+const consolePath = msg => { try { return msg.location().url ? new URL(msg.location().url).pathname.replace(/[0-9a-f-]{36}/g, ':id') : null; } catch { return null; } };
 async function login(account) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(String(error.message).slice(0, 300)));
+  page.on('console', msg => { if (msg.type() === 'error') consoleErrors.push({ user: account.name ?? null, text: msg.text().slice(0, 200), sourcePath: consolePath(msg) }); });
+  page.on('response', response => { if (response.status() >= 400) consoleErrors.push({ user: account.name ?? null, httpStatus: response.status(), method: response.request().method(), path: new URL(response.url()).pathname.replace(/[0-9a-f-]{36}/g, ':id') }); });
   page.on('request', req => {
     const url = new URL(req.url()).pathname;
     if (req.method() === 'POST' && /\/treatment-plans\/patients\/[^/]+$/.test(url)) posts.planCreate += 1;
@@ -233,6 +238,8 @@ try {
   if (doctor) await shot(doctor.page, 'failure').catch(() => {});
 } finally {
   summary.network = posts;
+  summary.pageErrors = pageErrors;
+  summary.consoleErrors = consoleErrors;
   await doctorApi.ctx.dispose();
   await browser.close();
   const file = path.join(evidenceDir, `${runId}-t08-summary.json`);

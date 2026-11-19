@@ -16,6 +16,7 @@ const evidenceDir = process.env.PERIODONTAL_EVIDENCE_DIR ?? fileURLToPath(new UR
 await mkdir(evidenceDir, { recursive: true });
 const browser = await chromium.launch({ headless: true, executablePath, args: ['--no-sandbox'] });
 const checks = [];
+const consoleErrors = [];
 const check = (name, ok, details = {}) => {
   checks.push({ name, ok, ...details });
   if (!ok) throw new Error(`${name}: ${JSON.stringify(details)}`);
@@ -78,6 +79,9 @@ try {
   const page = await context.newPage();
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
+  // Console errors and HTTP >= 400 are recorded (not asserted) so each can be classified as expected or defect.
+  page.on('console', msg => { if (msg.type() === 'error') { let sourcePath = null; try { sourcePath = msg.location().url ? new URL(msg.location().url).pathname.replace(/[0-9a-f-]{36}/g, ':id') : null; } catch {} consoleErrors.push({ text: msg.text().slice(0, 200), sourcePath }); } });
+  page.on('response', response => { if (response.status() >= 400) consoleErrors.push({ httpStatus: response.status(), method: response.request().method(), path: new URL(response.url()).pathname.replace(/[0-9a-f-]{36}/g, ':id') }); });
   await page.goto(`${web}/patients/${patientA}`);
   await page.getByRole('heading', { name: 'Evaluare parodontală' }).waitFor();
   await page.getByRole('heading', { name: 'Planuri de tratament' }).waitFor();
@@ -166,9 +170,9 @@ try {
     ...(periodontalPanels === undefined ? {} : { periodontalPanels }), ...(odontograms === undefined ? {} : { odontograms }),
     ...(peerVisibleDrafts === undefined ? {} : { peerVisibleDrafts }), ...(finalizedCount === undefined ? {} : { finalizedCount }),
   }));
-  const evidence = { result: 'PASS', browser: browser.version(), checks: safeChecks };
+  const evidence = { result: 'PASS', browser: browser.version(), checks: safeChecks, pageErrors: [], consoleErrors };
   await writeFile(join(evidenceDir, 'periodontal-acceptance-LATEST.json'), `${JSON.stringify(evidence, null, 2)}\n`);
-  console.log(JSON.stringify({ result: evidence.result, browser: evidence.browser, checks: safeChecks.length, evidenceDir }));
+  console.log(JSON.stringify({ result: evidence.result, browser: evidence.browser, checks: safeChecks.length, consoleErrors: consoleErrors.length, evidenceDir }));
   await context.close();
   await apiClient.dispose();
 } finally {
