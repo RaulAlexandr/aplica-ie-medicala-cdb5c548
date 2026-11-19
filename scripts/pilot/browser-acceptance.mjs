@@ -147,10 +147,10 @@ try {
   const correctResponse = await observeAction(page, 'correct finalized finding', r => r.request().method() === 'POST' && new URL(r.url()).pathname.endsWith(`/api/odontogram/findings/${findingId}/corrections`), () => finalCard.getByRole('button', { name: 'Salvează corecția' }).click());
   finding = await correctResponse.json();
   check('correction stored with revision', correctResponse.status() === 200 && finding.description === correctedDescription && finding.revisions?.length >= 1, { status: correctResponse.status(), revisions: finding.revisions?.length });
-  await page.getByText(reason, { exact: true }).waitFor();
+  await page.getByText(`Motiv: ${reason}`, { exact: true }).waitFor();
   await page.reload();
   await page.getByText(correctedDescription, { exact: true }).waitFor();
-  await page.getByText(reason, { exact: true }).waitFor();
+  await page.getByText(`Motiv: ${reason}`, { exact: true }).waitFor();
   check('correction history survives reload', true, { findingId, revisions: finding.revisions.length, author: finding.revisions.at(-1)?.author, observedAt });
 
   await visitPatient(page, patientB);
