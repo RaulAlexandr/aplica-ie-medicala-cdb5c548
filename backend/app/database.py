@@ -689,7 +689,7 @@ class PatientFinancialEntry(Base):
         ForeignKey("patient_financial_entries.id", ondelete="RESTRICT"))
     client_request_id: Mapped[str] = mapped_column(String(64), nullable=False)
     created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
     __table_args__ = (
         Index("ix_patient_financial_entries_patient", "clinic_id", "patient_id", "created_at"),
         Index("ix_patient_financial_entries_clinic_day", "clinic_id", "created_at"),
