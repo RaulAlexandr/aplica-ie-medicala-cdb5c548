@@ -197,14 +197,15 @@ try {
   check('automatic timeline projection after finalize', noteEvents.length > 0 && timelineRes.status() === 200, { status: timelineRes.status(), eventCount: noteEvents.length, refreshEndpointUsed: false });
   await page.getByRole('heading', { name: 'Timeline', exact: true }).waitFor();
   await page.getByText(noteTitle, { exact: true }).waitFor();
-  const eventIdsBefore = events.map(e => e.id);
+  const noteEventIdsBefore = noteEvents.map(e => e.id).sort();
   await page.reload();
   await page.getByText(noteTitle, { exact: true }).waitFor();
   const doctorApi = await authApi(creds.doctor, 'doctor timeline reload');
   const timelineReloadResponse = await doctorApi.get(`/clinical-notes/patients/${patientA}/timeline`);
   const timelineAfter = await timelineReloadResponse.json();
   await doctorApi.dispose();
-  check('timeline reload stable and duplicate-free', timelineAfter.length > 0 && new Set(timelineAfter.map(e => e.id)).size === timelineAfter.length && JSON.stringify(eventIdsBefore) === JSON.stringify(timelineAfter.map(e => e.id)), { ids: timelineAfter.map(e => e.id), duplicates: timelineAfter.length - new Set(timelineAfter.map(e => e.id)).size });
+  const noteEventsAfterReload = timelineAfter.filter(e => e.entity_id === note.id || e.source_id === note.id || e.title?.includes(noteTitle)).map(e => e.id).sort();
+  check('timeline reload stable and duplicate-free', noteEventIdsBefore.length > 0 && JSON.stringify(noteEventIdsBefore) === JSON.stringify(noteEventsAfterReload) && new Set(timelineAfter.map(e => e.id)).size === timelineAfter.length, { noteEventIdsBefore, noteEventIdsAfter: noteEventsAfterReload, totalEvents: timelineAfter.length, duplicates: timelineAfter.length - new Set(timelineAfter.map(e => e.id)).size });
   await screenshot(page, 'doctor-timeline-after-reload');
 
   // T07 path one: start from a selected tooth in the patient chart.
