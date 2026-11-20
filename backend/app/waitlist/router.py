@@ -112,7 +112,8 @@ async def candidates(data:OfferCreate,db:AsyncSession=Depends(get_db),user:User=
     start=utc(data.starts_at);end=appointment_end(start,data.duration_minutes);clinic=await db.get(Clinic,user.clinic_id)
     if not clinic: raise HTTPException(404,"Clinic not found")
     zone=ZoneInfo(clinic.timezone)
-    await db.execute(update(WaitlistEntry).where(WaitlistEntry.clinic_id==user.clinic_id,WaitlistEntry.status=="active",WaitlistEntry.valid_until<start.astimezone(zone).date()).values(status="expired"));await db.commit()
+    clinic_today = utcnow().astimezone(zone).date()
+    await db.execute(update(WaitlistEntry).where(WaitlistEntry.clinic_id==user.clinic_id,WaitlistEntry.status=="active",WaitlistEntry.valid_until<clinic_today).values(status="expired"));await db.commit()
     patient_conflicts=set((await db.scalars(select(Appointment.patient_id).where(Appointment.clinic_id==user.clinic_id,Appointment.status.in_(ACTIVE_APPOINTMENTS),Appointment.starts_at<end,Appointment.ends_at>start))).all())
     rows=(await db.scalars(select(WaitlistEntry).where(WaitlistEntry.clinic_id==user.clinic_id,WaitlistEntry.status=="active",WaitlistEntry.desired_duration_minutes<=data.duration_minutes,WaitlistEntry.valid_from<=end.astimezone(zone).date(),WaitlistEntry.valid_until>=start.astimezone(zone).date(),(WaitlistEntry.preferred_doctor_id.is_(None))|(WaitlistEntry.preferred_doctor_id==data.doctor_id)).order_by(WaitlistEntry.priority.desc(),WaitlistEntry.created_at))).all()
     return [entry_out(e) for e in rows if e.patient_id not in patient_conflicts and matches_window(e,start,end,zone)]
