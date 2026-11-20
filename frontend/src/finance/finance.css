@@ -1,0 +1,21 @@
+.finance-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0 0 14px; }
+.finance-totals > div { padding: 12px; border: 1px solid #edf0f1; border-radius: 8px; min-width: 0; }
+.finance-totals dt { color: #68777e; font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.finance-totals dd { margin: 0; font-size: 18px; font-weight: 800; overflow-wrap: anywhere; }
+.finance-totals .balance-due { color: #8a4b12; }
+.finance-totals .balance-credit { color: #1c716a; }
+.finance-panel h3 { font-size: 15px; margin: 18px 0 8px; }
+.finance-visit { padding: 8px 0; border-top: 1px solid #edf0f1; }
+.finance-visit ul { margin: 4px 0 0; padding-left: 18px; font-size: 14px; }
+.finance-form { margin: 16px 0; padding-top: 14px; border-top: 3px solid #3b8c84; }
+.finance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 12px; }
+.finance-entries { display: grid; gap: 8px; }
+.finance-entry { padding: 10px 12px; border: 1px solid #e2e8ec; border-radius: 8px; }
+.finance-entry p { margin: 4px 0; overflow-wrap: anywhere; }
+.finance-entry.reversed > p:first-child { text-decoration: line-through; color: #68777e; }
+.finance-reversed { color: #ae3939; font-size: 13px; font-weight: 700; }
+.finance-reverse { display: grid; gap: 6px; margin-top: 8px; }
+.finance-panel .success { color: #2f6b2a; font-size: 14px; }
+.finance-daily table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.finance-daily th, .finance-daily td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #edf0f1; }
+@media (max-width: 700px) { .finance-totals { grid-template-columns: 1fr; } }

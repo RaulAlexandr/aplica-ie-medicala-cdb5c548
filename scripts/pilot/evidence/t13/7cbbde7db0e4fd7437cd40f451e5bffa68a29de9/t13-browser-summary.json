@@ -1,0 +1,255 @@
+{
+  "task": "T13",
+  "appSha": "7cbbde7db0e4fd7437cd40f451e5bffa68a29de9",
+  "web": "http://127.0.0.1:5195",
+  "api": "http://127.0.0.1:8035/api",
+  "browser": "151.0.7922.34",
+  "browserTimezone": "UTC",
+  "clinicTimezone": "Europe/Bucharest",
+  "checks": [
+    {
+      "name": "clinic zone differs from browser zone",
+      "passed": true,
+      "clinicTimezone": "Europe/Bucharest"
+    },
+    {
+      "name": "three active catalog services",
+      "passed": true,
+      "services": 3
+    },
+    {
+      "name": "reception books the visit",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "T04: two procedures completed and one cancelled",
+      "passed": true
+    },
+    {
+      "name": "services total = two completed (cancelled excluded), nothing paid yet",
+      "passed": true,
+      "services": "400.00 RON",
+      "paid": "0.00 RON",
+      "balance": "400.00 RON de plată"
+    },
+    {
+      "name": "cancelled procedure shown without amount",
+      "passed": true
+    },
+    {
+      "name": "visit page shows the visit services total",
+      "passed": true
+    },
+    {
+      "name": "visit quick payment proposes the remaining amount",
+      "passed": true,
+      "placeholder": "400.00"
+    },
+    {
+      "name": "visit-linked cash payment saved once (double click guarded)",
+      "passed": true,
+      "posts": 1
+    },
+    {
+      "name": "balance settled after the visit payment",
+      "passed": true,
+      "services": "400.00 RON",
+      "paid": "400.00 RON",
+      "balance": "0.00 RON · achitat"
+    },
+    {
+      "name": "reception is offered payment/refund only, no adjustments",
+      "passed": true,
+      "kinds": [
+        "payment",
+        "refund"
+      ]
+    },
+    {
+      "name": "invalid amount refused in UI without a request",
+      "passed": true
+    },
+    {
+      "name": "extra card payment saved once (double click)",
+      "passed": true,
+      "status": 201,
+      "posts": 1
+    },
+    {
+      "name": "overpayment shown as explicit patient credit",
+      "passed": true,
+      "services": "400.00 RON",
+      "paid": "450.00 RON",
+      "balance": "50.00 RON credit (avans al pacientului)"
+    },
+    {
+      "name": "movement shows author and time in the clinic zone (API offset explicit)",
+      "passed": true,
+      "createdAtHasOffset": true
+    },
+    {
+      "name": "reception adjustment refused by API (403)",
+      "passed": true,
+      "status": 403
+    },
+    {
+      "name": "advance on patient B saved",
+      "passed": true
+    },
+    {
+      "name": "advance shown as credit with no services",
+      "passed": true,
+      "services": "0.00 RON",
+      "paid": "200.00 RON",
+      "balance": "200.00 RON credit (avans al pacientului)"
+    },
+    {
+      "name": "confirm disabled until a reason is given",
+      "passed": true
+    },
+    {
+      "name": "reversal saved once",
+      "passed": true,
+      "posts": 1
+    },
+    {
+      "name": "reversal neutralizes the payment; original kept and marked",
+      "passed": true,
+      "services": "400.00 RON",
+      "paid": "400.00 RON",
+      "balance": "0.00 RON · achitat"
+    },
+    {
+      "name": "second reversal of the same payment refused (409)",
+      "passed": true,
+      "status": 409
+    },
+    {
+      "name": "manager adjustment saved",
+      "passed": true
+    },
+    {
+      "name": "balance after adjustment",
+      "passed": true,
+      "services": "400.00 RON",
+      "paid": "400.00 RON",
+      "balance": "15.00 RON de plată"
+    },
+    {
+      "name": "after reload: totals, reversal and adjustment persist",
+      "passed": true,
+      "kindsShown": [
+        "adjustment_debit",
+        "reversal",
+        "payment",
+        "payment"
+      ]
+    },
+    {
+      "name": "doctor sees the same balance",
+      "passed": true
+    },
+    {
+      "name": "doctor has no form and no reversal buttons",
+      "passed": true
+    },
+    {
+      "name": "doctor write and daily report refused (403)",
+      "passed": true,
+      "write": 403,
+      "daily": 403
+    },
+    {
+      "name": "doctor has no daily report link",
+      "passed": true
+    },
+    {
+      "name": "other clinic gets 404 on account, entries, reverse and visit summary",
+      "passed": true,
+      "account": 404,
+      "entry": 404,
+      "reverse": 404,
+      "visit": 404
+    },
+    {
+      "name": "other clinic UI shows no account",
+      "passed": true
+    },
+    {
+      "name": "daily report opens on the clinic day",
+      "passed": true,
+      "today": "2026-11-19"
+    },
+    {
+      "name": "daily report nets this run per method (cash = visit, card 50-50 = 0, transfer = advance)",
+      "passed": true,
+      "cash": "400.00",
+      "card": "0.00",
+      "transfer": "200.00",
+      "rows": 4
+    },
+    {
+      "name": "UI daily total equals the API net",
+      "passed": true,
+      "uiNet": "600.00",
+      "apiNet": "600.00"
+    },
+    {
+      "name": "no browser page errors",
+      "passed": true,
+      "pageErrors": []
+    }
+  ],
+  "artifacts": [
+    "t13-visit-paid.png",
+    "t13-advance-patient-b.png",
+    "t13-manager-account.png",
+    "t13-daily-report.png"
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "user": "reception",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "sourcePath": "/favicon.ico"
+    },
+    {
+      "user": "other-clinic",
+      "httpStatus": 404,
+      "method": "GET",
+      "path": "/api/patients/:id"
+    },
+    {
+      "user": "other-clinic",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "sourcePath": "/api/patients/:id"
+    },
+    {
+      "user": "other-clinic",
+      "httpStatus": 404,
+      "method": "GET",
+      "path": "/api/patients/:id"
+    },
+    {
+      "user": "other-clinic",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "sourcePath": "/api/patients/:id"
+    }
+  ],
+  "network": {
+    "entryPosts": 4,
+    "reversePosts": 1
+  },
+  "errors": [],
+  "ids": {
+    "patientA": "14cadc00-1f25-4c22-872b-4e0a2054cd22",
+    "patientB": "21913222-9a17-4554-b293-404afff49361",
+    "visit": "28d7c8bf-3647-4a11-900c-bee6b5e0d4a4"
+  },
+  "result": "PASS",
+  "totals": {
+    "passed": 35,
+    "total": 35
+  }
+}

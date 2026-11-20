@@ -2,6 +2,8 @@ import { Calendar } from './Calendar';
 import { AvailabilitySettings } from './AvailabilitySettings';
 import { VisitPage } from './clinical/VisitPage';
 import { ClinicalPatientRecord } from './clinical/ClinicalPatientRecord';
+import { PatientAccountPanel } from './finance/PatientAccountPanel';
+import { DailyReportPage } from './finance/DailyReportPage';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -10,6 +12,7 @@ import { acceptInvitation, activateProcedure, apiErrorMessage, Clinic, countPati
 const managementRoles = ['clinic_manager', 'administrator'];
 const staffRoles = ['clinic_manager', 'doctor', 'assistant', 'reception', 'administrator'];
 const clinicalRoles = ['doctor', 'clinic_manager', 'administrator'];
+const cashRoles = ['reception', 'clinic_manager', 'administrator'];
 const canEditPatients = (role: string) => managementRoles.includes(role) || role === 'doctor';
 function ErrorState({ error }: { error: unknown }) { return <p className="error" role="alert">{apiErrorMessage(error)}</p>; }
 function QueryState({ loading, empty, error }: { loading: boolean; empty: boolean; error: unknown }) { if (loading) return <p className="muted">Loading\u2026</p>; if (error) return <ErrorState error={error} />; if (empty) return <p className="muted">Nothing to display yet.</p>; return null; }
@@ -34,6 +37,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {staffRoles.includes(user.role) && <Link to="/patients">Patients</Link>}
         {staffRoles.includes(user.role) && <Link to="/appointments">Appointments</Link>}
         {staffRoles.includes(user.role) && <Link to="/procedures">Procedure catalog</Link>}
+        {cashRoles.includes(user.role) && <Link to="/finance/daily">Încasări zi</Link>}
         {managementRoles.includes(user.role) && <><Link to="/setup">Clinic setup</Link><Link to="/staff">Staff</Link></>}
       </nav>
       <button className="link logout" onClick={() => void onLogout()}>Sign out</button>
@@ -110,6 +114,7 @@ function PatientDetail({ user, id, appointmentId }: { user: User; id: string; ap
       <h2>Notes</h2>
       <p>{p.notes || 'No notes recorded.'}</p>
     </section>
+    {staffRoles.includes(user.role) && <PatientAccountPanel key={`${id}:account`} patientId={id} />}
     {clinicalRoles.includes(user.role) && <ClinicalPatientRecord key={id} patientId={id} appointmentId={appointmentId} user={user} />}
   </>;
 }
@@ -506,6 +511,7 @@ export default function App() {
       <Route path="/appointments/:appointmentId/visit" element={<VisitPage user={user} />} />
       <Route path="/procedures" element={<Procedures user={user} />} />
       <Route path="/procedures/:id" element={<ProcedureDetail user={user} />} />
+      <Route path="/finance/daily" element={cashRoles.includes(user.role) ? <DailyReportPage /> : <Navigate to="/" />} />
       <Route path="/setup" element={managementRoles.includes(user.role) ? <Setup user={user} /> : <Navigate to="/" />} />
       <Route path="/staff" element={managementRoles.includes(user.role) ? <StaffOnboarding /> : <Navigate to="/" />} />
       <Route path="/staff/:id" element={managementRoles.includes(user.role) ? <StaffDetail /> : <Navigate to="/" />} />
