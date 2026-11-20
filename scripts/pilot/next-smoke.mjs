@@ -21,7 +21,7 @@ const BROWSER_TZ = process.env.NEXT_BROWSER_TZ || 'Europe/Bucharest';
 const evidenceDir = process.env.NEXT_EVIDENCE_DIR || path.join(process.env.DENTACARE_PILOT_HOME, 'browser-evidence', 'next');
 await fs.mkdir(evidenceDir, { recursive: true, mode: 0o700 });
 const tag = new Date().toISOString().slice(11, 19).replaceAll(':', '');
-const summary = { task: 'INT2-next-smoke', appSha: process.env.DENTACARE_APP_SHA, web, api, browser: null, browserTimezone: BROWSER_TZ,
+const summary = { sectionFailures: [], task: 'INT2-next-smoke', appSha: process.env.DENTACARE_APP_SHA, web, api, browser: null, browserTimezone: BROWSER_TZ,
   clinicTimezone: null, checks: [], artifacts: [], pageErrors: [], consoleErrors: [], errors: [] };
 const check = (name, ok, details = {}) => { summary.checks.push({ name, passed: Boolean(ok), ...details }); if (!ok) throw new Error(`Smoke failed: ${name} ${JSON.stringify(details)}`); };
 const SHOTS_MAX = 4;
@@ -157,7 +157,11 @@ try {
   await shot(doctor, 'form-validated');
 
   // ===================== T16 · RECEPTION: waitlist -> offer -> confirmation -> agenda =====================
+  // A failure in the UI part is recorded as a section failure (the run still fails) and the backend part is then
+  // exercised through the API, so T24 and the integration are still verified; the fallback never counts as UI proof.
+  let slot = null;
   activePage = reception;
+  try {
   await reception.getByRole('link', { name: 'Lista de așteptare', exact: true }).click();
   const waitlist = reception.getByRole('region', { name: 'Listă de așteptare' });
   await waitlist.waitFor();
@@ -169,7 +173,6 @@ try {
   check('reception adds the waitlist entry (201)', (await entryCreated).status() === 201);
   await waitlist.getByText(new RegExp(`${service} · active`)).waitFor();
   // The UI entry window is "today's weekday, 09:00-17:00 clinic time": look for a free slot on that weekday a week or more ahead.
-  let slot = null;
   for (let week = 1; week <= 8 && !slot; week += 1) {
     const day = addDays(today, 7 * week);
     const taken = (await doctorApi.call('GET', `/appointments?day=${day}`)).body.map(a => a.local_start.slice(11, 16));
@@ -197,7 +200,26 @@ try {
   const bookedVisit = dayAppointments.find(a => a.patient_id === elena.id && a.local_start.startsWith(`${slot.day}T${slot.hour}`));
   check('the appointment exists at the offered clinic-local time', Boolean(bookedVisit), { day: slot.day, hour: slot.hour });
   await waitlist.getByText(new RegExp(`${service} · booked`)).waitFor();
-  await reception.getByRole('link', { name: 'Appointments', exact: true }).click();
+  } catch (error) {
+    summary.sectionFailures.push({ section: 'T16 waitlist UI', error: String(error.message).slice(0, 400) });
+    summary.errors.push(`T16 waitlist UI: ${String(error.message).slice(0, 300)}`);
+    try { await shot(reception, 'waitlist-ui-failure'); } catch { /* best effort */ }
+    // Page errors caused by that same UI failure are attributed to it instead of being counted twice.
+    summary.attributedToT16Ui = summary.pageErrors.splice(0).filter(Boolean);
+    // Backend-only continuation (labelled as such): entry -> offer -> confirmation through the API as reception.
+    const entries = (await receptionApi.call('GET', '/waitlist/entries')).body;
+    const entry = entries.find(e => e.desired_service === service);
+    check('API fallback: the entry added in the UI is listed as active', Boolean(entry) && entry.status === 'active', { status: entry?.status });
+    const startsAt = await reception.evaluate(local => new Date(local).toISOString(), `${slot.day}T${slot.hour}`);
+    const offer = await receptionApi.call('POST', `/waitlist/entries/${entry.id}/offers`, { doctor_id: doctorUser.id, room_id: room.id, starts_at: startsAt, duration_minutes: 30 });
+    check('API fallback: the offer is recorded (201)', offer.status === 201, { status: offer.status, detail: offer.body?.detail });
+    const confirm = await receptionApi.call('POST', `/waitlist/offers/${offer.body.id}/confirm`);
+    check('API fallback: the confirmation creates the appointment (201)', confirm.status === 201, { status: confirm.status, detail: confirm.body?.detail });
+    const visit = (await doctorApi.call('GET', `/appointments?day=${slot.day}`)).body.find(a => a.patient_id === elena.id && a.local_start.startsWith(`${slot.day}T${slot.hour}`));
+    check('API fallback: the appointment exists at the offered clinic-local time', Boolean(visit), { day: slot.day, hour: slot.hour });
+  }
+  try {
+    await reception.goto(`${web}/appointments`, { waitUntil: 'domcontentloaded' });
   await reception.getByRole('button', { name: 'Day', exact: true }).waitFor();
   await reception.getByRole('button', { name: 'Week', exact: true }).click();
   // The week view starts at this week's Monday; the slot is exactly `week` weeks ahead, so `week` clicks on Next reach it.
@@ -207,6 +229,11 @@ try {
   const agendaText = await mainText(reception);
   check('the agenda shows the booked visit for Elena Test at the offered hour', agendaText.includes('Elena Test') && agendaText.includes(slot.hour), { hour: slot.hour });
   await shot(reception, 'agenda-booked');
+  } catch (error) {
+    summary.sectionFailures.push({ section: 'T16 agenda', error: String(error.message).slice(0, 400) });
+    summary.errors.push(`T16 agenda: ${String(error.message).slice(0, 300)}`);
+  }
+  activePage = reception;
   await reception.goto(`${web}/reports`, { waitUntil: 'domcontentloaded' });
   await reception.locator('main.content').getByText('CLINIC OVERVIEW').waitFor();
   check('reception is redirected from /reports to the overview', new URL(reception.url()).pathname === '/');
@@ -244,6 +271,7 @@ try {
   for (const context of contexts) await context.close().catch(() => {});
   await browser.close();
   await Promise.all([managerApi, receptionApi, doctorApi].map(s => s.ctx.dispose()));
+  if (summary.sectionFailures.length) process.exitCode = 1;
   summary.passed = summary.checks.filter(c => c.passed).length;
   summary.total = summary.checks.length;
   await fs.writeFile(path.join(evidenceDir, 'next-smoke-LATEST.json'), JSON.stringify(summary, null, 2) + '\n', { mode: 0o600 });
