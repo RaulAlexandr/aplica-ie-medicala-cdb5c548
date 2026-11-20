@@ -235,7 +235,9 @@ try {
   const eligibleVisit = entry.getByLabel('Procedure visit');
   const eligibleOptions = await eligibleVisit.locator('option').evaluateAll(options => options.map(option => option.value).filter(Boolean));
   check('T07 chart path has eligible visit', eligibleOptions.length > 0, { eligibleVisitCount: eligibleOptions.length });
-  await eligibleVisit.selectOption(eligibleOptions[0]);
+  // The T33 seed also has an in-progress visit; this flow advances the visit from the start, so prefer a scheduled one.
+  const eligibleLabels = await eligibleVisit.locator('option').evaluateAll(options => options.filter(option => option.value).map(option => ({ value: option.value, text: option.textContent ?? '' })));
+  await eligibleVisit.selectOption(eligibleLabels.find(option => /scheduled/.test(option.text))?.value ?? eligibleOptions[0]);
   const chartProcedureForm = entry.locator('form.t07-procedure-form');
   await chartProcedureForm.waitFor();
   const chartCatalogOptions = await chartProcedureForm.getByLabel('Procedure from active catalog').locator('option').evaluateAll(options => options.map(option => option.value).filter(Boolean));
