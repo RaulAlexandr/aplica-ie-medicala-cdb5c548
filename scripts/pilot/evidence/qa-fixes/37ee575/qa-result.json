@@ -1,0 +1,110 @@
+{
+ "sha": "37ee575",
+ "checks": [
+  {
+   "n": "C1 greeting follows clinic hour 17",
+   "ok": true,
+   "d": "CLINIC OVERVIEW / Good afternoon, Radu / Patients / 5 / Appointments / 5 / Clini"
+  },
+  {
+   "n": "C2 clinic name shown, no id fragment",
+   "ok": true,
+   "d": ""
+  },
+  {
+   "n": "C3 daily report heading has no task code",
+   "ok": true,
+   "d": ""
+  },
+  {
+   "n": "setup appointment",
+   "ok": true,
+   "d": 201
+  },
+  {
+   "n": "setup procedure",
+   "ok": true,
+   "d": 201
+  },
+  {
+   "n": "F12 panel open before Start shows empty",
+   "ok": true,
+   "d": ""
+  },
+  {
+   "n": "F12 panel updated after Start (no stale empty text, has Run)",
+   "ok": true,
+   "d": ""
+  },
+  {
+   "n": "F12 after Pause shows Pause segment",
+   "ok": true,
+   "d": ""
+  },
+  {
+   "n": "F08 revision in UI is paused → cancelled",
+   "ok": true,
+   "d": "status: paused → cancelled · No reason recorded · 20"
+  },
+  {
+   "n": "C3 record headings",
+   "ok": true,
+   "d": ""
+  },
+  {
+   "n": "S4 panel scrolled into view and focus inside",
+   "ok": true,
+   "d": "{\"found\":true,\"top\":0,\"inView\":true,\"activeTag\":\"SELECT\",\"activeInside\":true}"
+  },
+  {
+   "n": "C3 panel heading",
+   "ok": true,
+   "d": ""
+  },
+  {
+   "n": "F11 row shows Inactive/Activate after Deactivate without reload",
+   "ok": true,
+   "d": "QA-FIX53438 - QA fix servicii / No category · 10 min · 11.00 RON · Inactive · localizare liberă / Edit / Activate"
+  },
+  {
+   "n": "F11 row Active again after Activate",
+   "ok": true,
+   "d": "QA-FIX53438 - QA fix servicii / No category · 10 min · 11.00 RON · Active · localizare liberă / Edit / Deactivate"
+  },
+  {
+   "n": "F05 base_price number → 422",
+   "ok": true,
+   "d": 422
+  },
+  {
+   "n": "F05 code number → 422",
+   "ok": true,
+   "d": 422
+  },
+  {
+   "n": "F05 duration null → 422",
+   "ok": true,
+   "d": 422
+  },
+  {
+   "n": "F05 content null → 422",
+   "ok": true,
+   "d": 422
+  },
+  {
+   "n": "S6 20 → 200, 21 → 422, 40 → 422 (msg mentions 20)",
+   "ok": true,
+   "d": "200/422/422"
+  },
+  {
+   "n": "S6 UI number inputs carry max=20 (when editor visible)",
+   "ok": true,
+   "d": "[\"20\"]"
+  },
+  {
+   "n": "no 5xx / page errors during run",
+   "ok": true,
+   "d": ""
+  }
+ ]
+}
