@@ -21,6 +21,14 @@ La final apar adresele: **web `http://127.0.0.1:5179`**, API `http://127.0.0.1:8
 | Repornire pe ACEEAȘI bază (seed-ul nu dublează nimic) | `scripts/pilot/demo.sh resume` |
 | Demo complet nou | `DENTACARE_PILOT_HOME=$HOME/.local/share/dentacare-demo-2 PILOT_CONFIG=$HOME/.config/dentacare-demo-2/pilot.env scripts/pilot/demo.sh up` (alte porturi în config dacă rulează și primul) |
 
+- **Demo-uri create înainte de scurtarea reviziei Alembic T13** (`t13_add_patient_financial_entries` → `t13_patient_financial_entries`): nu le relua cu `resume`; pornește un demo nou, cu bază nouă:
+
+  ```bash
+  cd /home/raul/Projects/worktrees/aplica-ie-pilot-demo
+  DENTACARE_PILOT_HOME=$HOME/.local/share/dentacare-pilot-demo-v2 PILOT_CONFIG=$HOME/.config/dentacare-pilot-demo-v2/pilot.env scripts/pilot/demo.sh up
+  ```
+
+  (Notă tehnică: demo-ul rulează pe SQLite creat cu `create_all`, fără tabelul `alembic_version`, deci schema veche nu este blocată de redenumire; măsura este totuși cerută ca să nu amestecăm baze create înainte și după corecție. Nu șterge demo-ul vechi.)
 - `demo.sh up` **refuză** să pornească dacă baza există deja și nu șterge, nu resetează și nu suprascrie nimic. Un checkout cu modificări locale este refuzat.
 - Date: `~/.local/share/dentacare-pilot-demo/` (bază SQLite `fictional-clinic.sqlite3`, documente, loguri). Config: `~/.config/dentacare-pilot-demo/pilot.env`.
 - Backup/restaurare (cu aplicația oprită): vezi [README.md](README.md) (`backup.sh`, `restore.sh`, apoi `verify_copy.py SURSĂ COPIE`).
