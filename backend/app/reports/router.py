@@ -227,7 +227,8 @@ async def _records(
             ))).all()) if reversal_targets else []
             target_by_id = {e.id: e for e in targets}
             records = [{"id": str(e.id), "entity": "patient_financial_entry", "date": _local_time(e.created_at, zone), "status": e.kind,
-                        "amount": str(e.amount), "patient_name": f"{p.first_name} {p.last_name}"} for e, p in reversals]
+                        "amount": str(e.amount), "reverses_kind": target_by_id[e.reverses_entry_id].kind if e.reverses_entry_id in target_by_id else "unknown",
+                        "patient_name": f"{p.first_name} {p.last_name}"} for e, p in reversals]
             grouped: dict[str, Decimal] = {}
             for reversal, _patient in reversals:
                 target = target_by_id.get(reversal.reverses_entry_id)
@@ -255,9 +256,19 @@ async def _records(
                 else: continue
                 net[method] = net.get(method, Decimal("0.00")) + entry.amount * sign
                 contributing_ids.add(str(entry.id))
-            records = [r | ({"method": entry_by_id.get(UUID(r["id"])).method}
-                             if r["status"] == "reversal" and UUID(r["id"]) in entry_by_id else {})
-                       for r in records if r["id"] in contributing_ids]
+            enriched_records = []
+            for record in records:
+                if record["id"] not in contributing_ids:
+                    continue
+                entry = entry_by_id[UUID(record["id"])]
+                if entry.kind == "reversal":
+                    target = entry_by_id.get(entry.reverses_entry_id)
+                    record = record | {
+                        "method": (target.method or "other") if target else "other",
+                        "reverses_kind": target.kind if target else "unknown",
+                    }
+                enriched_records.append(record)
+            records = enriched_records
             value = {method: str(amount) for method, amount in sorted(net.items())}
         return records, value, None
 

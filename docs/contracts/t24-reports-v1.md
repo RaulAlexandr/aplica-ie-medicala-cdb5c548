@@ -14,6 +14,18 @@ expune numai identificator, entitate, dată locală, status, sumă când există
 numele pacientului. Rândurile listate trebuie să corespundă exact numărătorului/sumei
 din indicator.
 
+Schema comună a unui record este `id`, `entity`, `date` (ISO cu fusul clinicii),
+`status`, `amount` când există și `patient_name` când există. Sunt permise numai
+următoarele câmpuri suplimentare de reconciliere, după indicator: `method` și
+`reverses_kind` pentru încasări/reversal-uri; `estimated_seconds`,
+`measured_seconds` și `manual_duration` pentru manopere; `age_days` pentru itemi
+de tratament. Pentru încasări, `amount` este magnitudinea intrării, `status` este
+tipul T13 (`payment`, `refund` sau `reversal`), iar `method` al unui reversal
+este metoda mișcării anulate. Pentru `financial_reversals`, `reverses_kind`
+identifică tipul mișcării țintă. Pentru ocupare, `amount` este numărul de minute
+al programării active sau al instanței `WorkingHours` pentru acea zi locală.
+Records nu returnează note, alergii, diagnostic sau alte date clinice.
+
 ## Indicatori
 
 | Cheie | Valoare și unitate | Definiție, includeri și excluderi | Sursă |
