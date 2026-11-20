@@ -230,9 +230,14 @@ async def test_recall_doctor_actions_period_and_terminal_transition(ctx):
     assert created.status_code==201
     recall_id=created.json()["id"]
     assert len((await c.get("/api/waitlist/recalls",headers=h,params={"start":(date.today()-timedelta(days=7)).isoformat(),"end":date.today().isoformat()})).json())==1
-    for action in ["contacted","scheduled","refused"]:
-        result=await c.post(f"/api/waitlist/recalls/{recall_id}/actions",headers=h,json={"action":action})
-        assert result.status_code==200 and result.json()["history"][-1]["actor_id"]==identity["id"] and result.json()["history"][-1]["occurred_at"]
+    contacted=await c.post(f"/api/waitlist/recalls/{recall_id}/actions",headers=h,json={"action":"contacted"})
+    assert contacted.status_code==200 and contacted.json()["history"][-1]["actor_id"]==identity["id"] and contacted.json()["history"][-1]["occurred_at"]
+    scheduled=await c.post(f"/api/waitlist/recalls/{recall_id}/actions",headers=h,json={"action":"scheduled"})
+    assert scheduled.status_code==200 and scheduled.json()["history"][-1]["actor_id"]==identity["id"] and scheduled.json()["history"][-1]["occurred_at"]
     terminal=await c.post(f"/api/waitlist/recalls/{recall_id}/actions",headers=h,json={"action":"contacted"})
     assert terminal.status_code==409
+    refused=await c.post("/api/waitlist/recalls",headers=h,json={"patient_id":patient["id"],"due_date":date.today().isoformat(),"reason":"Alt motiv fictiv"})
+    assert refused.status_code==201
+    refused_action=await c.post(f"/api/waitlist/recalls/{refused.json()['id']}/actions",headers=h,json={"action":"refused"})
+    assert refused_action.status_code==200 and refused_action.json()["history"][-1]["actor_id"]==identity["id"] and refused_action.json()["history"][-1]["occurred_at"]
     async with sessions() as s: assert len((await s.scalars(select(RecallHistory))).all())==3

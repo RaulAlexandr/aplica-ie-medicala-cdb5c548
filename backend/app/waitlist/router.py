@@ -192,6 +192,8 @@ async def create_recall(data:RecallCreate,db:AsyncSession=Depends(get_db),user:U
 async def recall_action(recall_id:UUID,data:RecallAction,db:AsyncSession=Depends(get_db),user:User=Depends(require_roles(*RECALL_CREATORS))):
     r=await db.scalar(select(Recall).where(Recall.id==recall_id,Recall.clinic_id==user.clinic_id).with_for_update())
     if not r:raise HTTPException(404,"Recall not found")
+    if r.status not in {"pending", "contacted"}:
+        raise HTTPException(409, "Recall is already resolved")
     r.status=data.action;db.add(RecallHistory(clinic_id=user.clinic_id,recall_id=r.id,actor_id=user.id,action=data.action));await db.commit()
     history=(await db.scalars(select(RecallHistory).where(RecallHistory.recall_id==r.id,RecallHistory.clinic_id==user.clinic_id).order_by(RecallHistory.occurred_at))).all()
     return {"id":str(r.id),"status":r.status,"history":[{"action":h.action,"actor_id":str(h.actor_id),"occurred_at":h.occurred_at} for h in history]}
