@@ -2,6 +2,10 @@
 
 Pilotul folosește doar date fictive și rulează în browser pe laptop. Nu folosi pentru fișe reale. Setup-ul instalează dependențele într-un virtualenv separat al utilizatorului și în `frontend/node_modules`; nu instalează global. Este necesar Python 3.12 și Node 22.
 
+## Demo cu date fictive (T33)
+
+Pentru demonstrații și testare pe roluri (recepție, medic, manager) pe o bază SQLite **nouă**, cu pacienți, vizite, plan, evaluări parodontale, documente și încasări fictive: `scripts/pilot/demo.sh up` și ghidul [DEMO.md](DEMO.md). `demo.sh` refuză să atingă o bază existentă.
+
 ## Pornire
 
 Din terminal, copiază comenzile de mai jos; schimbă calea doar dacă ai ales alt checkout candidat:
