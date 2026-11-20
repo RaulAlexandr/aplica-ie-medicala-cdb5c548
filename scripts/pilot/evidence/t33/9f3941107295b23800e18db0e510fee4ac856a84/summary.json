@@ -13,5 +13,97 @@
     "checks": 35,
     "passed": 35,
     "pageErrors": 0
-  }
+  },
+  "restore_verification": {
+    "checks": [
+      {
+        "name": "patients",
+        "rows": 3,
+        "digest_source": "65563fc84058e5d4",
+        "digest_copy": "65563fc84058e5d4",
+        "identical": true
+      },
+      {
+        "name": "documents",
+        "rows": 4,
+        "digest_source": "217d45bf503acf36",
+        "digest_copy": "217d45bf503acf36",
+        "identical": true
+      },
+      {
+        "name": "document_files",
+        "rows": 4,
+        "digest_source": "e8382f31df8da94c",
+        "digest_copy": "e8382f31df8da94c",
+        "identical": true
+      },
+      {
+        "name": "assessments",
+        "rows": 2,
+        "digest_source": "c03efd43b601ed6c",
+        "digest_copy": "c03efd43b601ed6c",
+        "identical": true
+      },
+      {
+        "name": "assessment_sites",
+        "rows": 1,
+        "digest_source": "6edb5affe7250c48",
+        "digest_copy": "6edb5affe7250c48",
+        "identical": true
+      },
+      {
+        "name": "plans",
+        "rows": 1,
+        "digest_source": "fa92f5170559e432",
+        "digest_copy": "fa92f5170559e432",
+        "identical": true
+      },
+      {
+        "name": "plan_items",
+        "rows": 3,
+        "digest_source": "f9203d2bd3679230",
+        "digest_copy": "f9203d2bd3679230",
+        "identical": true
+      },
+      {
+        "name": "performed",
+        "rows": 1,
+        "digest_source": "6ad5877825828afd",
+        "digest_copy": "6ad5877825828afd",
+        "identical": true
+      },
+      {
+        "name": "entries",
+        "rows": 5,
+        "digest_source": "f04d674496c86ea8",
+        "digest_copy": "f04d674496c86ea8",
+        "identical": true
+      },
+      {
+        "name": "net_received",
+        "rows": 3,
+        "digest_source": "fb2d1c794eda7e4e",
+        "digest_copy": "fb2d1c794eda7e4e",
+        "identical": true
+      },
+      {
+        "name": "services_completed",
+        "rows": 1,
+        "digest_source": "4742d5fedebb7e6f",
+        "digest_copy": "4742d5fedebb7e6f",
+        "identical": true
+      },
+      {
+        "name": "balance_due",
+        "rows": 3,
+        "digest_source": "c8069b30736e42b1",
+        "digest_copy": "c8069b30736e42b1",
+        "identical": true
+      }
+    ],
+    "ok": true,
+    "documents_hash_verified_in_copy": 4,
+    "balance_due_by_patient_count": 3
+  },
+  "restore_note": "verify_copy.py: pristine demo-v3 vs a fresh restore of its backup (the scripts ran on a different copy)"
 }
