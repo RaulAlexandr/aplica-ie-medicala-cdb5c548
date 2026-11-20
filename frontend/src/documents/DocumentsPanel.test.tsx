@@ -26,6 +26,14 @@ function text(node: TestRenderer.ReactTestInstance): string {
   return node.children.map(child => typeof child === 'string' ? child : text(child)).join('');
 }
 async function flush() { await new Promise(resolve => setTimeout(resolve, 20)); }
+async function until(condition: () => boolean, what: string, budgetMs = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < budgetMs) {
+    if (condition()) return;
+    await act(async () => { await flush(); });
+  }
+  throw new Error(`Timed out after ${budgetMs} ms waiting for ${what}`);
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -148,6 +156,7 @@ describe('DocumentsPanel', () => {
     select(r, 'Dinte', '36');
     await submit(r);
     await act(async () => { r.update(tree(qc, 'patient-b')); await flush(); });
+    await until(() => byLabel(r, 'Vizită').findAllByType('option').map(option => option.props.value).join('|') === '|visit-b', "patient B's visit options");
     expect(r.root.findAllByProps({ 'data-testid': 'selected-file' })).toHaveLength(0);
     expect(byLabel(r, 'Vizită').props.value).toBe('');
     expect(byLabel(r, 'Dinte').props.value).toBe('');

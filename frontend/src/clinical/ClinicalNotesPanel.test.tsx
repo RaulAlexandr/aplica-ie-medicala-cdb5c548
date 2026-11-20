@@ -35,6 +35,8 @@ function detailError(message: string) {
   return error;
 }
 
+// Under heavy parallel load the 5 s default test timeout is shorter than the explicit waitFor budget below.
+vi.setConfig({ testTimeout: 30000 });
 afterEach(() => vi.restoreAllMocks());
 
 describe('clinical draft UI', () => {
@@ -106,7 +108,8 @@ describe('clinical draft UI', () => {
     await waitFor(() => renderer.root.findAllByType('article').some(article => text(article).includes('Current patient response')), 'the patient B list');
     expect(renderer.root.findAllByType('article').some(article => text(article).includes('Current patient response'))).toBe(true);
     await act(async () => { resolveA([patientA]); });
-    await waitFor(() => client.getQueryState(['patient-notes', 'patient-A', '', '', 0])?.status === 'success', 'the delayed patient A response');
+    // gcTime is 0: once A settles the query can already be garbage-collected, so a missing state also means "settled".
+    await waitFor(() => { const state = client.getQueryState(['patient-notes', 'patient-A', '', '', 0]); return state === undefined || state.status === 'success'; }, 'the delayed patient A response');
     expect(renderer.root.findAllByType('article').some(article => text(article).includes('Current patient response'))).toBe(true);
     expect(renderer.root.findAllByType('article').some(article => text(article).includes('Old patient response'))).toBe(false);
   });
