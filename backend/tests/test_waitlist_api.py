@@ -3,11 +3,14 @@ from datetime import date, datetime, timedelta
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import (
     Appointment,
     Base,
+    Clinic,
+    Patient,
     RecallHistory,
     User,
     WaitlistEntry,
@@ -156,7 +159,6 @@ async def test_endpoint_role_matrix(ctx):
     from uuid import uuid4
     c,sessions=ctx;h=await register(c,"role-matrix@example.com")
     identity=(await c.get("/api/auth/me",headers=h)).json()
-    patient=(await c.post("/api/patients",headers=h,json={"first_name":"Fake","last_name":"Roles"})).json()
     room=(await c.post("/api/rooms",headers=h,json={"name":"Role room"})).json()
     day=date.today()+timedelta(days=30);unknown=str(uuid4())
     paths=[
@@ -187,8 +189,6 @@ async def test_endpoint_role_matrix(ctx):
 
 @pytest.mark.asyncio
 async def test_offer_partial_unique_index_and_expiry_releases_interval(ctx):
-    from sqlalchemy.exc import IntegrityError
-    from app.database import Clinic
     c,sessions=ctx;h=await register(c,"offer-index@example.com")
     patient=(await c.post("/api/patients",headers=h,json={"first_name":"Fake","last_name":"Offer"})).json()
     room=(await c.post("/api/rooms",headers=h,json={"name":"Offer room"})).json();doctor=(await c.get("/api/auth/me",headers=h)).json()["id"]
@@ -220,7 +220,6 @@ async def test_cancel_offer_restores_active_entry_and_normal_appointment_conflic
     entry2=(await c.post("/api/waitlist/entries",headers=h,json=body)).json();offer2=(await c.post(f"/api/waitlist/entries/{entry2['id']}/offers",headers=h,json={**slot,"starts_at":f"{day}T11:00:00+02:00"})).json()
     async with sessions() as s:
         s.add(Appointment(clinic_id=patient["clinic_id"],patient_id=patient["id"],doctor_id=doctor,room_id=room["id"],starts_at=datetime.fromisoformat(f"{day}T11:00:00+02:00"),ends_at=datetime.fromisoformat(f"{day}T11:30:00+02:00"),duration_minutes=30,status="scheduled",appointment_type="Programare normală"));await s.commit()
-    before=await c.get("/api/waitlist/offers",headers=h)
     conflict=await c.post(f"/api/waitlist/offers/{offer2['id']}/confirm",headers=h)
     assert conflict.status_code==409
     async with sessions() as s: assert len((await s.scalars(select(Appointment))).all())==1
@@ -234,7 +233,9 @@ async def test_recall_doctor_actions_period_and_terminal_transition(ctx):
     created=await c.post("/api/waitlist/recalls",headers=h,json={"patient_id":patient["id"],"due_date":(date.today()-timedelta(days=2)).isoformat(),"reason":"Control fictiv"})
     assert created.status_code==201
     recall_id=created.json()["id"]
-    assert len((await c.get("/api/waitlist/recalls",headers=h,params={"start":(date.today()-timedelta(days=7)).isoformat(),"end":date.today().isoformat()})).json())==1
+    due_today=await c.post("/api/waitlist/recalls",headers=h,json={"patient_id":patient["id"],"due_date":date.today().isoformat(),"reason":"Scadent azi fictiv"})
+    assert due_today.status_code==201
+    assert len((await c.get("/api/waitlist/recalls",headers=h,params={"start":(date.today()-timedelta(days=7)).isoformat(),"end":date.today().isoformat()})).json())==2
     contacted=await c.post(f"/api/waitlist/recalls/{recall_id}/actions",headers=h,json={"action":"contacted"})
     assert contacted.status_code==200 and contacted.json()["history"][-1]["actor_id"]==identity["id"] and contacted.json()["history"][-1]["occurred_at"]
     scheduled=await c.post(f"/api/waitlist/recalls/{recall_id}/actions",headers=h,json={"action":"scheduled"})
@@ -290,3 +291,19 @@ async def test_cancelling_offer_returns_entry_to_active(ctx):
     response=await c.post(f"/api/waitlist/offers/{offer['id']}/cancel",headers=h)
     assert response.status_code==200 and response.json()["status"]=="cancelled"
     async with sessions() as s: assert (await s.get(WaitlistEntry,entry["id"])).status=="active"
+
+@pytest.mark.asyncio
+async def test_waitlist_database_checks_and_restrict_foreign_keys(ctx):
+    from sqlalchemy.exc import IntegrityError
+    c,sessions=ctx;h=await register(c,"constraints@example.com")
+    patient=(await c.post("/api/patients",headers=h,json={"first_name":"Fake","last_name":"Constraint"})).json()
+    day=date.today()+timedelta(days=26);entry=(await c.post("/api/waitlist/entries",headers=h,json={"patient_id":patient["id"],"desired_duration_minutes":30,"windows":[{"weekday":day.weekday(),"start":"10:00:00","end":"12:00:00"}],"valid_from":day.isoformat(),"valid_until":day.isoformat()})).json()
+    async with sessions() as s:
+        connection=await s.connection();await connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        row=await s.get(WaitlistEntry,entry["id"]);row.status="nonsense"
+        with pytest.raises(IntegrityError):await s.commit()
+        await s.rollback()
+        row=await s.get(WaitlistEntry,entry["id"]);patient_row=await s.get(Patient,patient["id"]);await s.delete(patient_row)
+        with pytest.raises(IntegrityError):await s.commit()
+        await s.rollback()
+        assert (await s.get(WaitlistEntry,entry["id"])).status=="active"
