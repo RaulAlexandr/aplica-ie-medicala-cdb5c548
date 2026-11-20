@@ -249,7 +249,7 @@ async def test_reports_financial_service_duration_and_consumptions(report_env):
                                        patient_id=ids["patient"], procedure_catalog_id=catalog.id,
                                        executed_by_id=ids["doctor"], procedure_code="X2", procedure_name="Manual exam",
                                        procedure_base_price=Decimal("200.00"), procedure_currency="RON",
-                                       procedure_default_duration=20, status="completed", current_price=Decimal("200.00"),
+                                       procedure_default_duration=20, status="completed", current_price=None,
                                        notes="Manual duration override: 300s - test")
         cancelled_procedure = PerformedProcedure(clinic_id=ids["clinic"], appointment_id=appt.id,
                                        patient_id=ids["patient"], procedure_catalog_id=catalog.id,
@@ -265,6 +265,9 @@ async def test_reports_financial_service_duration_and_consumptions(report_env):
         session.add(ProcedureExecutionSegment(performed_procedure=procedure, segment_type="run",
                                               started_at=at_local("2026-10-25T10:00:00"),
                                               ended_at=at_local("2026-10-25T10:02:00"), duration_seconds=120))
+        session.add(ProcedureExecutionSegment(performed_procedure=procedure, segment_type="pause",
+                                              started_at=at_local("2026-10-25T10:02:00"),
+                                              ended_at=at_local("2026-10-25T10:12:00"), duration_seconds=600))
         session.add(ProcedureExecutionSegment(performed_procedure=manual_procedure, segment_type="run",
                                               started_at=at_local("2026-10-25T10:03:00"),
                                               ended_at=at_local("2026-10-25T10:08:00"), duration_seconds=300))
@@ -284,6 +287,7 @@ async def test_reports_financial_service_duration_and_consumptions(report_env):
             financial_entries[key] = entry
             session.add(entry)
         await session.flush()
+        catalog.default_duration_minutes = 999  # Completed rows must use the captured procedure snapshot.
         reversal_entries = []
         for key, target_key in (("reverse_cash_payment", "cash_payment"),
                                 ("reverse_cash_refund", "cash_refund"),
@@ -310,9 +314,31 @@ async def test_reports_financial_service_duration_and_consumptions(report_env):
                                  estimated_duration_minutes=30, priority="normal", status="active",
                                  created_at=at_local("2026-10-24T10:00:00"))
         session.add(item)
+        session.add_all([
+            TreatmentPlanItem(clinic_id=ids["clinic"], plan_id=plan.id, stage_id=stage.id,
+                position=2, procedure_catalog_id=catalog.id, procedure_code="X", procedure_name="Cancelled item",
+                currency="RON", estimated_price=Decimal("90.00"), estimated_duration_minutes=30,
+                priority="normal", status="cancelled", created_at=at_local("2026-10-23T10:00:00")),
+            TreatmentPlanItem(clinic_id=ids["clinic"], plan_id=plan.id, stage_id=stage.id,
+                position=3, procedure_catalog_id=catalog.id, procedure_code="X", procedure_name="Performed item",
+                currency="RON", estimated_price=Decimal("90.00"), estimated_duration_minutes=30,
+                priority="normal", status="active", performed_procedure_id=procedure.id,
+                created_at=at_local("2026-10-22T10:00:00")),
+        ])
         session.add(TreatmentPlanAcceptance(clinic_id=ids["clinic"], plan_id=plan.id, version=1,
                                             accepted_by_id=ids["manager"], accepted_at=at_local("2026-10-24T10:00:00"),
                                             note="Accepted in test", snapshot={}))
+        draft_plan = TreatmentPlan(clinic_id=ids["clinic"], patient_id=ids["patient"], title="Unaccepted plan",
+                                   status="draft", version=1, accepted_version=None, created_by_id=ids["doctor"])
+        session.add(draft_plan)
+        await session.flush()
+        draft_stage = TreatmentPlanStage(clinic_id=ids["clinic"], plan_id=draft_plan.id, position=1, title="Draft stage")
+        session.add(draft_stage)
+        await session.flush()
+        session.add(TreatmentPlanItem(clinic_id=ids["clinic"], plan_id=draft_plan.id, stage_id=draft_stage.id,
+            position=1, procedure_catalog_id=catalog.id, procedure_code="X", procedure_name="Unaccepted item",
+            currency="RON", estimated_price=Decimal("90.00"), estimated_duration_minutes=30,
+            priority="normal", status="active", created_at=at_local("2026-10-21T10:00:00")))
         await session.commit()
 
     params = "from=2026-10-25&to=2026-10-25"
