@@ -10,6 +10,7 @@ from app.auth.service import (
     get_current_user,
     hash_password,
     issue_refresh_token,
+    lock_user,
     rotate_refresh_token,
 )
 from app.database import Clinic, RefreshToken, User, get_db, utcnow
@@ -56,21 +57,27 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
     user = await authenticate(db, payload.email, payload.password)
-    if not user:
+    # Lock order users -> refresh_tokens; re-read is_active under the lock (a deactivation may have committed).
+    user = await lock_user(db, user.id) if user else None
+    if not user or not user.is_active:
         raise HTTPException(401, "Invalid email or password")
     refresh = await issue_refresh_token(db, user)
+    # Issued while the user row is locked: a deactivation waiting on that lock gets a later deactivated_at.
+    access = create_access_token(user)
     await db.commit()
-    return TokenResponse(access_token=create_access_token(user), refresh_token=refresh)
+    return TokenResponse(access_token=access, refresh_token=refresh)
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
-    user = await rotate_refresh_token(db, payload.refresh_token)
+    user = await rotate_refresh_token(db, payload.refresh_token)  # locks users, then refresh_tokens
     new_refresh = await issue_refresh_token(db, user)
+    access = create_access_token(user)
     await db.commit()
-    return TokenResponse(access_token=create_access_token(user), refresh_token=new_refresh)
+    return TokenResponse(access_token=access, refresh_token=new_refresh)
 
 @router.post("/logout", status_code=204)
 async def logout(payload: LogoutRequest, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)) -> None:
+    await lock_user(db, user.id)  # same lock order as every other refresh-token path
     token = await db.scalar(select(RefreshToken).where(RefreshToken.token_hash == _hash_refresh(payload.refresh_token), RefreshToken.user_id == user.id).with_for_update())
     if token and token.revoked_at is None:
         token.revoked_at = utcnow()

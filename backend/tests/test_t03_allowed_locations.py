@@ -198,3 +198,32 @@ async def test_t08_location_change_respects_rule_and_existing_records_stay_valid
     async with sessions() as session:
         stored = await session.get(PerformedProcedure, procedure_id)
         assert (stored.tooth_fdi, stored.tooth_surface, stored.status) == ("16", "occlusal", "completed")
+
+
+async def test_t08_patch_resending_unchanged_location_is_not_revalidated(env):
+    # Sol review point 5: a PATCH that re-sends the stored location must not apply a rule tightened later.
+    client, _ = env
+    ctx = await setup_clinic(client, "t03-resend@example.com")
+    catalog = await service(client, ctx["auth"], "RESEND")
+    plan = (await client.post(f"/api/treatment-plans/patients/{ctx['patient_id']}", headers=ctx["auth"], json={"title": "Plan", "stages": [{"title": "E1", "items": [
+        {"procedure_catalog_id": catalog["id"], "tooth_fdi": "16"},
+        {"procedure_catalog_id": catalog["id"], "tooth_fdi": "21", "tooth_surface": "mesial,distal"}]}]})).json()
+    first, second = (item["id"] for item in plan["stages"][0]["items"])
+    assert (await client.patch(f"/api/procedures/{catalog['id']}", headers=ctx["auth"], json={"allowed_location": "tooth_surface"})).status_code == 200
+
+    unchanged = await client.patch(f"/api/treatment-plans/items/{first}", headers=ctx["auth"], json={"notes": "Notă nouă", "tooth_fdi": "16"})
+    assert unchanged.status_code == 200, unchanged.text
+    same_surfaces = await client.patch(f"/api/treatment-plans/items/{second}", headers=ctx["auth"], json={"tooth_fdi": "21", "tooth_surface": "distal,mesial"})
+    assert same_surfaces.status_code == 200, same_surfaces.text
+    explicit_null = await client.patch(f"/api/treatment-plans/items/{first}", headers=ctx["auth"], json={"tooth_surface": None})
+    assert explicit_null.status_code == 200, explicit_null.text
+
+    moved = await client.patch(f"/api/treatment-plans/items/{first}", headers=ctx["auth"], json={"tooth_fdi": "17"})
+    assert moved.status_code == 422 and moved.json()["detail"] == "Service RESEND requires an FDI tooth and at least one surface"
+    dropped = await client.patch(f"/api/treatment-plans/items/{second}", headers=ctx["auth"], json={"tooth_surface": None})
+    assert dropped.status_code == 422
+    allowed = await client.patch(f"/api/treatment-plans/items/{first}", headers=ctx["auth"], json={"tooth_surface": "occlusal"})
+    assert allowed.status_code == 200
+    items = {item["id"]: item for item in allowed.json()["stages"][0]["items"]}
+    assert (items[first]["tooth_fdi"], items[first]["tooth_surface"], items[first]["notes"]) == ("16", "occlusal", "Notă nouă")
+    assert (items[second]["tooth_fdi"], items[second]["tooth_surface"]) == ("21", "distal,mesial")
