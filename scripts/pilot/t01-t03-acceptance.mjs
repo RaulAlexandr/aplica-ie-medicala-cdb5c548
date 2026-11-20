@@ -24,6 +24,7 @@ const summary = { task: 'T01/T03 gaps', appSha: process.env.DENTACARE_APP_SHA, w
   pageErrors: [], consoleErrors: [], network: { reactivatePosts: 0, procedurePosts: 0, planPosts: 0 }, errors: [] };
 const check = (name, ok, details = {}) => { summary.checks.push({ name, passed: Boolean(ok), ...details }); if (!ok) throw new Error(`Acceptance failed: ${name} ${JSON.stringify(details)}`); };
 const shot = async (page, name) => { const file = path.join(evidenceDir, `t01-t03-${name}.png`); await page.screenshot({ path: file, fullPage: true }); summary.artifacts.push(path.basename(file)); };
+const optionDisabled = locator => locator.evaluate(el => el.disabled);
 const idPath = url => { try { return new URL(url).pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, ':id'); } catch { return null; } };
 
 async function apiLogin(email, password) {
@@ -184,9 +185,10 @@ try {
   const postsBefore = summary.network.procedurePosts;
   await visitForm.getByLabel('Procedure from active catalog').selectOption(ext.id);
   const save = visitForm.getByRole('button', { name: 'Save procedure' });
-  check('visit path: tooth-required service blocks saving without a tooth', await save.isDisabled()
-    && (await visitForm.getByRole('note', { name: 'Location rule' }).innerText()).includes('cere un dinte FDI')
-    && await visitForm.getByLabel('Procedure tooth').locator('option[value=""]').isDisabled());
+  const ruleNote = visitForm.locator('[role="note"][aria-label="Location rule"]');
+  check('visit path: Save disabled for tooth-required service without a tooth', await save.isDisabled());
+  check('visit path: rule message shown', (await ruleNote.count()) === 1 && (await ruleNote.innerText()).includes('cere un dinte FDI'));
+  check('visit path: "No tooth" option disabled', await optionDisabled(visitForm.getByLabel('Procedure tooth').locator('option[value=""]')));
   await shot(dpage, 'visit-tooth-required-blocked');
   check('visit path: nothing was sent', summary.network.procedurePosts === postsBefore);
   await visitForm.getByLabel('Procedure tooth').selectOption('16');
@@ -198,7 +200,7 @@ try {
   // Existing service, unchanged behaviour: saves without a tooth.
   await visitForm.getByLabel('Procedure from active catalog').selectOption(legacy.id);
   check('existing service: tooth stays optional', !(await visitForm.getByLabel('Procedure tooth').isDisabled()) && !(await save.isDisabled())
-    && await visitForm.getByRole('note', { name: 'Location rule' }).count() === 0);
+    && await visitForm.locator('[role="note"][aria-label="Location rule"]').count() === 0);
   const legacyCreate = dpage.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures');
   await save.click();
   const legacySaved = await legacyCreate;
@@ -214,9 +216,9 @@ try {
   await toothForm.waitFor();
   const procedureSelect = toothForm.getByLabel('Procedure from active catalog');
   check('tooth path: tooth 16 preselected', await toothForm.getByLabel('Procedure tooth').inputValue() === '16');
-  check('tooth path: "fără dinte" service is not offered', await procedureSelect.locator(`option[value="${noTooth.body.id}"]`).isDisabled());
+  check('tooth path: "fără dinte" service is not offered', await optionDisabled(procedureSelect.locator(`option[value="${noTooth.body.id}"]`)));
   await procedureSelect.selectOption(ext.id);
-  check('tooth path: "No tooth" cannot be chosen for the tooth-required service', await toothForm.getByLabel('Procedure tooth').locator('option[value=""]').isDisabled()
+  check('tooth path: "No tooth" cannot be chosen for the tooth-required service', await optionDisabled(toothForm.getByLabel('Procedure tooth').locator('option[value=""]'))
     && !(await toothForm.getByRole('button', { name: 'Save procedure' }).isDisabled()));
   const toothCreate = dpage.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/performed-procedures');
   await toothForm.getByRole('button', { name: 'Save procedure' }).click();
@@ -236,7 +238,7 @@ try {
   await dpage.getByRole('button', { name: 'Salvează planul' }).click();
   await dpage.getByRole('alert').filter({ hasText: `${extCode}: Serviciul cere un dinte FDI.` }).waitFor();
   check('plan: tooth-required item blocked without a tooth, nothing sent', summary.network.planPosts === planPostsBefore
-    && await dpage.getByLabel('Etapa 1 manopera 1 dinte').locator('option[value=""]').isDisabled());
+    && await optionDisabled(dpage.getByLabel('Etapa 1 manopera 1 dinte').locator('option[value=""]')));
   await shot(dpage, 'plan-tooth-required-blocked');
   const planRefusal = await doctorApi('POST', `/treatment-plans/patients/${patient.id}`, { title: 'Forțat', stages: [{ title: 'E1', items: [{ procedure_catalog_id: ext.id }] }] });
   check('server refuses the plan item without a tooth (422)', planRefusal.status === 422 && planRefusal.body.detail === `Service ${extCode} requires an FDI tooth`, { status: planRefusal.status });
