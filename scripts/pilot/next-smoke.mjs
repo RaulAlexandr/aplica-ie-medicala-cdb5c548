@@ -107,7 +107,7 @@ try {
   await q1.getByLabel('Text', { exact: true }).fill(reasonLabel);
   await q1.getByLabel('Obligatorie').check();
   await q2.getByLabel('Text', { exact: true }).fill(pregnancyLabel);
-  await q2.getByLabel('Tip', { exact: true }).selectOption('yes_no');
+  await q2.locator('select').first().selectOption('yes_no'); // the question type select (first select of the fieldset)
   const published = respond(manager, 'POST', p => /\/api\/forms\/versions\/[^/]+\/publish$/.test(p));
   await editor.getByRole('button', { name: 'Publică versiunea' }).click();
   check('manager publishes the template version (2xx)', (await published).ok());
