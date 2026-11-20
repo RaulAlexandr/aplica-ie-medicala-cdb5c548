@@ -156,6 +156,22 @@ async def confirm_offer(offer_id:UUID,db:AsyncSession=Depends(get_db),user:User=
     except IntegrityError as exc: await db.rollback();raise HTTPException(409,"Slot was booked by another request") from exc
     return await appointment_with_names(db,appt)
 
+@router.post("/offers/{offer_id}/cancel")
+async def cancel_offer(offer_id: UUID, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*SCHEDULERS))):
+    offer = await db.scalar(select(WaitlistOffer).where(WaitlistOffer.id == offer_id, WaitlistOffer.clinic_id == user.clinic_id).with_for_update())
+    if not offer:
+        raise HTTPException(404, "Offer not found")
+    if offer.status != "active":
+        raise HTTPException(409, "Offer is already resolved")
+    entry = await scoped_entry(db, user, offer.entry_id, True)
+    clinic = await db.get(Clinic, user.clinic_id)
+    today = utcnow().astimezone(ZoneInfo(clinic.timezone)).date()
+    offer.status = "cancelled"
+    entry.status = "active" if entry.valid_until >= today else "expired"
+    await db.commit()
+    return {"id": str(offer.id), "entry_id": str(entry.id), "status": offer.status, "entry_status": entry.status}
+
+
 @router.get("/offers")
 async def list_offers(db:AsyncSession=Depends(get_db),user:User=Depends(require_roles(*READERS))):
     rows=(await db.scalars(select(WaitlistOffer).where(WaitlistOffer.clinic_id==user.clinic_id).order_by(WaitlistOffer.created_at.desc()))).all()
