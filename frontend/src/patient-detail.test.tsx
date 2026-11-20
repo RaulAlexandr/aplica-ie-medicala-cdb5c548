@@ -1,5 +1,3 @@
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 import TestRenderer, { act } from 'react-test-renderer';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -7,6 +5,8 @@ import { AxiosError, AxiosHeaders } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as client from './api/client';
 import { PatientDetail } from './App';
+import indexHtml from '../index.html?raw';
+import faviconSvg from '../public/favicon.svg?raw';
 
 const user = { id: 'u1', role: 'doctor' } as unknown as client.User;
 
@@ -50,8 +50,7 @@ describe('patient detail page for missing or foreign ids', () => {
 
 describe('favicon', () => {
   it('is linked from index.html and shipped from public/', () => {
-    const html = readFileSync(resolve(__dirname, '../index.html'), 'utf8');
-    expect(html).toMatch(/<link rel="icon"[^>]*href="\/favicon\.svg"/);
-    expect(existsSync(resolve(__dirname, '../public/favicon.svg'))).toBe(true);
+    expect(indexHtml).toMatch(/<link rel="icon"[^>]*href="\/favicon\.svg"/);
+    expect(faviconSvg).toContain('<svg');
   });
 });
