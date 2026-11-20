@@ -10,7 +10,7 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "t13_add_patient_financial_entries"
+revision = "t13_patient_financial_entries"
 down_revision = "merge_pilot_t09_t11"
 branch_labels = None
 depends_on = None
