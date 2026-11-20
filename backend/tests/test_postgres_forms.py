@@ -9,6 +9,7 @@ from uuid import uuid4
 import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import get_db
@@ -69,6 +70,41 @@ async def test_t12_migration_preserves_t03_populated_rows_and_uses_configured_he
         assert await conn.fetchval("SELECT count(*) FROM users WHERE id=$1", user) == 1
         assert await conn.fetchval("SELECT count(*) FROM patients WHERE id=$1", patient) == 1
         assert await conn.fetchval("SELECT count(*) FROM patient_forms") == 0
+
+        template_id, version_id = str(uuid4()), str(uuid4())
+        await conn.execute(
+            "INSERT INTO form_templates (id,clinic_id,name,created_by_id,created_at) VALUES ($1,$2,'Template unicitate',$3,now())",
+            template_id, clinic, user,
+        )
+        await conn.execute(
+            "INSERT INTO form_template_versions (id,clinic_id,template_id,version_number,status,definition,created_by_id,created_at) VALUES ($1,$2,$3,1,'draft','{\"sections\":[]}'::jsonb,$4,now())",
+            version_id, clinic, template_id, user,
+        )
+        with pytest.raises(asyncpg.UniqueViolationError):
+            await conn.execute(
+                "INSERT INTO form_template_versions (id,clinic_id,template_id,version_number,status,definition,created_by_id,created_at) VALUES ($1,$2,$3,1,'draft','{\"sections\":[]}'::jsonb,$4,now())",
+                str(uuid4()), clinic, template_id, user,
+            )
+        question_id, draft_version_id = str(uuid4()), str(uuid4())
+        await conn.execute(
+            "INSERT INTO form_template_questions (id,clinic_id,template_version_id,question_id,section_id,position,question_type,definition) VALUES ($1,$2,$3,'q','s',0,'short_text','{\"id\":\"q\",\"type\":\"short_text\"}'::jsonb)",
+            question_id, clinic, version_id,
+        )
+        await conn.execute("UPDATE form_template_versions SET status='published' WHERE id=$1", version_id)
+        await conn.execute(
+            "INSERT INTO form_template_versions (id,clinic_id,template_id,version_number,status,definition,created_by_id,created_at) VALUES ($1,$2,$3,2,'draft','{\"sections\":[]}'::jsonb,$4,now())",
+            draft_version_id, clinic, template_id, user,
+        )
+        with pytest.raises(asyncpg.PostgresError):
+            await conn.execute(
+                "UPDATE form_template_questions SET template_version_id=$1, definition='{\"id\":\"q\",\"type\":\"short_text\",\"label\":\"edited\"}'::jsonb WHERE id=$2",
+                draft_version_id, question_id,
+            )
+        preserved_question = await conn.fetchrow(
+            "SELECT template_version_id, definition FROM form_template_questions WHERE id=$1", question_id,
+        )
+        assert str(preserved_question["template_version_id"]) == version_id
+        assert preserved_question["definition"] == '{"id":"q","type":"short_text"}'
     finally:
         await conn.close()
 
@@ -99,10 +135,14 @@ async def test_two_concurrent_publications_of_same_version_have_one_winner():
             ready = asyncio.Event()
             arrivals_lock = asyncio.Lock()
             arrivals = 0
+            session_ids = set()
+            backend_pids = set()
 
             async def concurrent_override():
                 nonlocal arrivals
                 async with sessions() as session:
+                    session_ids.add(id(session))
+                    backend_pids.add((await session.execute(text("SELECT pg_backend_pid()"))).scalar_one())
                     async with arrivals_lock:
                         arrivals += 1
                         if arrivals == 2:
@@ -115,6 +155,14 @@ async def test_two_concurrent_publications_of_same_version_have_one_winner():
                 return await asyncio.wait_for(client.post(f"/api/forms/versions/{version_id}/publish", headers=headers), timeout=10)
             results = await asyncio.wait_for(asyncio.gather(publish(), publish()), timeout=15)
             assert sorted(response.status_code for response in results) == [200, 409]
+            assert len(session_ids) == 2
+            assert len(backend_pids) == 2
+            async with sessions() as session:
+                persisted = (await session.execute(text(
+                    "SELECT id, status FROM form_template_versions WHERE id = :version_id"
+                ), {"version_id": version_id})).one()
+                assert str(persisted.id) == version_id
+                assert persisted.status == "published"
     finally:
         app.dependency_overrides.clear()
         await engine.dispose()

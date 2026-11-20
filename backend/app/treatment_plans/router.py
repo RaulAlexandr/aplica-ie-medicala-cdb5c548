@@ -813,8 +813,10 @@ async def update_item(
     tooth = changes.get("tooth_fdi", item.tooth_fdi)
     surface = changes.get("tooth_surface", item.tooth_surface)
     _validate_location(tooth, surface)
-    if location_fields:
-        # A changed location must respect the service rule; untouched locations are never re-validated.
+    location_changed = (tooth or None) != (item.tooth_fdi or None) or _surface_set(surface) != _surface_set(item.tooth_surface)
+    if location_changed:
+        # Only a location that actually differs from the stored one must respect the service rule; re-sending
+        # the stored tooth/surfaces (in any order) never re-validates an item created under an older rule.
         catalog = await db.scalar(select(ProcedureCatalog).where(
             ProcedureCatalog.id == item.procedure_catalog_id, ProcedureCatalog.clinic_id == plan.clinic_id))
         if catalog:

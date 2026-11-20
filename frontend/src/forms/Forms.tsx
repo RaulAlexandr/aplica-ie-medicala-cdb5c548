@@ -108,12 +108,12 @@ export function PatientFormsPanel({ patientId, canReview = false }: { patientId:
       return next;
     });
   }
-  async function persist() {
-    if (!current) return;
-    try { const updated = await saveAnswers(current.id, answers); setCurrent(updated); await refresh(); setError(''); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Nu s-a putut salva'); }
+  async function persist(): Promise<boolean> {
+    if (!current) return false;
+    try { const updated = await saveAnswers(current.id, answers); setCurrent(updated); await refresh(); setError(''); return true; }
+    catch (e) { setError(e instanceof Error ? e.message : 'Nu s-a putut salva'); return false; }
   }
-  async function submit() { if (!current) return; try { await persist(); const updated = await submitForm(current.id); setCurrent(updated); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : 'Nu s-a putut trimite'); } }
+  async function submit() { if (!current || !(await persist())) return; try { const updated = await submitForm(current.id); setCurrent(updated); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : 'Nu s-a putut trimite'); } }
   async function review(decision: 'validated' | 'needs_clarification') { if (!current) return; const updated = await reviewForm(current.id, decision, reason); setCurrent(updated); await refresh(); }
   return <section aria-label="Formulare pacient"><h2>Formulare</h2>
     {templates.length > 0 && <div><label>Formular nou <select value={selectedVersion} onChange={event => setSelectedVersion(event.target.value)}><option value="">Alegeți formularul</option>{templates.map(item => <option key={item.version_id} value={item.version_id}>{item.name} v{item.version_number}</option>)}</select></label><button type="button" disabled={!selectedVersion} onClick={() => void startForm()}>Începe completarea</button></div>}

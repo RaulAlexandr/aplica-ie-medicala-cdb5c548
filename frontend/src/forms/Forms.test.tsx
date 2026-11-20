@@ -1,7 +1,9 @@
 import TestRenderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as formsApi from './api';
 import { FormTemplateEditor, PatientFormsPanel } from './Forms';
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('T12 form UI', () => {
   it('starts a manager template and exposes section and question editing', async () => {
@@ -35,6 +37,83 @@ describe('T12 form UI', () => {
     await act(async () => { open.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)); });
     expect(renderer.root.findAllByType('textarea').length).toBe(1);
     expect(renderer.root.findAllByType('button').some(button => button.children.join('') === 'Începe completarea')).toBe(true);
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it('hides a dependent question and clears its draft answer when its condition turns false', async () => {
+    vi.spyOn(formsApi, 'listPatientForms').mockResolvedValue([{ id: 'conditional-form', patient_id: 'p3', template_version_id: 'v3', template_name: 'Conditional', version_number: 1, source: 'staff', status: 'draft', validated_at: null, clarification_reason: null }]);
+    vi.spyOn(formsApi, 'listPublishedForms').mockResolvedValue([]);
+    vi.spyOn(formsApi, 'getPatientForm').mockResolvedValue({ id: 'conditional-form', patient_id: 'p3', template_version_id: 'v3', template_name: 'Conditional', version_number: 1, source: 'staff', status: 'draft', validated_at: null, clarification_reason: null, answers: { has_allergy: true, allergy_detail: 'Private draft' }, definition: { sections: [{ id: 's', title: 'Section', questions: [
+      { id: 'has_allergy', label: 'Has allergy', type: 'yes_no', required: true },
+      { id: 'allergy_detail', label: 'Allergy details', type: 'long_text', required: true, condition: { question_id: 'has_allergy', operator: 'equals', value: 'yes' } },
+    ] }] } });
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<PatientFormsPanel patientId="p3" />); });
+    const open = renderer.root.findAllByType('button').find(button => button.children.join('').includes('Conditional v1'))!;
+    await act(async () => { open.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(renderer.root.findAllByType('textarea')).toHaveLength(1);
+    expect(renderer.root.findByType('textarea').props.value).toBe('Private draft');
+    const controller = renderer.root.findByProps({ 'aria-label': 'Has allergy' });
+    act(() => { controller.props.onChange({ target: { value: 'no' } }); });
+    expect(renderer.root.findAllByType('textarea')).toHaveLength(0);
+    act(() => { controller.props.onChange({ target: { value: 'yes' } }); });
+    expect(renderer.root.findByType('textarea').props.value).toBe('');
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it('lets a clinician validate a submitted form', async () => {
+    vi.spyOn(formsApi, 'listPatientForms').mockResolvedValue([{ id: 'submitted-form', patient_id: 'p4', template_version_id: 'v4', template_name: 'Review', version_number: 1, source: 'staff', status: 'submitted', validated_at: null, clarification_reason: null }]);
+    vi.spyOn(formsApi, 'listPublishedForms').mockResolvedValue([]);
+    vi.spyOn(formsApi, 'getPatientForm').mockResolvedValue({ id: 'submitted-form', patient_id: 'p4', template_version_id: 'v4', template_name: 'Review', version_number: 1, source: 'staff', status: 'submitted', validated_at: null, clarification_reason: null, answers: { has_allergy: false }, definition: { sections: [{ id: 's', title: 'Section', questions: [{ id: 'has_allergy', label: 'Has allergy', type: 'yes_no', required: true }] }] } });
+    vi.spyOn(formsApi, 'getFormRevisions').mockResolvedValue([]);
+    const review = vi.spyOn(formsApi, 'reviewForm').mockResolvedValue({ id: 'submitted-form', patient_id: 'p4', template_version_id: 'v4', template_name: 'Review', version_number: 1, source: 'staff', status: 'validated', validated_at: '2026-11-20T12:00:00Z', clarification_reason: null } as never);
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<PatientFormsPanel patientId="p4" canReview />); });
+    const open = renderer.root.findAllByType('button').find(button => button.children.join('').includes('Review v1'))!;
+    await act(async () => { open.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)); });
+    const validate = renderer.root.findAllByType('button').find(button => button.children.join('') === 'Validează')!;
+    await act(async () => { await validate.props.onClick(); });
+    expect(review).toHaveBeenCalledWith('submitted-form', 'validated', '');
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it('shows reception status without loading answers or clinical revision history', async () => {
+    vi.spyOn(formsApi, 'listPatientForms').mockResolvedValue([{ id: 'reception-form', patient_id: 'p5', template_version_id: 'v5', template_name: 'Reception view', version_number: 2, source: 'staff', status: 'draft', validated_at: null, clarification_reason: null }]);
+    vi.spyOn(formsApi, 'listPublishedForms').mockResolvedValue([]);
+    vi.spyOn(formsApi, 'getPatientForm').mockResolvedValue({ id: 'reception-form', patient_id: 'p5', template_version_id: 'v5', template_name: 'Reception view', version_number: 2, source: 'staff', status: 'draft', validated_at: null, clarification_reason: null, definition: { sections: [{ id: 's', title: 'Section', questions: [
+      { id: 'has_allergy', label: 'Has allergy', type: 'yes_no', required: true },
+      { id: 'allergy_detail', label: 'Allergy details', type: 'long_text', required: true, condition: { question_id: 'has_allergy', operator: 'equals', value: 'yes' } },
+    ] }] } });
+    const revisions = vi.spyOn(formsApi, 'getFormRevisions').mockResolvedValue([]);
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<PatientFormsPanel patientId="p5" canReview={false} />); });
+    expect(renderer.root.findAllByType('button').some(button => button.children.join('').includes('Reception view v2 · introdus de personal · ciornă'))).toBe(true);
+    const open = renderer.root.findAllByType('button').find(button => button.children.join('').includes('Reception view v2'))!;
+    await act(async () => { open.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(renderer.root.findAllByType('textarea')).toHaveLength(0);
+    const controller = renderer.root.findByProps({ 'aria-label': 'Has allergy' });
+    act(() => { controller.props.onChange({ target: { value: 'yes' } }); });
+    expect(renderer.root.findByType('textarea').props.value).toBe('');
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Istoricul corecțiilor' })).toHaveLength(0);
+    expect(revisions).not.toHaveBeenCalled();
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it('does not submit if saving the answer snapshot fails', async () => {
+    vi.spyOn(formsApi, 'listPatientForms').mockResolvedValue([{ id: 'save-fails', patient_id: 'p6', template_version_id: 'v6', template_name: 'Save first', version_number: 1, source: 'staff', status: 'draft', validated_at: null, clarification_reason: null }]);
+    vi.spyOn(formsApi, 'listPublishedForms').mockResolvedValue([]);
+    vi.spyOn(formsApi, 'getPatientForm').mockResolvedValue({ id: 'save-fails', patient_id: 'p6', template_version_id: 'v6', template_name: 'Save first', version_number: 1, source: 'staff', status: 'draft', validated_at: null, clarification_reason: null, answers: { has_allergy: false }, definition: { sections: [{ id: 's', title: 'Section', questions: [{ id: 'has_allergy', label: 'Has allergy', type: 'yes_no', required: true }] }] } });
+    const save = vi.spyOn(formsApi, 'saveAnswers').mockRejectedValue(new Error('save failed'));
+    const submit = vi.spyOn(formsApi, 'submitForm').mockResolvedValue({ id: 'save-fails' } as never);
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<PatientFormsPanel patientId="p6" />); });
+    const open = renderer.root.findAllByType('button').find(button => button.children.join('').includes('Save first v1'))!;
+    await act(async () => { open.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)); });
+    const send = renderer.root.findAllByType('button').find(button => button.children.join('') === 'Trimite')!;
+    await act(async () => { await send.props.onClick(); });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(submit).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ role: 'alert' }).children.join('')).toContain('save failed');
     await act(async () => { renderer.unmount(); });
   });
 });
