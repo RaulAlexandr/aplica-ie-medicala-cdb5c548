@@ -39,6 +39,14 @@ function newClient() {
 }
 
 async function flush() { await new Promise((resolve) => setTimeout(resolve, 10)); }
+async function until(condition: () => boolean, what: string, budgetMs = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < budgetMs) {
+    if (condition()) return;
+    await act(async () => { await flush(); });
+  }
+  throw new Error(`Timed out after ${budgetMs} ms waiting for ${what}`);
+}
 async function waitForProcedureForm(renderer: TestRenderer.ReactTestRenderer) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     if (renderer.root.findAllByProps({ 'aria-label': 'Procedure tooth' }).length) return;
@@ -217,6 +225,8 @@ describe('persistent patient odontogram', () => {
     await act(async () => { void client.refetchQueries({ queryKey: ['patient-odontogram', 'patient-A'] }); await flush(); });
 
     await act(async () => { renderer.update(tree('patient-B', client)); await flush(); });
+    await until(() => renderer.root.findAllByType('article').some((article) => text(article).includes('Finding B server'))
+      && renderer.root.findAllByType('button').find((button) => button.props['aria-pressed'] === true)?.props['data-tooth-id'] === '16', "patient B's chart");
     expect(renderer.root.findAllByType('article').some((article) => text(article).includes('Finding B server'))).toBe(true);
     expect(renderer.root.findAllByType('button').find((button) => button.props['aria-pressed'] === true)?.props['data-tooth-id']).toBe('16');
     expect(renderer.root.findAllByType('textarea').find((item) => item.props.id)?.props.value).toBe('');

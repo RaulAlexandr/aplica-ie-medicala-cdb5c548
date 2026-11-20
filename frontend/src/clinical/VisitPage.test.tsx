@@ -37,6 +37,14 @@ function makeTree(currentUser: User = user) {
   return <QueryClientProvider client={client}><MemoryRouter initialEntries={[`/appointments/${appointment.id}/visit`]}><Routes><Route path="/appointments/:appointmentId/visit" element={<VisitPage user={currentUser} />} /></Routes></MemoryRouter></QueryClientProvider>;
 }
 async function flush() { await new Promise(resolve => setTimeout(resolve, 50)); }
+async function until(condition: () => boolean, what: string, budgetMs = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < budgetMs) {
+    if (condition()) return;
+    await act(async () => { await flush(); });
+  }
+  throw new Error(`Timed out after ${budgetMs} ms waiting for ${what}`);
+}
 async function waitForProcedureForm(renderer: TestRenderer.ReactTestRenderer) {
   for (let index = 0; index < 20; index += 1) {
     if (renderer.root.findAllByType('form').length) return renderer.root.findByType('form');
@@ -99,8 +107,10 @@ describe('visit UI', () => {
 
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(makeTree()); await flush(); });
+    await until(() => summaryQuery.mock.calls.length > 0, 'the visit summary request');
     expect(summaryQuery).toHaveBeenCalledWith(appointment.id);
     await act(async () => { await summaryQuery.mock.results[0]?.value; await flush(); });
+    await until(() => renderer.root.findAllByType('button').some(button => text(button) === 'Start'), 'the Start button');
     const close = renderer.root.findAllByType('button').find(button => text(button) === 'Close visit');
     expect(close?.props.disabled).toBe(true);
     const start = renderer.root.findAllByType('button').find(button => text(button) === 'Start');
@@ -127,8 +137,10 @@ describe('visit UI', () => {
 
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(makeTree()); await flush(); });
+    await until(() => summaryQuery.mock.calls.length > 0, 'the visit summary request');
     expect(summaryQuery).toHaveBeenCalledWith(appointment.id);
     await act(async () => { await summaryQuery.mock.results[0]?.value; await flush(); });
+    await until(() => renderer.root.findAllByType('button').some(button => text(button) === 'Complete'), 'the Complete button');
     const complete = renderer.root.findAllByType('button').find(button => text(button) === 'Complete');
     expect(complete).toBeDefined();
     await act(async () => { complete?.props.onClick(); await flush(); });
