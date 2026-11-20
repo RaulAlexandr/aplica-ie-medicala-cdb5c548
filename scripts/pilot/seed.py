@@ -8,13 +8,13 @@ import io
 import json
 import os
 import secrets
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
+from time import sleep
 from uuid import UUID, uuid5
 from zoneinfo import ZoneInfo
 
@@ -374,7 +374,7 @@ def seed_clinical(credentials: dict, ids: dict[str, UUID], manager_token: str) -
     if done["status"] == "pending":
         done = request("POST", f"/api/performed-procedures/{done['id']}/start", token=doctor)
     if done["status"] in ("running", "paused"):
-        time.sleep(2.2)  # a short but real measured time, so the visit shows a non-zero active duration
+        sleep(2.2)  # a short but real measured time, so the visit shows a non-zero active duration
         done = request("POST", f"/api/performed-procedures/{done['id']}/complete", token=doctor)
 
     # --- T08 treatment plan: stages, accepted, one item linked to the performed procedure ---
