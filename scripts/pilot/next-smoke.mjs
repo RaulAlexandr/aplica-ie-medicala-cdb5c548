@@ -112,7 +112,6 @@ try {
   await editor.getByRole('button', { name: 'Publică versiunea' }).click();
   check('manager publishes the template version (2xx)', (await published).ok());
   await editor.getByText('Versiunea a fost publicată și este imuabilă.').waitFor();
-  await shot(manager, 'template-published');
   const publishedForms = (await receptionApi.call('GET', '/forms/templates')).body;
   const publishedTemplate = publishedForms.find(t => t.name === templateName);
   check('the published template is visible to reception with 2 questions in 1 section', Boolean(publishedTemplate) && publishedTemplate.version_number === 1);
