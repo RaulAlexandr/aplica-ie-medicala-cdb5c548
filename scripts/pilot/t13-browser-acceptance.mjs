@@ -252,6 +252,8 @@ try {
   await reception.page.getByRole('link', { name: 'Încasări zi' }).click();
   await reception.page.getByRole('heading', { name: 'Încasări zi' }).waitFor();
   const today = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: tz }).format(new Date());
+  // The page first renders before the clinic zone is loaded; wait for the corrected day, then assert (no assertion removed).
+  await reception.page.waitForFunction(expected => document.querySelector('[aria-label="Ziua raportului"]')?.value === expected, today, { timeout: 10000 }).catch(() => {});
   check('daily report opens on the clinic day', await reception.page.getByLabel('Ziua raportului').inputValue() === today, { today });
   await reception.page.getByTestId('daily-net').waitFor();
   const daily = (await receptionApi.call('GET', `/finance/daily?date=${today}`)).body;
