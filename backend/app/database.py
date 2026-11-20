@@ -724,3 +724,89 @@ Index(
     postgresql_where=PatientFinancialEntry.reverses_entry_id.isnot(None),
     sqlite_where=PatientFinancialEntry.reverses_entry_id.isnot(None),
 )
+
+
+class FormTemplate(Base):
+    __tablename__ = "form_templates"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+
+
+class FormTemplateVersion(Base):
+    __tablename__ = "form_template_versions"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    template_id: Mapped[UUID] = mapped_column(ForeignKey("form_templates.id", ondelete="RESTRICT"), nullable=False)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    definition: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    published_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    published_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    __table_args__ = (
+        UniqueConstraint("template_id", "version_number", name="uq_form_template_version_number"),
+        CheckConstraint("version_number > 0", name="ck_form_template_version_positive"),
+        CheckConstraint("status IN ('draft', 'published')", name="ck_form_template_version_status"),
+    )
+
+
+class FormTemplateQuestion(Base):
+    __tablename__ = "form_template_questions"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    template_version_id: Mapped[UUID] = mapped_column(ForeignKey("form_template_versions.id", ondelete="RESTRICT"), nullable=False)
+    question_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    section_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    question_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    definition: Mapped[dict] = mapped_column(JSON, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("template_version_id", "question_id", name="uq_form_question_version_id"),
+        CheckConstraint("position >= 0", name="ck_form_question_position"),
+        CheckConstraint("question_type IN ('short_text', 'long_text', 'yes_no', 'single_choice', 'multiple_choice', 'date', 'number')", name="ck_form_question_type"),
+    )
+
+
+class PatientForm(Base):
+    __tablename__ = "patient_forms"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="RESTRICT"), nullable=False, index=True)
+    template_version_id: Mapped[UUID] = mapped_column(ForeignKey("form_template_versions.id", ondelete="RESTRICT"), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="staff")
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="draft")
+    answers: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    submitted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    validated_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    validated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    clarification_reason: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (
+        CheckConstraint("source IN ('staff', 'patient')", name="ck_patient_form_source"),
+        CheckConstraint("status IN ('draft', 'submitted', 'validated', 'needs_clarification')", name="ck_patient_form_status"),
+    )
+
+
+class PatientFormRevision(Base):
+    __tablename__ = "patient_form_revisions"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    patient_form_id: Mapped[UUID] = mapped_column(ForeignKey("patient_forms.id", ondelete="RESTRICT"), nullable=False, index=True)
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    answers: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    validated_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    validated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    __table_args__ = (
+        UniqueConstraint("patient_form_id", "revision_number", name="uq_patient_form_revision_number"),
+        CheckConstraint("revision_number > 0", name="ck_patient_form_revision_positive"),
+        CheckConstraint("status IN ('draft', 'submitted', 'validated', 'needs_clarification')", name="ck_patient_form_revision_status"),
+    )
