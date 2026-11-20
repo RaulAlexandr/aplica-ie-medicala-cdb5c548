@@ -156,8 +156,8 @@ try {
   await shot(doctor, 'form-validated');
 
   // ===================== T16 · RECEPTION: waitlist -> offer -> confirmation -> agenda =====================
-  // A failure in the UI part is recorded as a section failure (the run still fails) and the backend part is then
-  // exercised through the API, so T24 and the integration are still verified; the fallback never counts as UI proof.
+  // The whole T16 flow runs through the UI. A failure is recorded and rethrown: the run stops with RC != 0 and
+  // nothing continues through the API. API calls are only extra checks AFTER the UI steps.
   let slot = null;
   const service = `Control smoke ${tag}`;
   // The UI entry window is "today's weekday, 09:00-17:00 clinic time": look for a free slot on that weekday a week or more ahead.
@@ -203,19 +203,7 @@ try {
     summary.sectionFailures.push({ section: 'T16 waitlist UI', error: String(error.message).slice(0, 400) });
     summary.errors.push(`T16 waitlist UI: ${String(error.message).slice(0, 300)}`);
     try { await shot(reception, 'waitlist-ui-failure'); } catch { /* best effort */ }
-    // Page errors caused by that same UI failure are attributed to it instead of being counted twice.
-    summary.attributedToT16Ui = summary.pageErrors.splice(0).filter(Boolean);
-    // Backend-only continuation (labelled as such): entry -> offer -> confirmation through the API as reception.
-    const entries = (await receptionApi.call('GET', '/waitlist/entries')).body;
-    const entry = entries.find(e => e.desired_service === service);
-    check('API fallback: the entry added in the UI is listed as active', Boolean(entry) && entry.status === 'active', { status: entry?.status });
-    const startsAt = await reception.evaluate(local => new Date(local).toISOString(), `${slot.day}T${slot.hour}`);
-    const offer = await receptionApi.call('POST', `/waitlist/entries/${entry.id}/offers`, { doctor_id: doctorUser.id, room_id: room.id, starts_at: startsAt, duration_minutes: 30 });
-    check('API fallback: the offer is recorded (201)', offer.status === 201, { status: offer.status, detail: offer.body?.detail });
-    const confirm = await receptionApi.call('POST', `/waitlist/offers/${offer.body.id}/confirm`);
-    check('API fallback: the confirmation creates the appointment (201)', confirm.status === 201, { status: confirm.status, detail: confirm.body?.detail });
-    const visit = (await doctorApi.call('GET', `/appointments?day=${slot.day}`)).body.find(a => a.patient_id === elena.id && a.local_start.startsWith(`${slot.day}T${slot.hour}`));
-    check('API fallback: the appointment exists at the offered clinic-local time', Boolean(visit), { day: slot.day, hour: slot.hour });
+    throw error; // a UI failure is a failure of the run: no API continuation may mask it
   }
   try {
     await reception.goto(`${web}/appointments`, { waitUntil: 'domcontentloaded' });
