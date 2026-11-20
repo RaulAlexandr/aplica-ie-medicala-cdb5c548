@@ -101,9 +101,13 @@ async def test_matching_order_doctor_any_and_expired_validity(ctx):
     async with ctx[1]() as s:
         from app.database import Clinic
         clinic=await s.scalar(select(Clinic))
+        other_doctor=User(clinic_id=clinic.id,email="other-doctor@example.com",password_hash="test",full_name="Doctor fake",role="doctor",is_active=True)
+        s.add(other_doctor);await s.flush()
         preferred=WaitlistEntry(clinic_id=clinic.id,patient_id=patient["id"],desired_duration_minutes=30,
             preferred_doctor_id=doctor_id,windows=common["windows"],valid_from=day,valid_until=day,priority=5,status="active",created_by_id=identity["id"],created_at=datetime.now().astimezone()-timedelta(days=1))
-        s.add(preferred)
+        wrong_doctor=WaitlistEntry(clinic_id=clinic.id,patient_id=patient["id"],desired_duration_minutes=30,
+            preferred_doctor_id=other_doctor.id,windows=common["windows"],valid_from=day,valid_until=day,priority=99,status="active",created_by_id=identity["id"])
+        s.add_all([preferred,wrong_doctor])
         expired=WaitlistEntry(clinic_id=clinic.id,patient_id=patient["id"],desired_duration_minutes=30,
             windows=common["windows"],valid_from=day-timedelta(days=3),valid_until=day-timedelta(days=2),priority=100,status="active",created_by_id=identity["id"])
         s.add(expired); await s.commit()
@@ -161,6 +165,7 @@ async def test_endpoint_role_matrix(ctx):
       ("POST","/api/waitlist/slots/candidates",{"doctor_id":unknown,"room_id":unknown,"starts_at":f"{day}T09:00:00+02:00","duration_minutes":30},{"reception","clinic_manager","administrator"}),
       ("POST",f"/api/waitlist/entries/{unknown}/offers",{"doctor_id":identity["id"],"room_id":room["id"],"starts_at":f"{day}T09:00:00+02:00","duration_minutes":30},{"reception","clinic_manager","administrator"}),
       ("POST",f"/api/waitlist/offers/{unknown}/confirm",None,{"reception","clinic_manager","administrator"}),
+      ("POST",f"/api/waitlist/offers/{unknown}/cancel",None,{"reception","clinic_manager","administrator"}),
       ("GET","/api/waitlist/offers",None,{"reception","clinic_manager","administrator","assistant"}),
       ("POST",f"/api/waitlist/entries/{unknown}/cancel",None,{"reception","clinic_manager","administrator"}),
       ("GET","/api/waitlist/recalls",None,{"doctor","reception","clinic_manager","administrator","assistant"}),
@@ -240,4 +245,48 @@ async def test_recall_doctor_actions_period_and_terminal_transition(ctx):
     assert refused.status_code==201
     refused_action=await c.post(f"/api/waitlist/recalls/{refused.json()['id']}/actions",headers=h,json={"action":"refused"})
     assert refused_action.status_code==200 and refused_action.json()["history"][-1]["actor_id"]==identity["id"] and refused_action.json()["history"][-1]["occurred_at"]
+    async with sessions() as s:
+        user=await s.get(User,identity["id"]);user.role="reception";await s.commit()
+    reception_recall=await c.post("/api/waitlist/recalls",headers=h,json={"patient_id":patient["id"],"due_date":date.today().isoformat(),"reason":"Rechemare fictivă"})
+    assert reception_recall.status_code==201
     async with sessions() as s: assert len((await s.scalars(select(RecallHistory))).all())==3
+
+@pytest.mark.asyncio
+async def test_foreign_clinic_ids_are_hidden_for_entries_offers_and_recalls(ctx):
+    c,_=ctx;owner=await register(c,"owner-clinic@example.com")
+    patient=(await c.post("/api/patients",headers=owner,json={"first_name":"Fake","last_name":"Owner"})).json()
+    room=(await c.post("/api/rooms",headers=owner,json={"name":"Owner room"})).json();doctor=(await c.get("/api/auth/me",headers=owner)).json()["id"]
+    day=date.today()+timedelta(days=18);entry=(await c.post("/api/waitlist/entries",headers=owner,json={"patient_id":patient["id"],"desired_duration_minutes":30,"windows":[{"weekday":day.weekday(),"start":"10:00:00","end":"12:00:00"}],"valid_from":day.isoformat(),"valid_until":day.isoformat()})).json()
+    offer=(await c.post(f"/api/waitlist/entries/{entry['id']}/offers",headers=owner,json={"doctor_id":doctor,"room_id":room["id"],"starts_at":f"{day}T10:00:00+02:00","duration_minutes":30})).json()
+    recall=(await c.post("/api/waitlist/recalls",headers=owner,json={"patient_id":patient["id"],"due_date":day.isoformat(),"reason":"Fictiv"})).json()
+    foreign=await register(c,"foreign-clinic-2@example.com")
+    assert (await c.get("/api/waitlist/entries",headers=foreign)).json()==[]
+    assert (await c.get("/api/waitlist/offers",headers=foreign)).json()==[]
+    assert (await c.get(f"/api/waitlist/recalls/{recall['id']}",headers=foreign)).status_code==404
+    assert (await c.post(f"/api/waitlist/recalls/{recall['id']}/actions",headers=foreign,json={"action":"contacted"})).status_code==404
+    assert (await c.post(f"/api/waitlist/entries/{entry['id']}/cancel",headers=foreign)).status_code==404
+    assert (await c.post(f"/api/waitlist/offers/{offer['id']}/confirm",headers=foreign)).status_code==404
+    assert (await c.post(f"/api/waitlist/offers/{offer['id']}/cancel",headers=foreign)).status_code==404
+
+@pytest.mark.asyncio
+async def test_confirmation_rechecks_doctor_unavailability(ctx):
+    c,sessions=ctx;h=await register(c,"unavailable-doctor@example.com")
+    patient=(await c.post("/api/patients",headers=h,json={"first_name":"Fake","last_name":"Unavailable"})).json();room=(await c.post("/api/rooms",headers=h,json={"name":"Unavailable room"})).json();doctor=(await c.get("/api/auth/me",headers=h)).json()["id"]
+    day=date.today()+timedelta(days=21);start=f"{day}T10:00:00+02:00"
+    entry=(await c.post("/api/waitlist/entries",headers=h,json={"patient_id":patient["id"],"desired_duration_minutes":30,"windows":[{"weekday":day.weekday(),"start":"10:00:00","end":"12:00:00"}],"valid_from":day.isoformat(),"valid_until":day.isoformat()})).json()
+    offer=(await c.post(f"/api/waitlist/entries/{entry['id']}/offers",headers=h,json={"doctor_id":doctor,"room_id":room["id"],"starts_at":start,"duration_minutes":30})).json()
+    blocked=await c.post("/api/availability/unavailability",headers=h,json={"resource_type":"doctor","resource_id":doctor,"starts_at":start,"ends_at":f"{day}T10:30:00+02:00","reason":"Program indisponibilitate fictiv"})
+    assert blocked.status_code==201
+    result=await c.post(f"/api/waitlist/offers/{offer['id']}/confirm",headers=h)
+    assert result.status_code==422 and "doctor" in result.json()["detail"]
+    async with sessions() as s: assert len((await s.scalars(select(Appointment))).all())==0
+
+@pytest.mark.asyncio
+async def test_cancelling_offer_returns_entry_to_active(ctx):
+    c,sessions=ctx;h=await register(c,"offer-cancel@example.com")
+    patient=(await c.post("/api/patients",headers=h,json={"first_name":"Fake","last_name":"OfferCancel"})).json();room=(await c.post("/api/rooms",headers=h,json={"name":"Cancel offer room"})).json();doctor=(await c.get("/api/auth/me",headers=h)).json()["id"]
+    day=date.today()+timedelta(days=25);entry=(await c.post("/api/waitlist/entries",headers=h,json={"patient_id":patient["id"],"desired_duration_minutes":30,"windows":[{"weekday":day.weekday(),"start":"10:00:00","end":"12:00:00"}],"valid_from":day.isoformat(),"valid_until":day.isoformat()})).json()
+    offer=(await c.post(f"/api/waitlist/entries/{entry['id']}/offers",headers=h,json={"doctor_id":doctor,"room_id":room["id"],"starts_at":f"{day}T10:00:00+02:00","duration_minutes":30})).json()
+    response=await c.post(f"/api/waitlist/offers/{offer['id']}/cancel",headers=h)
+    assert response.status_code==200 and response.json()["status"]=="cancelled"
+    async with sessions() as s: assert (await s.get(WaitlistEntry,entry["id"])).status=="active"
