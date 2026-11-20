@@ -21,6 +21,7 @@ from app.database import (
     get_db,
     utcnow,
 )
+from app.procedures.locations import location_violation
 
 router = APIRouter(prefix="/performed-procedures", tags=["performed_procedures"])
 
@@ -531,6 +532,11 @@ async def create_performed_procedure(
     catalog = await _validate_procedure_catalog_access(db, payload.procedure_catalog_id, user)
     if not catalog:
         raise HTTPException(422, "Procedure catalog not found or access denied")
+    if not catalog.is_active:
+        raise HTTPException(409, "Cannot create a performed procedure from an inactive catalog service")
+    violation = location_violation(catalog.allowed_location, catalog.code, payload.tooth_fdi, payload.tooth_surface)
+    if violation:
+        raise HTTPException(422, violation)
 
     # Check if appointment patient matches
     patient = await db.scalar(
@@ -591,9 +597,14 @@ async def start_procedure(
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can start this procedure")
 
-    # Validate transition
-    if procedure.status not in PROCEDURE_TRANSITIONS or "running" not in PROCEDURE_TRANSITIONS[procedure.status]:
+    # Start is only valid for a pending procedure.
+    if procedure.status != "pending":
         raise HTTPException(409, f"Cannot start procedure from status: {procedure.status}")
+
+    # Do not repair inconsistent historical segments implicitly.
+    existing_segments = await _get_active_segments(db, procedure_id)
+    if any(segment.ended_at is None for segment in existing_segments):
+        raise HTTPException(409, "Cannot start procedure with an open execution segment")
 
     # Check if executed_by doctor already has a running procedure
     has_running = await _check_doctor_has_running_procedure(db, procedure.executed_by_id, user.clinic_id, procedure_id)
@@ -722,9 +733,20 @@ async def resume_procedure(
     if procedure.executed_by_id != user.id and user.role not in MANAGERS:
         raise HTTPException(403, "Only the executing doctor or manager can resume this procedure")
 
-    # Validate transition
-    if procedure.status not in PROCEDURE_TRANSITIONS or "running" not in PROCEDURE_TRANSITIONS[procedure.status]:
+    # Resume is only valid for a paused procedure.
+    if procedure.status != "paused":
         raise HTTPException(409, f"Cannot resume procedure from status: {procedure.status}")
+
+    # Preserve legacy data as-is and reject a pause history that cannot be resumed safely.
+    existing_segments = await _get_active_segments(db, procedure_id)
+    open_segments = [segment for segment in existing_segments if segment.ended_at is None]
+    if (
+        len(open_segments) != 1
+        or not existing_segments
+        or existing_segments[-1] is not open_segments[0]
+        or open_segments[0].segment_type != SegmentType.PAUSE
+    ):
+        raise HTTPException(409, "Cannot resume procedure with inconsistent execution segments")
 
     # Check if executed_by doctor already has a running procedure
     has_running = await _check_doctor_has_running_procedure(db, procedure.executed_by_id, user.clinic_id, procedure_id)
@@ -848,6 +870,7 @@ async def cancel_procedure(
 
     # Update procedure status
     now = utcnow()
+    previous_status = procedure.status
     procedure.status = "cancelled"
     procedure.updated_at = now
 
@@ -859,17 +882,17 @@ async def cancel_procedure(
         action="cancelled"
     ))
 
-    if payload.notes:
-        db.add(PerformedProcedureRevision(
-            clinic_id=user.clinic_id,
-            performed_procedure_id=procedure.id,
-            actor_id=user.id,
-            field="status",
-            previous_value=procedure.status,
-            new_value="cancelled",
-            reason=payload.notes,
-            occurred_at=now
-        ))
+    # The status changed whether or not a reason was given, so the revision is always written.
+    db.add(PerformedProcedureRevision(
+        clinic_id=user.clinic_id,
+        performed_procedure_id=procedure.id,
+        actor_id=user.id,
+        field="status",
+        previous_value=previous_status,
+        new_value="cancelled",
+        reason=payload.notes or None,
+        occurred_at=now
+    ))
 
     await db.commit()
     await db.refresh(procedure)

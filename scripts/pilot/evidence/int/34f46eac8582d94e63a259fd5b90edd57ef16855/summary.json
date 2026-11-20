@@ -1,0 +1,118 @@
+{
+  "task": "integration step 1",
+  "sha": "34f46eac8582d94e63a259fd5b90edd57ef16855",
+  "merged": "feat/pilot-t01-t03-gaps 32a1094",
+  "runtime": "int (new DB, ports 8049/5189); scripts on restored copies; browser TZ Europe/Bucharest (t13 fixes UTC itself)",
+  "demo_walkthrough": {
+    "checks": 54,
+    "passed": 54,
+    "pageErrors": 0,
+    "unexpected": 0,
+    "expected": "404 unknown patient + 401 refused login of a deactivated member"
+  },
+  "t01_t03": {
+    "checks": 37,
+    "passed": 37
+  },
+  "t13": {
+    "checks": 35,
+    "passed": 35,
+    "note": "run on a fresh restore copy; on a copy already holding tooth-required services it fails at T04 setup (script uses the first 3 catalog services)"
+  },
+  "browser_acceptance": {
+    "checks": 60,
+    "passed": 60,
+    "errors": []
+  },
+  "restore_verification": {
+    "checks": [
+      {
+        "name": "patients",
+        "rows": 3,
+        "digest_source": "65563fc84058e5d4",
+        "digest_copy": "65563fc84058e5d4",
+        "identical": true
+      },
+      {
+        "name": "documents",
+        "rows": 4,
+        "digest_source": "ba720caaa547e0a6",
+        "digest_copy": "ba720caaa547e0a6",
+        "identical": true
+      },
+      {
+        "name": "document_files",
+        "rows": 4,
+        "digest_source": "4298403ad5a81320",
+        "digest_copy": "4298403ad5a81320",
+        "identical": true
+      },
+      {
+        "name": "assessments",
+        "rows": 2,
+        "digest_source": "408ebb19cfe2a64b",
+        "digest_copy": "408ebb19cfe2a64b",
+        "identical": true
+      },
+      {
+        "name": "assessment_sites",
+        "rows": 1,
+        "digest_source": "6edb5affe7250c48",
+        "digest_copy": "6edb5affe7250c48",
+        "identical": true
+      },
+      {
+        "name": "plans",
+        "rows": 1,
+        "digest_source": "70ed8e6c62564231",
+        "digest_copy": "70ed8e6c62564231",
+        "identical": true
+      },
+      {
+        "name": "plan_items",
+        "rows": 3,
+        "digest_source": "193fc92adeeddc9e",
+        "digest_copy": "193fc92adeeddc9e",
+        "identical": true
+      },
+      {
+        "name": "performed",
+        "rows": 1,
+        "digest_source": "c71c54e03b6f2f7e",
+        "digest_copy": "c71c54e03b6f2f7e",
+        "identical": true
+      },
+      {
+        "name": "entries",
+        "rows": 5,
+        "digest_source": "a9082f02459b16bd",
+        "digest_copy": "a9082f02459b16bd",
+        "identical": true
+      },
+      {
+        "name": "net_received",
+        "rows": 3,
+        "digest_source": "fb2d1c794eda7e4e",
+        "digest_copy": "fb2d1c794eda7e4e",
+        "identical": true
+      },
+      {
+        "name": "services_completed",
+        "rows": 1,
+        "digest_source": "4742d5fedebb7e6f",
+        "digest_copy": "4742d5fedebb7e6f",
+        "identical": true
+      },
+      {
+        "name": "balance_due",
+        "rows": 3,
+        "digest_source": "c8069b30736e42b1",
+        "digest_copy": "c8069b30736e42b1",
+        "identical": true
+      }
+    ],
+    "ok": true,
+    "documents_hash_verified_in_copy": 4,
+    "balance_due_by_patient_count": 3
+  }
+}

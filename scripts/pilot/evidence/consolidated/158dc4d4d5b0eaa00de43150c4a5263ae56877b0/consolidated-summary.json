@@ -1,0 +1,294 @@
+{
+  "task": "consolidated T05-T11",
+  "appSha": "158dc4d4d5b0eaa00de43150c4a5263ae56877b0",
+  "web": "http://127.0.0.1:5193",
+  "api": "http://127.0.0.1:8033/api",
+  "browser": "151.0.7922.34",
+  "browserTimezone": "UTC",
+  "clinicTimezone": "Europe/Bucharest",
+  "checks": [
+    {
+      "name": "clinic time zone known and different from the browser zone",
+      "passed": true,
+      "clinicTimezone": "Europe/Bucharest",
+      "browserTimezone": "UTC"
+    },
+    {
+      "name": "reception creates the fictional patient",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "reception books the appointment",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "appointment clinic time differs from browser UTC time (observable zone)",
+      "passed": true,
+      "clinicTime": "12:20",
+      "utcTime": "10:20"
+    },
+    {
+      "name": "one record: one odontogram, one T08, one T09/T10 and one T11 panel",
+      "passed": true
+    },
+    {
+      "name": "odontogram finding draft saved on tooth 16",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "odontogram finding finalized explicitly",
+      "passed": true
+    },
+    {
+      "name": "active catalog services available",
+      "passed": true,
+      "services": 3
+    },
+    {
+      "name": "tooth preselected from the odontogram",
+      "passed": true
+    },
+    {
+      "name": "T07 procedure saved pending from tooth (no timer started)",
+      "passed": true,
+      "status": 201,
+      "procedureStatus": "pending"
+    },
+    {
+      "name": "no timer segment before explicit start",
+      "passed": true,
+      "segments": 0
+    },
+    {
+      "name": "timer start -> running",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "running"
+    },
+    {
+      "name": "timer pause -> paused",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "paused"
+    },
+    {
+      "name": "timer resume -> running",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "running"
+    },
+    {
+      "name": "timer complete -> completed",
+      "passed": true,
+      "status": 200,
+      "procedureStatus": "completed"
+    },
+    {
+      "name": "timer persisted as closed segments: two run, one pause",
+      "passed": true,
+      "byType": {
+        "run": 2,
+        "pause": 1
+      }
+    },
+    {
+      "name": "pause time is not counted in the active duration",
+      "passed": true,
+      "pauseSeconds": 1.179,
+      "totalDurationSeconds": null,
+      "runSeconds": 0
+    },
+    {
+      "name": "completing the procedure does not close the visit",
+      "passed": true,
+      "appointmentStatus": "scheduled"
+    },
+    {
+      "name": "visit still offers a separate close after procedure completion",
+      "passed": true
+    },
+    {
+      "name": "T08 plan item linked to the completed T07 procedure",
+      "passed": true,
+      "plans": 1,
+      "planStatus": "in_progress"
+    },
+    {
+      "name": "default periodontal clinical date is the clinic day",
+      "passed": true,
+      "expectedClinicDay": "2026-11-19"
+    },
+    {
+      "name": "first periodontal assessment finalized",
+      "passed": true
+    },
+    {
+      "name": "follow-up periodontal assessment finalized",
+      "passed": true
+    },
+    {
+      "name": "two finalized assessments persisted",
+      "passed": true,
+      "finalized": 2
+    },
+    {
+      "name": "displayed assessment is a finalized one from this run",
+      "passed": true,
+      "shownIsFollowUp": true
+    },
+    {
+      "name": "finalization time shown in the clinic zone, not raw UTC",
+      "passed": true,
+      "clinicTime": "19:57",
+      "browserTime": "17:57"
+    },
+    {
+      "name": "comparison shows the persisted delta",
+      "passed": true
+    },
+    {
+      "name": "document uploaded on visit + tooth",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "visit time on the document shown in the clinic zone",
+      "passed": true,
+      "clinicTime": "12:20",
+      "utcTime": "10:20"
+    },
+    {
+      "name": "zoom enlarges the authorized blob image",
+      "passed": true,
+      "zoomLevel": "125%",
+      "zoomedWidth": 1750
+    },
+    {
+      "name": "after full reload: finding, procedure, plan, assessments and document persist",
+      "passed": true,
+      "assessmentsInHistory": 2
+    },
+    {
+      "name": "visit closed only by the separate close action",
+      "passed": true,
+      "appointmentStatus": "completed"
+    },
+    {
+      "name": "manager sees odontogram, plan, finalized assessments and document",
+      "passed": true
+    },
+    {
+      "name": "reception UI shows no odontogram, plan, periodontal or document panel",
+      "passed": true,
+      "odontogram": 0,
+      "plans": 0,
+      "periodontal": 0,
+      "documents": 0
+    },
+    {
+      "name": "reception API refused (403) on all clinical modules",
+      "passed": true,
+      "odontogram": 403,
+      "plans": 403,
+      "periodontal": 403,
+      "documents": 403,
+      "documentContent": 403
+    },
+    {
+      "name": "second fictional clinic registered",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "second clinic gets 404 for patient, odontogram, plan, assessment and document",
+      "passed": true,
+      "patient": 404,
+      "odontogram": 404,
+      "plan": 404,
+      "assessment": 404,
+      "assessments": 404,
+      "documents": 404,
+      "document": 404,
+      "documentContent": 404
+    },
+    {
+      "name": "second clinic patient search does not return the patient",
+      "passed": true
+    },
+    {
+      "name": "second clinic UI does not show the patient, the document or the assessment",
+      "passed": true
+    },
+    {
+      "name": "no browser page errors",
+      "passed": true,
+      "pageErrors": []
+    }
+  ],
+  "artifacts": [
+    "consolidated-visit-timer-completed-visit-open.png",
+    "consolidated-plan-linked.png",
+    "consolidated-periodontal-comparison.png",
+    "consolidated-document-zoom.png",
+    "consolidated-doctor-record-after-reload.png",
+    "consolidated-manager-record.png",
+    "consolidated-reception-record.png",
+    "consolidated-other-clinic-refused.png"
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "user": "doctor",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "sourcePath": "/favicon.ico"
+    },
+    {
+      "user": "other-clinic",
+      "httpStatus": 404,
+      "method": "GET",
+      "path": "/api/patients/:id"
+    },
+    {
+      "user": "other-clinic",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "sourcePath": "/api/patients/:id"
+    },
+    {
+      "user": "other-clinic",
+      "httpStatus": 404,
+      "method": "GET",
+      "path": "/api/patients/:id"
+    },
+    {
+      "user": "other-clinic",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "sourcePath": "/api/patients/:id"
+    }
+  ],
+  "errors": [],
+  "ids": {
+    "patient": "bd16f82d-62d5-448c-9a04-585eef28120b",
+    "appointment": "caca4b99-d23c-4f70-9122-1bc074f19b2f",
+    "finding": "93fec4ed-c48c-418b-8ef6-fcdc6dad7c31",
+    "procedure": "c0091b4e-0055-4db3-bb0d-c2d285300827",
+    "plan": "4f8bfcd8-76b5-45b6-9f3e-456ff2b89adb",
+    "assessments": [
+      "3fb2fcde-3343-49a1-a66d-a0f29a3cb37e",
+      "a1414452-007d-48c0-805d-7a86ea568f29"
+    ],
+    "document": "cad8a94f-0e21-42bd-8cdb-753131864187"
+  },
+  "documentSha256": "0e8e0171439038870d06806b038e2d80853f04c8bafbf2f12197ef40a232d33e",
+  "result": "PASS",
+  "totals": {
+    "passed": 40,
+    "total": 40
+  },
+  "knownDefectNaiveApiTimestamps": [
+    "periodontal.finalized_at",
+    "value"
+  ]
+}

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.auth.service import hash_password
 from app.database import Appointment, Room, User, get_db
 from app.main import app
+from tests.alembic_helpers import configured_alembic_head
 
 
 @pytest.fixture
@@ -192,7 +193,7 @@ async def test_postgresql_upgrade_from_0001_preserves_valid_records():
     try:
         assert returncode == 0
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "merge_t02_t05"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == configured_alembic_head()
         assert await connection.fetchval("SELECT count(*) FROM patients") == 1
         assert await connection.fetchval("SELECT count(*) FROM patient_revisions") == 0
         assert await connection.fetchval("SELECT count(*) FROM users WHERE created_at IS NULL OR updated_at IS NULL") == 0
@@ -212,7 +213,7 @@ async def test_postgresql_upgrade_from_0002_preserves_clinical_history():
     try:
         assert returncode == 0
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "merge_t02_t05"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == configured_alembic_head()
         assert await connection.fetchval("SELECT count(*) FROM clinics") == 1
         assert await connection.fetchval("SELECT count(*) FROM users") == 1
         assert await connection.fetchval("SELECT count(*) FROM rooms") == 1
@@ -235,7 +236,7 @@ async def test_postgresql_upgrade_from_populated_0003_preserves_operational_reco
     try:
         assert returncode == 0
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "merge_t02_t05"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == configured_alembic_head()
         assert await connection.fetchval("SELECT name FROM clinics") == "Legacy clinic"
         assert await connection.fetchval("SELECT full_name FROM users") == "Legacy doctor"
         assert await connection.fetchval("SELECT name FROM rooms") == "Legacy room"
@@ -283,7 +284,7 @@ async def test_postgresql_empty_database_upgrade_reaches_corrected_head():
         result = await asyncio.to_thread(subprocess.run, ["alembic", "upgrade", "head"], cwd=os.path.dirname(__file__) + "/..", env=env, capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr
         connection = await asyncpg.connect(_postgres_dsn(target, name))
-        assert await connection.fetchval("SELECT version_num FROM alembic_version") == "merge_t02_t05"
+        assert await connection.fetchval("SELECT version_num FROM alembic_version") == configured_alembic_head()
         assert await connection.fetchval("SELECT count(*) FROM information_schema.columns WHERE table_name = 'users' AND column_name IN ('created_at', 'updated_at')") == 2
         await connection.close()
     finally:

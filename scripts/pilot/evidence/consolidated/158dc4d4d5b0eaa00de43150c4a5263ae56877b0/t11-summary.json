@@ -1,0 +1,193 @@
+{
+  "task": "T11",
+  "appSha": "158dc4d4d5b0eaa00de43150c4a5263ae56877b0",
+  "web": "http://127.0.0.1:5193",
+  "api": "http://127.0.0.1:8033/api",
+  "browser": "151.0.7922.34",
+  "checks": [
+    {
+      "name": "setup: fictional visit for patient A via T02 API",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "setup: fictional visit for patient B",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "single T11 panel and single odontogram in patient record",
+      "passed": true
+    },
+    {
+      "name": "UI explains formats and limits",
+      "passed": true
+    },
+    {
+      "name": "unsupported SVG refused in UI before upload",
+      "passed": true,
+      "text": "Format neacceptat. Sunt acceptate doar JPEG, PNG și PDF."
+    },
+    {
+      "name": "error keeps file and fields",
+      "passed": true
+    },
+    {
+      "name": "repeated save creates exactly one document and one request",
+      "passed": true,
+      "documents": 1,
+      "uploadRequests": 1
+    },
+    {
+      "name": "server stored visit, tooth, dimensions and distinct clinical/recorded dates",
+      "passed": true
+    },
+    {
+      "name": "damaged image refused by server with form kept and no document",
+      "passed": true,
+      "brokenError": "Image is damaged or cannot be decoded"
+    },
+    {
+      "name": "real PNG, real JPEG and PDF uploaded through the UI",
+      "passed": true
+    },
+    {
+      "name": "visit with documents cannot be reassigned to another patient",
+      "passed": true,
+      "status": 409
+    },
+    {
+      "name": "PDF has download but no in-app viewer",
+      "passed": true
+    },
+    {
+      "name": "authorized image rendered from blob, not from a public URL",
+      "passed": true,
+      "natural": [
+        1600,
+        1000
+      ]
+    },
+    {
+      "name": "zoom in enlarges the image",
+      "passed": true,
+      "zoomed": 2496
+    },
+    {
+      "name": "fit zoom keeps the image inside the viewer",
+      "passed": true,
+      "fitted": 960,
+      "stageWidth": 964
+    },
+    {
+      "name": "real PNG and real JPEG decoded side by side",
+      "passed": true,
+      "compareNatural": [
+        1600,
+        1200
+      ]
+    },
+    {
+      "name": "synchronized zoom applies to both images",
+      "passed": true
+    },
+    {
+      "name": "independent zoom when unsynchronized",
+      "passed": true
+    },
+    {
+      "name": "PDF downloaded with original name and identical bytes",
+      "passed": true
+    },
+    {
+      "name": "documents and associations persist after reload",
+      "passed": true
+    },
+    {
+      "name": "patient switch carries no file, visit, tooth or documents",
+      "passed": true,
+      "visitValuesB": [
+        "",
+        "5d4841f9-010d-440f-8280-b16b69edc579"
+      ]
+    },
+    {
+      "name": "API refuses associating patient A visit to patient B",
+      "passed": true,
+      "status": 422
+    },
+    {
+      "name": "manager sees the same three documents",
+      "passed": true
+    },
+    {
+      "name": "manager views image content",
+      "passed": true
+    },
+    {
+      "name": "archive keeps metadata and traceability",
+      "passed": true
+    },
+    {
+      "name": "reception sees no T11 panel",
+      "passed": true
+    },
+    {
+      "name": "reception gets 403 on list, direct content and upload",
+      "passed": true,
+      "list": 403,
+      "content": 403,
+      "upload": 403
+    },
+    {
+      "name": "known content URL opened directly in the browser is refused (no auth by URL)",
+      "passed": true,
+      "status": 401
+    },
+    {
+      "name": "authorized content has protective headers",
+      "passed": true
+    },
+    {
+      "name": "no page errors",
+      "passed": true,
+      "pageErrors": []
+    }
+  ],
+  "artifacts": [
+    "t11-form-error-keeps-draft.png",
+    "t11-damaged-image-refused.png",
+    "t11-documents-list.png",
+    "t11-zoom-156.png",
+    "t11-compare-two-images.png",
+    "t11-patient-b-clean.png",
+    "t11-manager-archived.png"
+  ],
+  "network": {
+    "documentUploadPostsFromUi": 5
+  },
+  "console": [
+    {
+      "user": "doctor",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "url": "http://127.0.0.1:5193/favicon.ico"
+    },
+    {
+      "user": "doctor",
+      "text": "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+      "url": "http://127.0.0.1:8033/api/documents/patients/:id"
+    },
+    {
+      "user": "doctor",
+      "text": "Failed to load resource: the server responded with a status of 415 (Unsupported Media Type)",
+      "url": "http://127.0.0.1:8033/api/documents/patients/:id"
+    }
+  ],
+  "errors": [],
+  "pageErrors": [],
+  "result": "PASS",
+  "totals": {
+    "passed": 30,
+    "total": 30
+  }
+}

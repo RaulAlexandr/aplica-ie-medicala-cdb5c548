@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AxiosError } from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as apiClient from '../api/client';
-import type { Appointment, User } from '../api/client';
+import type { Appointment, ProcedureCatalog, User } from '../api/client';
 import * as clinicalApi from './api';
 import type { PerformedProcedure, VisitSummary } from './api';
 import { VisitPage } from './VisitPage';
@@ -37,10 +37,66 @@ function makeTree(currentUser: User = user) {
   return <QueryClientProvider client={client}><MemoryRouter initialEntries={[`/appointments/${appointment.id}/visit`]}><Routes><Route path="/appointments/:appointmentId/visit" element={<VisitPage user={currentUser} />} /></Routes></MemoryRouter></QueryClientProvider>;
 }
 async function flush() { await new Promise(resolve => setTimeout(resolve, 50)); }
+async function until(condition: () => boolean, what: string, budgetMs = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < budgetMs) {
+    if (condition()) return;
+    await act(async () => { await flush(); });
+  }
+  throw new Error(`Timed out after ${budgetMs} ms waiting for ${what}`);
+}
+async function waitForProcedureForm(renderer: TestRenderer.ReactTestRenderer) {
+  for (let index = 0; index < 20; index += 1) {
+    if (renderer.root.findAllByType('form').length) return renderer.root.findByType('form');
+    await act(async () => { await flush(); });
+  }
+  throw new Error('Shared procedure form did not load');
+}
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('visit UI', () => {
+  it('uses the shared T04 form for procedure-to-tooth and saves a pending record without starting its timer', async () => {
+    const catalogItem: ProcedureCatalog = {
+      id: 'catalog-1', clinic_id: 'clinic-1', code: 'OBT-1', name: 'Composite filling', description: null, category: 'restorative',
+      default_duration_minutes: 30, base_price: '250.00', currency: 'RON', is_active: true,
+      created_at: '2026-11-01T00:00:00Z', updated_at: '2026-11-01T00:00:00Z',
+    };
+    const saved = { ...procedure, id: 'performed-from-visit', procedure_catalog_id: catalogItem.id, procedure_code: catalogItem.code, procedure_name: catalogItem.name, tooth_fdi: '17', tooth_surface: 'occlusal,mesial' };
+    let currentSummary: VisitSummary = { ...summary(procedure, false), performed_procedures: [], unresolved_procedures: [] };
+    vi.spyOn(apiClient, 'getAppointment').mockResolvedValue(appointment);
+    vi.spyOn(apiClient, 'listProcedures').mockResolvedValue([catalogItem]);
+    vi.spyOn(clinicalApi, 'getVisitSummary').mockImplementation(async () => currentSummary);
+    const create = vi.spyOn(clinicalApi, 'createPerformedProcedure').mockImplementation(async payload => {
+      expect(payload).toEqual({ appointment_id: appointment.id, procedure_catalog_id: catalogItem.id, tooth_fdi: '17', tooth_surface: 'occlusal,mesial', notes: 'Restoration' });
+      currentSummary = summary(saved, false);
+      return saved;
+    });
+    const start = vi.spyOn(clinicalApi, 'startPerformedProcedure');
+
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(makeTree()); await flush(); });
+    const form = await waitForProcedureForm(renderer);
+    const selectors = form.findAllByType('select');
+    expect(text(form).includes('Sample Patient')).toBe(true);
+    expect(text(form).includes('Selected visit')).toBe(true);
+    await act(async () => { selectors[0]?.props.onChange({ target: { value: catalogItem.id } }); });
+    await act(async () => { selectors[1]?.props.onChange({ target: { value: '17' } }); });
+    for (const surface of ['Occlusal', 'Mesial']) {
+      const label = renderer.root.findAllByType('label').find(item => text(item).trim() === surface);
+      expect(label).toBeDefined();
+      await act(async () => { label!.findByType('input').props.onChange({ target: { checked: true } }); });
+    }
+    await act(async () => { form.findByType('textarea').props.onChange({ target: { value: 'Restoration' } }); });
+    await act(async () => { form.props.onSubmit({ preventDefault() {} }); await flush(); });
+
+    expect(create).toHaveBeenCalledTimes(1);
+    for (let attempt = 0; attempt < 20 && !renderer.root.findAllByType('article').some(item => text(item).includes('Composite filling')); attempt += 1) await act(async () => { await flush(); });
+    expect(renderer.root.findAllByType('article').some(item => text(item).includes('Composite filling'))).toBe(true);
+    expect(renderer.root.findAllByType('button').some(button => text(button) === 'Start')).toBe(true);
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it('shows server 409 on a procedure action and keeps visit closure disabled while unresolved', async () => {
     const conflict = new AxiosError('Request failed');
     Object.defineProperty(conflict, 'response', { value: { data: { detail: 'Doctor already has a running procedure. Only one timer per doctor is allowed.' } } });
@@ -51,8 +107,10 @@ describe('visit UI', () => {
 
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(makeTree()); await flush(); });
+    await until(() => summaryQuery.mock.calls.length > 0, 'the visit summary request');
     expect(summaryQuery).toHaveBeenCalledWith(appointment.id);
     await act(async () => { await summaryQuery.mock.results[0]?.value; await flush(); });
+    await until(() => renderer.root.findAllByType('button').some(button => text(button) === 'Start'), 'the Start button');
     const close = renderer.root.findAllByType('button').find(button => text(button) === 'Close visit');
     expect(close?.props.disabled).toBe(true);
     const start = renderer.root.findAllByType('button').find(button => text(button) === 'Start');
@@ -79,8 +137,10 @@ describe('visit UI', () => {
 
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(makeTree()); await flush(); });
+    await until(() => summaryQuery.mock.calls.length > 0, 'the visit summary request');
     expect(summaryQuery).toHaveBeenCalledWith(appointment.id);
     await act(async () => { await summaryQuery.mock.results[0]?.value; await flush(); });
+    await until(() => renderer.root.findAllByType('button').some(button => text(button) === 'Complete'), 'the Complete button');
     const complete = renderer.root.findAllByType('button').find(button => text(button) === 'Complete');
     expect(complete).toBeDefined();
     await act(async () => { complete?.props.onClick(); await flush(); });

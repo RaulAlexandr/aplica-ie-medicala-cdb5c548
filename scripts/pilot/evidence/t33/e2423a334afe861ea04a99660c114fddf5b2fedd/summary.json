@@ -1,0 +1,109 @@
+{
+  "task": "T33-revision-merge",
+  "sha": "e2423a334afe861ea04a99660c114fddf5b2fedd",
+  "merged": "feat/pilot-t13-finance 878cb6c",
+  "runtime": "demo-v2 (new DB), scripts run on a restored copy, browser TZ Europe/Bucharest (t13 fixes UTC itself)",
+  "demo_walkthrough": {
+    "checks": 42,
+    "passed": 42,
+    "pageErrors": 0,
+    "unexpected": 0
+  },
+  "t13": {
+    "checks": 35,
+    "passed": 35,
+    "pageErrors": 0
+  },
+  "restore_verification": {
+    "checks": [
+      {
+        "name": "patients",
+        "rows": 3,
+        "digest_source": "65563fc84058e5d4",
+        "digest_copy": "65563fc84058e5d4",
+        "identical": true
+      },
+      {
+        "name": "documents",
+        "rows": 4,
+        "digest_source": "936b858851d2201a",
+        "digest_copy": "936b858851d2201a",
+        "identical": true
+      },
+      {
+        "name": "document_files",
+        "rows": 4,
+        "digest_source": "88ab4bf4a2891a00",
+        "digest_copy": "88ab4bf4a2891a00",
+        "identical": true
+      },
+      {
+        "name": "assessments",
+        "rows": 2,
+        "digest_source": "ab2bbdc4dc7e3e0a",
+        "digest_copy": "ab2bbdc4dc7e3e0a",
+        "identical": true
+      },
+      {
+        "name": "assessment_sites",
+        "rows": 1,
+        "digest_source": "6edb5affe7250c48",
+        "digest_copy": "6edb5affe7250c48",
+        "identical": true
+      },
+      {
+        "name": "plans",
+        "rows": 1,
+        "digest_source": "ae04bf610c570424",
+        "digest_copy": "ae04bf610c570424",
+        "identical": true
+      },
+      {
+        "name": "plan_items",
+        "rows": 3,
+        "digest_source": "5b7707793633bd2b",
+        "digest_copy": "5b7707793633bd2b",
+        "identical": true
+      },
+      {
+        "name": "performed",
+        "rows": 1,
+        "digest_source": "d2466a7cb8dd2c89",
+        "digest_copy": "d2466a7cb8dd2c89",
+        "identical": true
+      },
+      {
+        "name": "entries",
+        "rows": 5,
+        "digest_source": "8cf86f681449e14d",
+        "digest_copy": "8cf86f681449e14d",
+        "identical": true
+      },
+      {
+        "name": "net_received",
+        "rows": 3,
+        "digest_source": "fb2d1c794eda7e4e",
+        "digest_copy": "fb2d1c794eda7e4e",
+        "identical": true
+      },
+      {
+        "name": "services_completed",
+        "rows": 1,
+        "digest_source": "4742d5fedebb7e6f",
+        "digest_copy": "4742d5fedebb7e6f",
+        "identical": true
+      },
+      {
+        "name": "balance_due",
+        "rows": 3,
+        "digest_source": "c8069b30736e42b1",
+        "digest_copy": "c8069b30736e42b1",
+        "identical": true
+      }
+    ],
+    "ok": true,
+    "documents_hash_verified_in_copy": 4,
+    "balance_due_by_patient_count": 3
+  },
+  "alembic_version_in_copy": "absent: the pilot DB is built with create_all, not Alembic; Alembic upgrade cannot run on SQLite (PostgreSQL-specific migrations). Proof for the new revision id is PostgreSQL CI on #24."
+}
