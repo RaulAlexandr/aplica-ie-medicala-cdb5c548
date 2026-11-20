@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiErrorMessage, listProcedures, type ProcedureCatalog } from '../api/client';
 import { ADULT_TOOTH_IDS, type ToothId, type ToothSurface } from '../odontogram/types';
 import { surfacesForTooth } from '../odontogram/surfaces';
+import { allowsTooth, locationLabel, locationProblem, requiresTooth, ruleOf } from '../catalog/locations';
 import {
   acceptPlan, addItem, addStage, cancelItem, cancelPlan, completePlan, createPlan, deleteItem, deleteStage,
   getLinkCandidates, getPlan, linkAppointment, linkPerformed, listPatientPlans, unlinkPerformed, updateItem, updateStage,
@@ -63,8 +64,11 @@ function toInput(item: ItemDraft): ItemInput {
   };
 }
 
-function draftProblem(item: ItemDraft): string | null {
+function draftProblem(item: ItemDraft, catalog: ProcedureCatalog[]): string | null {
   if (!item.procedure_catalog_id) return 'Alege serviciul din catalog pentru fiecare manoperă planificată.';
+  const service = catalog.find(row => row.id === item.procedure_catalog_id);
+  const location = service ? locationProblem(ruleOf(service), item.tooth, item.tooth ? item.surfaces.length : 0) : null;
+  if (location) return `${service?.code}: ${location}`;
   if (item.price.trim() && !/^\d{1,9}(\.\d{1,2})?$/.test(item.price.trim())) return 'Tariful estimat trebuie să fie o sumă cu cel mult două zecimale.';
   if (item.duration.trim() && !(Number.isInteger(Number(item.duration)) && Number(item.duration) > 0)) return 'Durata estimată trebuie să fie un număr întreg de minute.';
   return null;
@@ -72,14 +76,23 @@ function draftProblem(item: ItemDraft): string | null {
 
 function ItemEditor({ item, catalog, onChange, onRemove, label }: { item: ItemDraft; catalog: ProcedureCatalog[]; onChange: (item: ItemDraft) => void; onRemove?: () => void; label: string }) {
   const selected = catalog.find(row => row.id === item.procedure_catalog_id);
-  const allowed = item.tooth ? surfacesForTooth(item.tooth) : [];
+  const rule = ruleOf(selected);
+  const allowed = item.tooth && allowsTooth(rule) ? surfacesForTooth(item.tooth) : [];
+  const problem = selected ? locationProblem(rule, item.tooth, item.tooth ? item.surfaces.length : 0) : null;
+  const chooseService = (id: string) => {
+    const nextRule = ruleOf(catalog.find(row => row.id === id));
+    onChange(allowsTooth(nextRule) ? { ...item, procedure_catalog_id: id } : { ...item, procedure_catalog_id: id, tooth: '', surfaces: [] });
+  };
   return <fieldset className="tp-item-editor" aria-label={label}>
-    <label>Serviciu<select aria-label={`${label} serviciu`} value={item.procedure_catalog_id} onChange={event => onChange({ ...item, procedure_catalog_id: event.target.value })}>
+    <label>Serviciu<select aria-label={`${label} serviciu`} value={item.procedure_catalog_id} onChange={event => chooseService(event.target.value)}>
       <option value="">Alege serviciul activ</option>
-      {catalog.map(row => <option key={row.id} value={row.id}>{row.code} · {row.name} ({row.base_price} {row.currency})</option>)}
+      {catalog.map(row => {
+        const rowRule = ruleOf(row);
+        return <option key={row.id} value={row.id} disabled={Boolean(item.tooth) && !allowsTooth(rowRule)}>{row.code} · {row.name} ({row.base_price} {row.currency}){rowRule !== 'any' ? ` · ${locationLabel(rowRule)}` : ''}</option>;
+      })}
     </select></label>
-    <label>Dinte FDI<select aria-label={`${label} dinte`} value={item.tooth} onChange={event => onChange({ ...item, tooth: event.target.value as ToothId | '', surfaces: [] })}>
-      <option value="">Fără dinte</option>
+    <label>Dinte FDI{requiresTooth(rule) ? ' (obligatoriu)' : ''}<select aria-label={`${label} dinte`} value={item.tooth} disabled={!allowsTooth(rule)} onChange={event => onChange({ ...item, tooth: event.target.value as ToothId | '', surfaces: [] })}>
+      <option value="" disabled={requiresTooth(rule)}>Fără dinte</option>
       {ADULT_TOOTH_IDS.map(tooth => <option key={tooth} value={tooth}>{tooth}</option>)}
     </select></label>
     <label>Prioritate<select aria-label={`${label} prioritate`} value={item.priority} onChange={event => onChange({ ...item, priority: event.target.value as Priority })}>
@@ -90,6 +103,7 @@ function ItemEditor({ item, catalog, onChange, onRemove, label }: { item: ItemDr
     {allowed.length > 0 && <div className="tp-surfaces" role="group" aria-label={`${label} suprafețe`}>
       {allowed.map(surface => <label key={surface.id} className="tp-check"><input type="checkbox" checked={item.surfaces.includes(surface.id)} onChange={() => onChange({ ...item, surfaces: item.surfaces.includes(surface.id) ? item.surfaces.filter(value => value !== surface.id) : [...item.surfaces, surface.id] })} />{surface.label}</label>)}
     </div>}
+    {problem && <p className="error tp-wide" role="note" aria-label={`${label} regulă localizare`}>{problem}</p>}
     <label className="tp-wide">Observații<input aria-label={`${label} observații`} value={item.notes} onChange={event => onChange({ ...item, notes: event.target.value })} /></label>
     {onRemove && <button type="button" className="secondary" onClick={onRemove}>Elimină manopera</button>}
   </fieldset>;
@@ -112,7 +126,7 @@ export function PlanForm({ patientId, catalog, onCreated, onCancel }: { patientI
     if (lock.current) return;
     const problem = !title.trim() ? 'Titlul planului este obligatoriu.'
       : stages.some(stage => !stage.title.trim()) ? 'Fiecare etapă are nevoie de un titlu.'
-        : stages.flatMap(stage => stage.items).map(draftProblem).find(Boolean) ?? null;
+        : stages.flatMap(stage => stage.items).map(item => draftProblem(item, catalog)).find(Boolean) ?? null;
     if (problem) { setError(problem); return; }
     lock.current = true;
     setSaving(true);
@@ -238,7 +252,7 @@ function AddItemForm({ plan, stageId, catalog, busy, run }: { plan: TreatmentPla
     <ItemEditor item={item} catalog={catalog} label={`Manoperă nouă etapa ${plan.stages.find(stage => stage.id === stageId)?.position ?? ''}`} onChange={setItem} />
     {problem && <p className="error" role="alert">{problem}</p>}
     <button type="button" disabled={busy} onClick={() => {
-      const issue = draftProblem(item);
+      const issue = draftProblem(item, catalog);
       setProblem(issue ?? '');
       if (issue) return;
       void run('Adăugare manoperă', () => addItem(plan.id, stageId, toInput(item), key.current)).then(ok => { if (ok) { setItem(emptyItem()); key.current = newKey(); } });
@@ -373,7 +387,7 @@ export function TreatmentPlansPanel({ patientId, timezone }: { patientId: string
   const activeCatalog = (catalog.data ?? []).filter(row => row.is_active);
   return <section className="card clinical-record-section tp-panel" aria-label="Planuri de tratament">
     <div className="detail-heading">
-      <div><p className="eyebrow">T08 · PLANIFICARE (NU EXECUȚIE)</p><h2>Planuri de tratament</h2></div>
+      <div><p className="eyebrow">PLANIFICARE (NU EXECUȚIE)</p><h2>Planuri de tratament</h2></div>
       {mode === 'list' && <button onClick={() => setMode('new')} disabled={catalog.isLoading}>Plan nou</button>}
     </div>
     {catalog.isError && <p className="error" role="alert">Catalogul nu a putut fi încărcat: {apiErrorMessage(catalog.error)}</p>}

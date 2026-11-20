@@ -1,0 +1,11 @@
+{
+ "patient": true,
+ "appointment_completed": "completed",
+ "procedure_status": "completed",
+ "finding": true,
+ "plan_status": "in_progress",
+ "assessments_finalized": 2,
+ "document_row_status": "active",
+ "document_file_sha256_matches_row": true,
+ "document_sha256_matches_uploaded_fixture": true
+}

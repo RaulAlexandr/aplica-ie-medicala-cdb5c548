@@ -52,6 +52,14 @@ function text(node: TestRenderer.ReactTestInstance): string {
 }
 function queryClient() { return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 60_000 } } }); }
 async function flush() { await new Promise(resolve => setTimeout(resolve, 20)); }
+async function until(condition: () => boolean, what: string, budgetMs = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < budgetMs) {
+    if (condition()) return;
+    await act(async () => { await flush(); });
+  }
+  throw new Error(`Timed out after ${budgetMs} ms waiting for ${what}`);
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -73,6 +81,10 @@ function mount(client: QueryClient, patientId = 'patient-1') {
 async function render(client = queryClient(), patientId = 'patient-1') {
   let renderer!: TestRenderer.ReactTestRenderer;
   await act(async () => { renderer = TestRenderer.create(mount(client, patientId)); await flush(); });
+  // A fixed 20 ms flush is not always enough under a loaded parallel run: wait (bounded) for the initial list query.
+  for (let attempt = 0; attempt < 50 && text(renderer.root).includes('Se încarcă planurile'); attempt += 1) {
+    await act(async () => { await flush(); });
+  }
   return renderer;
 }
 function axiosError(status: number, detail: string) {
@@ -140,6 +152,7 @@ describe('treatment plans panel', () => {
     act(() => button(renderer, 'Plan nou').props.onClick());
     change(renderer, 'Titlul planului', 'Ciornă pacient 1');
     await act(async () => { renderer.update(mount(client, 'patient-2')); await flush(); });
+    await until(() => text(renderer.root).includes('Pacientul nu are planuri de tratament.'), "patient 2's empty plan list");
     expect(list).toHaveBeenLastCalledWith('patient-2');
     expect(renderer.root.findAllByProps({ 'aria-label': 'Titlul planului' })).toHaveLength(0);
     expect(text(renderer.root)).toContain('Pacientul nu are planuri de tratament.');
@@ -154,6 +167,7 @@ describe('treatment plans panel', () => {
     const link = vi.spyOn(plansApi, 'linkPerformed').mockReturnValue(pending.promise);
     const renderer = await render();
     await act(async () => { button(renderer, 'Deschide planul').props.onClick(); await flush(); });
+    await until(() => renderer.root.findAllByProps({ 'aria-label': 'Estimări plan' }).length > 0, 'the plan estimates');
     expect(text(byLabel(renderer, 'Estimări plan'))).toContain('710.50 RON');
     expect(text(renderer.root)).toContain('Versiunea 1 acceptată');
 
@@ -187,10 +201,12 @@ describe('treatment plans panel', () => {
     const accept = vi.spyOn(plansApi, 'acceptPlan').mockResolvedValue({ ...changed, patient_id: 'patient-2' });
     const renderer = await render();
     await act(async () => { button(renderer, 'Deschide planul').props.onClick(); await flush(); });
+    await until(() => text(renderer.root).includes('Versiunea 2 necesită o nouă acceptare'), 'the re-acceptance notice');
     expect(text(renderer.root)).toContain('Versiunea 2 necesită o nouă acceptare');
     expect(text(renderer.root.findByProps({ 'data-testid': 'acceptance-row' }))).toContain('înlocuită');
     change(renderer, 'Observație acceptare', 'Acord pentru estimarea actualizată');
     await act(async () => { button(renderer, 'Consemnează acceptarea versiunii 2').props.onClick(); await flush(); });
+    await until(() => text(renderer.root).includes('altui pacient'), 'the other-patient refusal');
     expect(accept).toHaveBeenCalledWith('plan-1', 'Acord pentru estimarea actualizată', 2);
     expect(text(renderer.root)).toContain('altui pacient');
     expect(byLabel(renderer, 'Observație acceptare').props.value).toBe('Acord pentru estimarea actualizată');

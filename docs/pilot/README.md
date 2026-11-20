@@ -2,6 +2,10 @@
 
 Pilotul folosește doar date fictive și rulează în browser pe laptop. Nu folosi pentru fișe reale. Setup-ul instalează dependențele într-un virtualenv separat al utilizatorului și în `frontend/node_modules`; nu instalează global. Este necesar Python 3.12 și Node 22.
 
+## Demo cu date fictive (T33)
+
+Pentru demonstrații și testare pe roluri (recepție, medic, manager) pe o bază SQLite **nouă**, cu pacienți, vizite, plan, evaluări parodontale, documente și încasări fictive: `scripts/pilot/demo.sh up` și ghidul [DEMO.md](DEMO.md). `demo.sh` refuză să atingă o bază existentă.
+
 ## Pornire
 
 Din terminal, copiază comenzile de mai jos; schimbă calea doar dacă ai ales alt checkout candidat:
@@ -41,20 +45,22 @@ Schema SQLite este inițializată nedistructiv prin SQLAlchemy `create_all(check
 
 ## Backup și probă de restaurare
 
-Oprește aplicația, apoi creează o copie SQLite consistentă și verificată:
+Backupul pilotului conține **baza SQLite și fișierele T11** (documente/imagini clinice), plus un `MANIFEST.json` cu SHA-256. Fișierele T11 sunt în `PILOT_DOCUMENTS_DIR` (implicit `$DENTACARE_PILOT_HOME/documents`, permisiuni 0700/0600, în afara checkout-ului; `start.sh` îl transmite API-ului ca `DOCUMENT_STORAGE_DIR`). Oprește aplicația ca DB și fișierele să fie în aceeași stare:
 
 ```bash
 "$CANDIDATE/scripts/pilot/stop.sh" --checkout "$CANDIDATE" --config "$PILOT_CONFIG"
 "$CANDIDATE/scripts/pilot/backup.sh" --checkout "$CANDIDATE" --config "$PILOT_CONFIG"
 ```
 
-Pentru restaurare de probă, scriptul copiază backupul într-o destinație nouă, fără să înlocuiască baza activă sau sursa:
+Rezultatul este un director nou `backups/pilot-<UTC>/` cu `fictional-clinic.sqlite3`, `documents/` și `MANIFEST.json`. Backupul verifică `PRAGMA integrity_check` și că fiecare rând `clinical_documents` are fișierul cu SHA-256 identic; încărcările parțiale din `.incoming` nu sunt incluse.
+
+Restaurarea de probă scrie într-un director nou, fără să înlocuiască datele active sau sursa, și reverifică manifestul și fiecare document:
 
 ```bash
-"$CANDIDATE/scripts/pilot/restore.sh" --checkout "$CANDIDATE" --config "$PILOT_CONFIG" "$DENTACARE_PILOT_HOME/backups/NUME_BACKUP.sqlite3" "$DENTACARE_PILOT_HOME/restore-check.sqlite3"
+"$CANDIDATE/scripts/pilot/restore.sh" --checkout "$CANDIDATE" --config "$PILOT_CONFIG" "$DENTACARE_PILOT_HOME/backups/pilot-NUME" "$DENTACARE_PILOT_HOME/restore-check"
 ```
 
-`restore-check.sqlite3` trebuie să nu existe deja. Poți porni temporar un candidat cu o copie specifică setând `PILOT_DB_PATH` în fișierul de config local; păstrează mai întâi o copie separată a bazei originale. Nu modifica main și nu restaura peste date existente pentru a reveni la un SHA. Folosește `git checkout <SHA>` într-un worktree separat și indică explicit acel checkout scripturilor.
+`restore-check` trebuie să nu existe. Pentru a porni pe copie, setează în config `PILOT_DB_PATH=.../restore-check/fictional-clinic.sqlite3` și `PILOT_DOCUMENTS_DIR=.../restore-check/documents`. Un backup vechi `.sqlite3` (numai DB) este acceptat la restaurare, dar scriptul avertizează că nu conține fișiere T11. Nu modifica main și nu restaura peste date existente pentru a reveni la un SHA. Folosește `git checkout <SHA>` într-un worktree separat și indică explicit acel checkout scripturilor.
 
 ## Mediu și limite
 

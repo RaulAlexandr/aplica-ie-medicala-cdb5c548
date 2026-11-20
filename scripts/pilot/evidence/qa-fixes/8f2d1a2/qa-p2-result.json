@@ -1,0 +1,40 @@
+{
+ "sha": "8f2d1a2",
+ "checks": [
+  {
+   "n": "setup unavailability",
+   "ok": true,
+   "d": 201
+  },
+  {
+   "n": "S3 block visible on the day agenda with doctor, clinic-local time and reason",
+   "ok": true,
+   "d": "Indisponibilități · doar citire, se gestionează în Clinic setup / Doctor · Dr. Alex Demo · 11:00 – 12:00 · QA S3 pauză "
+  },
+  {
+   "n": "S3 block is read-only (no button inside)",
+   "ok": true,
+   "d": ""
+  },
+  {
+   "n": "S5 no live timer while pending",
+   "ok": true,
+   "d": ""
+  },
+  {
+   "n": "S5 live timer present and advanced ≥2 s between reads",
+   "ok": true,
+   "d": "2 sec  -> 5 sec "
+  },
+  {
+   "n": "S5 live timer gone after Pause",
+   "ok": true,
+   "d": ""
+  },
+  {
+   "n": "no 5xx / page errors",
+   "ok": true,
+   "d": ""
+  }
+ ]
+}

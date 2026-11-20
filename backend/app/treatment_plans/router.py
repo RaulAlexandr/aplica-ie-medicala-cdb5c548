@@ -44,6 +44,7 @@ from app.performed_procedures.router import (
     validate_price_value,
     validate_surface,
 )
+from app.procedures.locations import location_violation
 
 router = APIRouter(prefix="/treatment-plans", tags=["treatment_plans"])
 # Reception and assistants have no access to T08 content in the pilot.
@@ -321,10 +322,17 @@ def _validate_location(tooth: str | None, surface: str | None) -> None:
         raise HTTPException(422, "Tooth surfaces require an FDI tooth")
 
 
+def _validate_allowed_location(catalog: ProcedureCatalog, tooth: str | None, surface: str | None) -> None:
+    violation = location_violation(catalog.allowed_location, catalog.code, tooth, surface)
+    if violation:
+        raise HTTPException(422, violation)
+
+
 async def _new_item(db: AsyncSession, plan: TreatmentPlan, stage: TreatmentPlanStage, payload: ItemCreate,
                     user: User, position: int, idempotency_key: str | None = None) -> TreatmentPlanItem:
     catalog = await _active_catalog(db, payload.procedure_catalog_id, user)
     _validate_location(payload.tooth_fdi, payload.tooth_surface)
+    _validate_allowed_location(catalog, payload.tooth_fdi, payload.tooth_surface)
     now = utcnow()
     item = TreatmentPlanItem(
         clinic_id=plan.clinic_id, plan_id=plan.id, stage_id=stage.id, position=position,
@@ -805,6 +813,14 @@ async def update_item(
     tooth = changes.get("tooth_fdi", item.tooth_fdi)
     surface = changes.get("tooth_surface", item.tooth_surface)
     _validate_location(tooth, surface)
+    location_changed = (tooth or None) != (item.tooth_fdi or None) or _surface_set(surface) != _surface_set(item.tooth_surface)
+    if location_changed:
+        # Only a location that actually differs from the stored one must respect the service rule; re-sending
+        # the stored tooth/surfaces (in any order) never re-validates an item created under an older rule.
+        catalog = await db.scalar(select(ProcedureCatalog).where(
+            ProcedureCatalog.id == item.procedure_catalog_id, ProcedureCatalog.clinic_id == plan.clinic_id))
+        if catalog:
+            _validate_allowed_location(catalog, tooth, surface)
     if "stage_id" in changes and changes["stage_id"] != item.stage_id:
         await _stage(db, plan, changes["stage_id"])
         item.position = (await db.scalar(select(func.max(TreatmentPlanItem.position)).where(

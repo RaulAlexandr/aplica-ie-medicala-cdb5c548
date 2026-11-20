@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { VisitFinanceCard } from '../finance/VisitFinanceCard';
 import { apiErrorMessage, getAppointment, listProcedures, updateAppointmentStatus, type Appointment, type User } from '../api/client';
 import { ProcedureCard } from './ProcedureCard';
 import { getVisitSummary, type PerformedProcedure, type VisitSummary } from './api';
@@ -117,6 +118,7 @@ function VisitWorkspace({ appointmentId, user }: { appointmentId: string; user: 
         <p><strong>Time zone:</strong> {appointment.timezone}</p>
         {canManageProcedures && summaryQuery.data?.unresolved_procedures.length ? <div className="notice-text"><strong>Needs resolution:</strong><ul>{summaryQuery.data.unresolved_procedures.map(item => <li key={item.id}>{item.procedure_name} · {item.status}</li>)}</ul></div> : null}
         {summaryQuery.isError && <button className="secondary" onClick={() => void summaryQuery.refetch()}>Retry summary</button>}
+        <VisitFinanceCard key={`${appointmentId}:finance`} appointmentId={appointment.id} refreshKey={procedures.map(item => `${item.id}:${item.status}:${item.current_price}`).join('|')} />
       </section>
     </div>
   </>;

@@ -41,6 +41,14 @@ function tree(client: QueryClient, props: Partial<ComponentProps<typeof PatientP
 }
 function queryClient() { return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 60_000 } } }); }
 async function flush() { await new Promise(resolve => setTimeout(resolve, 20)); }
+async function until(condition: () => boolean, what: string, budgetMs = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < budgetMs) {
+    if (condition()) return;
+    await act(async () => { await flush(); });
+  }
+  throw new Error(`Timed out after ${budgetMs} ms waiting for ${what}`);
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -132,6 +140,7 @@ describe('tooth-to-procedure entry', () => {
     const create = vi.spyOn(clinicalApi, 'createPerformedProcedure').mockResolvedValue(createdProcedure);
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(tree(queryClient(), { appointmentId: foreignAppointment.id })); await flush(); });
+    await until(() => text(renderer.root).includes('belongs to another patient'), 'the foreign-visit error');
     expect(text(renderer.root).includes('belongs to another patient')).toBe(true);
     expect(renderer.root.findAllByType('form')).toHaveLength(0);
     expect(listProcedures).not.toHaveBeenCalled();
@@ -145,6 +154,7 @@ describe('tooth-to-procedure entry', () => {
     const closedCreate = vi.spyOn(clinicalApi, 'createPerformedProcedure').mockResolvedValue(createdProcedure);
     const closedClient = queryClient();
     await act(async () => { renderer = TestRenderer.create(tree(closedClient, { appointmentId: appointment.id })); await flush(); });
+    await until(() => text(renderer.root).includes('cannot receive a new procedure'), 'the closed-visit error');
     expect(text(renderer.root).includes('cannot receive a new procedure')).toBe(true);
     expect(renderer.root.findAllByType('form')).toHaveLength(0);
     expect(closedCreate).not.toHaveBeenCalled();
@@ -304,11 +314,13 @@ describe('tooth-to-procedure entry', () => {
       }));
       await flush();
     });
+    await until(() => text(renderer.root).includes('Patient B'), "patient B's panel");
     expect(text(renderer.root).includes('Patient B')).toBe(true);
     await waitForForm(renderer);
     expect(renderer.root.findByProps({ 'aria-label': 'Procedure tooth' }).props.value).toBe('16');
     const savedForA = { ...createdProcedure, appointment_id: appointment.id, patient_id: appointment.patient_id };
     await act(async () => { resolveCreate(savedForA); await flush(); });
+    await until(() => client.getQueryData<VisitSummary>(['visit-summary', appointment.id])?.performed_procedures.length === 1, "A's cached summary");
     expect(client.getQueryData<VisitSummary>(['visit-summary', appointment.id])?.performed_procedures.map(item => item.id)).toEqual(['performed-1']);
     expect(client.getQueryData<VisitSummary>(['visit-summary', appointmentB.id])?.performed_procedures).toEqual([]);
   });

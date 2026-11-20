@@ -1,0 +1,202 @@
+{
+  "task": "T01/T03 gaps",
+  "appSha": "4cb8970d386ce3051a1ea4c21e79bd3893567e73",
+  "web": "http://127.0.0.1:5181",
+  "api": "http://127.0.0.1:8041/api",
+  "browser": "151.0.7922.34",
+  "checks": [
+    {
+      "name": "setup: invitation for a fictional assistant",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "setup: invitation accepted",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "member can sign in before deactivation (API)",
+      "passed": true
+    },
+    {
+      "name": "manager deactivated the member from the staff list",
+      "passed": true
+    },
+    {
+      "name": "deactivated member: browser login refused",
+      "passed": true
+    },
+    {
+      "name": "deactivated member: old access token rejected",
+      "passed": true
+    },
+    {
+      "name": "reactivation asks for confirmation first",
+      "passed": true
+    },
+    {
+      "name": "cancel sends nothing",
+      "passed": true
+    },
+    {
+      "name": "reactivate POST succeeded once",
+      "passed": true
+    },
+    {
+      "name": "after reload: member active, no reactivate button",
+      "passed": true
+    },
+    {
+      "name": "history shows reactivation and deactivation by the manager",
+      "passed": true,
+      "history": [
+        "Reactivat",
+        "Dezactivat",
+        "Cont creat din invitație"
+      ]
+    },
+    {
+      "name": "after reactivation: old access token still rejected",
+      "passed": true
+    },
+    {
+      "name": "after reactivation: old refresh token still rejected",
+      "passed": true
+    },
+    {
+      "name": "double reactivation refused with 409",
+      "passed": true
+    },
+    {
+      "name": "doctor cannot reactivate (403)",
+      "passed": true
+    },
+    {
+      "name": "reactivated member signs in again in the browser",
+      "passed": true
+    },
+    {
+      "name": "catalog form offers allowed locations, default \"any\"",
+      "passed": true
+    },
+    {
+      "name": "manager created a \"dinte obligatoriu\" service in the UI",
+      "passed": true,
+      "allowed_location": "tooth"
+    },
+    {
+      "name": "setup: a \"fără dinte\" service (API)",
+      "passed": true
+    },
+    {
+      "name": "an existing seeded service is still \"any\"",
+      "passed": true,
+      "code": "CONS-DEMO"
+    },
+    {
+      "name": "setup: fictional visit",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "server refuses \"dinte obligatoriu\" without a tooth (T04/T07 endpoint)",
+      "passed": true,
+      "status": 422
+    },
+    {
+      "name": "visit path: Save disabled for tooth-required service without a tooth",
+      "passed": true
+    },
+    {
+      "name": "visit path: rule message shown",
+      "passed": true
+    },
+    {
+      "name": "visit path: \"No tooth\" option disabled",
+      "passed": true
+    },
+    {
+      "name": "visit path: nothing was sent",
+      "passed": true
+    },
+    {
+      "name": "visit path: with tooth 16 the service saves",
+      "passed": true
+    },
+    {
+      "name": "existing service: tooth stays optional",
+      "passed": true
+    },
+    {
+      "name": "existing service: saved without a tooth, as before",
+      "passed": true
+    },
+    {
+      "name": "tooth path: tooth 16 preselected",
+      "passed": true
+    },
+    {
+      "name": "tooth path: \"fără dinte\" service is not offered",
+      "passed": true
+    },
+    {
+      "name": "tooth path: \"No tooth\" cannot be chosen for the tooth-required service",
+      "passed": true
+    },
+    {
+      "name": "tooth path: saved with tooth 16",
+      "passed": true
+    },
+    {
+      "name": "server refuses a tooth for a \"fără dinte\" service",
+      "passed": true,
+      "status": 422
+    },
+    {
+      "name": "plan: tooth-required item blocked without a tooth, nothing sent",
+      "passed": true
+    },
+    {
+      "name": "server refuses the plan item without a tooth (422)",
+      "passed": true,
+      "status": 422
+    },
+    {
+      "name": "plan: saved with tooth 26 and the existing service without a tooth",
+      "passed": true
+    }
+  ],
+  "artifacts": [
+    "t01-t03-staff-reactivated.png",
+    "t01-t03-visit-tooth-required-blocked.png",
+    "t01-t03-plan-tooth-required-blocked.png",
+    "t01-t03-catalog-allowed-locations.png"
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "user": "manager",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "sourcePath": "/favicon.ico"
+    },
+    {
+      "user": "member",
+      "httpStatus": 401,
+      "method": "POST",
+      "path": "/api/auth/login"
+    },
+    {
+      "user": "member",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "sourcePath": "/api/auth/login"
+    }
+  ],
+  "network": {
+    "reactivatePosts": 1,
+    "procedurePosts": 3,
+    "planPosts": 1
+  },
+  "errors": [],
+  "result": "PASS"
+}

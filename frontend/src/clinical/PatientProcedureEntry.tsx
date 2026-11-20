@@ -7,6 +7,13 @@ import { ProcedureForm } from './ProcedureForm';
 import type { PerformedProcedure, VisitSummary } from './api';
 
 const closedStatuses = new Set(['completed', 'cancelled', 'no_show']);
+
+/** Brings the panel into view and moves keyboard focus to its first field (used when the panel opens far below the odontogram). */
+export function revealAndFocus(panel: Pick<HTMLElement, 'scrollIntoView' | 'querySelector'> | null) {
+  if (!panel) return;
+  panel.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  panel.querySelector<HTMLElement>('select, input, textarea')?.focus?.({ preventScroll: true });
+}
 const appointmentKey = (appointmentId: string) => ['appointment', appointmentId] as const;
 
 function visitLabel(appointment: Appointment) {
@@ -27,6 +34,7 @@ export function PatientProcedureEntry({ patientId, patientName, appointmentSearc
   const [selectedAppointmentId, setSelectedAppointmentId] = useState(appointmentId ?? '');
   const [saving, setSaving] = useState(false);
   const lastEligibleVisitSnapshot = useRef<Appointment | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
   const selectedAppointment = useQuery({
     queryKey: appointmentKey(selectedAppointmentId),
     queryFn: () => getAppointment(selectedAppointmentId),
@@ -53,6 +61,8 @@ export function PatientProcedureEntry({ patientId, patientName, appointmentSearc
     returnedAppointment?.id === selectedAppointmentId && returnedAppointment.patient_id === patientId &&
     !closedStatuses.has(returnedAppointment.status),
   );
+  // S4: opening the panel from a tooth must visibly do something, even when it renders far below the fold.
+  useEffect(() => { revealAndFocus(panelRef.current); }, []);
   const eligibleVisits = useQuery({
     queryKey: ['patient-procedure-entry-visits', patientId, appointmentSearchTerm],
     queryFn: async () => (await listAppointments({ patient_search: appointmentSearchTerm }))
@@ -64,6 +74,10 @@ export function PatientProcedureEntry({ patientId, patientName, appointmentSearc
     queryFn: () => listProcedures(undefined, true, 100, 0),
     enabled: Boolean(appointmentForForm),
   });
+
+  // Once the visit is verified and the form is mounted, the first field of the form takes the focus.
+  const formReady = Boolean(appointmentForForm && catalog.data);
+  useEffect(() => { if (formReady) revealAndFocus(panelRef.current); }, [formReady]);
 
   async function saved(procedure: PerformedProcedure) {
     const key = ['visit-summary', procedure.appointment_id] as const;
@@ -99,8 +113,8 @@ export function PatientProcedureEntry({ patientId, patientName, appointmentSearc
     <Link className="button secondary" to="/appointments">Open calendar</Link>
   </>;
 
-  return <section className="card clinical-record-section t07-entry-panel" aria-label="Add procedure for selected tooth">
-    <div className="detail-heading"><div><p className="eyebrow">T04 PERFORMED PROCEDURE</p><h2>Manoperă pentru dintele FDI {initialTooth}</h2></div>
+  return <section ref={panelRef} className="card clinical-record-section t07-entry-panel" aria-label="Add procedure for selected tooth">
+    <div className="detail-heading"><div><p className="eyebrow">MANOPERĂ EFECTUATĂ</p><h2>Manoperă pentru dintele FDI {initialTooth}</h2></div>
       <button type="button" className="secondary" disabled={saving} onClick={onCancel}>Cancel</button>
     </div>
     {(selectedAppointment.isLoading || selectedAppointment.isFetching) && selectedAppointmentId && <p className="muted" role="status">Verifying the selected visit… Saving is disabled until verification completes.</p>}

@@ -5,7 +5,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,7 @@ from app.database import (
     AppointmentHistory,
     AuditEvent,
     Clinic,
+    ClinicalDocument,
     ClinicalNote,
     Patient,
     PerformedProcedure,
@@ -57,6 +58,13 @@ class AppointmentCreate(BaseModel):
         return self
 class AppointmentUpdate(BaseModel):
     patient_id: UUID | None = None; doctor_id: UUID | None = None; assistant_id: UUID | None = None; room_id: UUID | None = None; starts_at: datetime | None = None; local_start: datetime | None = None; timezone_fold: int | None = Field(default=None, ge=0, le=1); duration_minutes: int | None = Field(default=None, ge=5, le=24 * 60); appointment_type: str | None = Field(default=None, min_length=1, max_length=100); notes: str | None = Field(default=None, max_length=5000)
+    @field_validator("patient_id", "doctor_id", "room_id", "duration_minutes", "appointment_type", mode="before")
+    @classmethod
+    def required_when_present(cls, value):
+        # Omit the field to keep the current value; an explicit null would reach calculations/NOT NULL columns.
+        if value is None:
+            raise ValueError("This field cannot be null; omit it to keep the current value")
+        return value
     @model_validator(mode="after")
     def has_one_start(self) -> AppointmentUpdate:
         if self.starts_at is not None and self.local_start is not None:
@@ -215,7 +223,15 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, d
                 PerformedProcedure.clinic_id == user.clinic_id,
             ).limit(1)
         )
-        if has_note or has_procedure:
+        # T11: documents (active or archived) keep the visit's patient identity. The appointment
+        # row is locked above (FOR UPDATE); T11 upload takes the same lock before saving.
+        has_document = await db.scalar(
+            select(ClinicalDocument.id).where(
+                ClinicalDocument.appointment_id == item.id,
+                ClinicalDocument.clinic_id == user.clinic_id,
+            ).limit(1)
+        )
+        if has_note or has_procedure or has_document:
             raise HTTPException(409, "Cannot change patient after clinical data has been recorded for this appointment")
     await refs(db, user.clinic_id, patient_id, doctor_id, assistant_id, room_id)
     if item.status in ACTIVE_STATUSES: await validate_slot(db, user.clinic_id, start, duration, doctor_id, room_id, assistant_id, item.id)
