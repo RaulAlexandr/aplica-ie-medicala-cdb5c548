@@ -1,0 +1,17 @@
+{
+  "task": "T33-idempotency-merge",
+  "sha": "9f3941107295b23800e18db0e510fee4ac856a84",
+  "merged": "feat/pilot-t13-finance 84df365",
+  "runtime": "demo-v3 (new DB); scripts ran on a restored copy; browser TZ Europe/Bucharest (t13 fixes UTC itself)",
+  "demo_walkthrough": {
+    "checks": 42,
+    "passed": 42,
+    "pageErrors": 0,
+    "unexpected": 0
+  },
+  "t13": {
+    "checks": 35,
+    "passed": 35,
+    "pageErrors": 0
+  }
+}
