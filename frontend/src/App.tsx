@@ -18,7 +18,7 @@ const clinicalRoles = ['doctor', 'clinic_manager', 'administrator'];
 const cashRoles = ['reception', 'clinic_manager', 'administrator'];
 const canEditPatients = (role: string) => managementRoles.includes(role) || role === 'doctor';
 function ErrorState({ error }: { error: unknown }) { return <p className="error" role="alert">{apiErrorMessage(error)}</p>; }
-function QueryState({ loading, empty, error }: { loading: boolean; empty: boolean; error: unknown }) { if (loading) return <p className="muted">Loading\u2026</p>; if (error) return <ErrorState error={error} />; if (empty) return <p className="muted">Nothing to display yet.</p>; return null; }
+function QueryState({ loading, empty, error }: { loading: boolean; empty: boolean; error: unknown }) { if (loading) return <p className="muted">Loading…</p>; if (error) return <ErrorState error={error} />; if (empty) return <p className="muted">Nothing to display yet.</p>; return null; }
 
 function Auth({ onDone }: { onDone: () => void }) {
   const [registerMode, setRegisterMode] = useState(false);
@@ -151,7 +151,7 @@ function Appointments({ user }: { user: User }) {
   return <Calendar canManage={canManage} />;
 }
 
-function Procedures({ user }: { user: User }) {
+export function Procedures({ user }: { user: User }) {
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [page, setPage] = useState(0);
@@ -217,7 +217,7 @@ function Procedures({ user }: { user: User }) {
       {!query.isLoading && !query.isError && query.data && <>
         <div className="list">
           {query.data.map(p => <article key={p.id} className="list-row">
-            <span><Link to={`/procedures/${p.id}`}><strong>{p.code}</strong> - {p.name}</Link><br /><span className="muted">{p.category || 'No category'} \u00b7 {p.default_duration_minutes} min \u00b7 {p.base_price} {p.currency} \u00b7 {p.is_active ? 'Active' : 'Inactive'} · {locationLabel(ruleOf(p))}</span></span>
+            <span><Link to={`/procedures/${p.id}`}><strong>{p.code}</strong> - {p.name}</Link><br /><span className="muted">{p.category || 'No category'} · {p.default_duration_minutes} min · {p.base_price} {p.currency} · {p.is_active ? 'Active' : 'Inactive'} · {locationLabel(ruleOf(p))}</span></span>
             {canEdit && <>
               <button className="secondary" onClick={() => { setEditing(p); setShowForm(true); }}>Edit</button>
               {p.is_active ? <button className="secondary" onClick={() => handleDeactivate(p.id)} disabled={deactivateMutation.isPending}>Deactivate</button> : <button className="secondary" onClick={() => handleActivate(p.id)} disabled={activateMutation.isPending}>Activate</button>}
@@ -238,16 +238,16 @@ function Procedures({ user }: { user: User }) {
   </>;
 }
 
-function ProcedureDetail({ user }: { user: User }) {
+export function ProcedureDetail({ user }: { user: User }) {
   const { id = '' } = useParams();
   const query = useQuery({ queryKey: ['procedure', id], queryFn: () => getProcedure(id) });
   const client = useQueryClient();
-  if (query.isLoading) return <p className="muted">Loading procedure\u2026</p>;
+  if (query.isLoading) return <p className="muted">Loading procedure…</p>;
   if (query.isError || !query.data) return <ErrorState error={query.error} />;
   const p = query.data;
   const canEdit = managementRoles.includes(user.role);
   return <>
-    <Link to="/procedures">\u2190 Procedures</Link>
+    <Link to="/procedures">← Procedures</Link>
     <section className="card">
       <p className="eyebrow">PROCEDURE DETAIL</p>
       <h1>{p.code} - {p.name}</h1>
@@ -263,12 +263,12 @@ function ProcedureDetail({ user }: { user: User }) {
   </>;
 }
 
-function ClinicSettings() {
+export function ClinicSettings() {
   const query = useQuery({ queryKey: ['clinic'], queryFn: getClinic });
   const mutation = useMutation({ mutationFn: updateClinic, onSuccess: () => query.refetch() });
   const [form, setForm] = useState<Pick<Clinic, 'name' | 'timezone'> | null>(null);
   useEffect(() => { if (query.data) setForm({ name: query.data.name, timezone: query.data.timezone }); }, [query.data]);
-  if (query.isLoading || !form) return <p className="muted">Loading clinic settings\u2026</p>;
+  if (query.isLoading || !form) return <p className="muted">Loading clinic settings…</p>;
   return <section className="card">
     <h2>Clinic settings</h2>
     <p className="muted">Changing the timezone changes display context only; stored appointment instants are preserved.</p>
@@ -281,7 +281,7 @@ function ClinicSettings() {
   </section>;
 }
 
-function Rooms() {
+export function Rooms() {
   const client = useQueryClient();
   const query = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
   const [name, setName] = useState('');
@@ -307,7 +307,7 @@ function Rooms() {
             <button className="secondary" onClick={() => setEditingId('')}>Cancel</button>
           </> :
           <>
-            <span><strong>{room.name}</strong> \u00b7 {room.is_active ? 'Active' : 'Inactive'}</span>
+            <span><strong>{room.name}</strong> · {room.is_active ? 'Active' : 'Inactive'}</span>
             <span>
               <button className="secondary" onClick={() => { setEditingId(room.id); setEditingName(room.name); }}>Rename</button>
               <button className="secondary" onClick={() => update.mutate({ id: room.id, input: { is_active: !room.is_active } })}>{room.is_active ? 'Deactivate' : 'Activate'}</button>
@@ -379,11 +379,11 @@ export function StaffOnboarding() {
     <section className="card">
       <h2>Active and inactive staff</h2>
       {staff.isError && <ErrorState error={staff.error} />}
-      {staff.data?.map(person => <article className="list-row" key={person.id}><span><Link to={`/staff/${person.id}`}><strong>{person.full_name}</strong></Link><br />{person.email} \u00b7 {person.role} \u00b7 {person.is_active ? 'Active' : 'Inactive'}</span>{person.is_active && !managementRoles.includes(person.role) && <button className="secondary" onClick={() => deactivate.mutate(person.id)}>Deactivate</button>}</article>)}
+      {staff.data?.map(person => <article className="list-row" key={person.id}><span><Link to={`/staff/${person.id}`}><strong>{person.full_name}</strong></Link><br />{person.email} · {person.role} · {person.is_active ? 'Active' : 'Inactive'}</span>{person.is_active && !managementRoles.includes(person.role) && <button className="secondary" onClick={() => deactivate.mutate(person.id)}>Deactivate</button>}</article>)}
     </section>
     <section className="card">
       <h2>Invitation history</h2>
-      {invitations.data?.map(inv => <article className="list-row" key={inv.id}><span><strong>{inv.full_name}</strong> \u00b7 {inv.role}<br /><span className="muted">{inv.accepted_at ? 'Accepted' : inv.revoked_at ? 'Revoked' : `Expires ${new Date(inv.expires_at).toLocaleString()}`}</span></span>{!inv.accepted_at && !inv.revoked_at && <><button className="secondary" onClick={() => reissue.mutate(inv.id)}>Reissue</button><button className="secondary" onClick={() => revoke.mutate(inv.id)}>Revoke</button></>}</article>)}
+      {invitations.data?.map(inv => <article className="list-row" key={inv.id}><span><strong>{inv.full_name}</strong> · {inv.role}<br /><span className="muted">{inv.accepted_at ? 'Accepted' : inv.revoked_at ? 'Revoked' : `Expires ${new Date(inv.expires_at).toLocaleString()}`}</span></span>{!inv.accepted_at && !inv.revoked_at && <><button className="secondary" onClick={() => reissue.mutate(inv.id)}>Reissue</button><button className="secondary" onClick={() => revoke.mutate(inv.id)}>Revoke</button></>}</article>)}
     </section>
   </>;
 }
