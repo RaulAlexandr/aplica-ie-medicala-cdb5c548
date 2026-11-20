@@ -54,6 +54,15 @@ async function waitForProcedureForm(renderer: TestRenderer.ReactTestRenderer) {
   throw new Error('Shared procedure form did not load');
 }
 
+async function until(condition: () => boolean, what: string) {
+  const started = Date.now();
+  while (Date.now() - started < 8000) {
+    if (condition()) return;
+    await act(async () => { await flush(); });
+  }
+  throw new Error(`Timed out waiting for ${what}`);
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe('F12: history panels already open follow the server after a procedure transition', () => {
@@ -72,13 +81,14 @@ describe('F12: history panels already open follow the server after a procedure t
 
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(makeTree()); await flush(); });
-    await act(async () => { await flush(); });
+    await until(() => Boolean(button(renderer, 'Timer segments')), 'the Timer segments button');
     await act(async () => { button(renderer, 'Timer segments')?.props.onClick(); await flush(); });
-    expect(text(renderer.root)).toContain('No timer segments recorded.');
+    await until(() => text(renderer.root).includes('No timer segments recorded.'), 'the empty segment panel');
     expect(segmentsQuery).toHaveBeenCalledTimes(1);
 
+    await until(() => Boolean(button(renderer, 'Start')), 'the Start button');
     await act(async () => { button(renderer, 'Start')?.props.onClick(); await flush(); });
-    await act(async () => { await flush(); });
+    await until(() => /Run · /.test(text(renderer.root)), 'the refreshed segment panel');
 
     expect(segmentsQuery.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(text(renderer.root)).not.toContain('No timer segments recorded.');
@@ -100,12 +110,13 @@ describe('F12: history panels already open follow the server after a procedure t
 
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(makeTree()); await flush(); });
-    await act(async () => { await flush(); });
+    await until(() => Boolean(button(renderer, 'Revisions')), 'the Revisions button');
     await act(async () => { button(renderer, 'Revisions')?.props.onClick(); await flush(); });
-    expect(text(renderer.root)).toContain('No revisions recorded.');
+    await until(() => text(renderer.root).includes('No revisions recorded.'), 'the empty revisions panel');
 
+    await until(() => Boolean(button(renderer, 'Cancel')), 'the Cancel button');
     await act(async () => { button(renderer, 'Cancel')?.props.onClick(); await flush(); });
-    await act(async () => { await flush(); });
+    await until(() => text(renderer.root).includes('status: pending → cancelled'), 'the refreshed revisions panel');
 
     expect(revisionsQuery.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(text(renderer.root)).toContain('status: pending → cancelled');

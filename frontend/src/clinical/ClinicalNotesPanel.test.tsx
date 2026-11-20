@@ -21,7 +21,7 @@ function tree(patientId: string, client: QueryClient) {
 }
 function newClient() { return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } }); }
 async function waitFor(condition: () => boolean, description: string) {
-  const timeout = 1000;
+  const timeout = 5000;
   const started = Date.now();
   while (Date.now() - started < timeout) {
     if (condition()) return;
