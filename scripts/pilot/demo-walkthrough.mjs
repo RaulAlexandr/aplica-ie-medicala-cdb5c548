@@ -21,7 +21,7 @@ const tag = runId.slice(11, 19).replaceAll('-', '');
 const summary = { task: 'T33-walkthrough', appSha: process.env.DENTACARE_APP_SHA, web, api, browser: null, browserTimezone: BROWSER_TZ,
   clinicTimezone: null, checks: [], artifacts: [], pageErrors: [], consoleErrors: [], classified: { expected: [], unexpected: [] }, errors: [] };
 const check = (name, ok, details = {}) => { summary.checks.push({ name, passed: Boolean(ok), ...details }); if (!ok) throw new Error(`Walkthrough failed: ${name} ${JSON.stringify(details)}`); };
-const SHOTS_MAX = 6;
+const SHOTS_MAX = 8;
 const shot = async (page, name) => {
   if (summary.artifacts.length >= SHOTS_MAX) return;
   const file = path.join(evidenceDir, `demo-${name}.png`); await page.screenshot({ path: file, fullPage: true }); summary.artifacts.push(path.basename(file));
@@ -310,9 +310,83 @@ try {
   check('after adjustment + reversal the balance equals the starting balance (net effect zero, history kept)', JSON.stringify(mgrAfter) === JSON.stringify(mgrBefore), { before: mgrBefore, after: mgrAfter });
   await shot(manager, 'manager-adjustment-reversal');
 
+  // ===================== MANAGER: reactivate a staff member (the scenario creates its own member) =====================
+  const managerApi = await apiSession(creds.manager, 'manager');
+  const member = { email: `demo-asistent-${tag}@example.com`, password: `Fictiv-${tag}-parola-lunga` };
+  const invitation = await managerApi.call('POST', '/staff/invitations', { email: member.email, full_name: `Asistent Demo ${tag}`, role: 'assistant' });
+  check('setup: manager invites a fictional assistant', invitation.status === 201, { status: invitation.status });
+  const inviteToken = new URL(invitation.body.invitation_url, web).searchParams.get('token');
+  const anonymous = await request.newContext();
+  const accepted = await anonymous.post(`${api}/staff/invitations/accept?token=${encodeURIComponent(inviteToken)}`, { data: { password: member.password } });
+  check('setup: the assistant accepts the invitation', accepted.status() === 200, { status: accepted.status() });
+  const memberId = (await accepted.json()).id;
+  await manager.goto(`${web}/staff`, { waitUntil: 'domcontentloaded' });
+  const memberRow = manager.locator('article.list-row', { hasText: member.email });
+  await memberRow.waitFor();
+  await memberRow.getByRole('button', { name: 'Deactivate' }).click();
+  await manager.getByText('Staff member deactivated.').waitFor();
+  check('manager deactivates the member from the staff list', (await memberRow.innerText()).includes('Inactive'));
+  const refusedContext = await browser.newContext({ viewport: { width: 1360, height: 950 }, timezoneId: BROWSER_TZ, locale: 'ro-RO' });
+  contexts.push(refusedContext);
+  const refusedPage = await refusedContext.newPage();
+  refusedPage.on('pageerror', error => summary.pageErrors.push({ user: 'member-refused', message: String(error.message).slice(0, 300) }));
+  refusedPage.on('console', msg => { if (msg.type() === 'error') summary.consoleErrors.push({ user: 'member-refused', text: msg.text().slice(0, 200), sourcePath: idPath(msg.location()?.url ?? '') }); });
+  refusedPage.on('response', response => { if (response.status() >= 400) summary.consoleErrors.push({ user: 'member-refused', httpStatus: response.status(), method: response.request().method(), path: idPath(response.url()) }); });
+  await refusedPage.goto(web, { waitUntil: 'domcontentloaded' });
+  await refusedPage.getByLabel('Email').fill(member.email);
+  await refusedPage.getByLabel('Password').fill(member.password);
+  await refusedPage.getByRole('button', { name: 'Sign in' }).click();
+  await refusedPage.getByRole('alert').waitFor();
+  check('a deactivated member cannot sign in (clear refusal, no menu)', (await refusedPage.getByRole('alert').innerText()).includes('Invalid email or password') && (await refusedPage.getByRole('link', { name: 'Patients', exact: true }).count()) === 0);
+  await manager.goto(`${web}/staff/${memberId}`, { waitUntil: 'domcontentloaded' });
+  await manager.getByRole('heading', { level: 1, name: `Asistent Demo ${tag}` }).waitFor();
+  await manager.getByRole('button', { name: 'Reactivează' }).click();
+  const confirmBox = manager.getByRole('group', { name: 'Confirmare reactivare' });
+  check('reactivation asks for confirmation first', await confirmBox.isVisible());
+  const reactivated = respond(manager, 'POST', p => p.endsWith(`/staff/${memberId}/reactivate`));
+  await confirmBox.getByRole('button', { name: 'Confirmă reactivarea' }).click();
+  check('manager reactivates the member (200)', (await reactivated).status() === 200);
+  await manager.getByRole('status').filter({ hasText: 'a fost reactivat' }).waitFor();
+  const memberPage = await login(member, 'member');
+  check('after reactivation the member signs in again (new login)', (await memberPage.getByRole('link', { name: 'Patients', exact: true }).count()) === 1);
+  await shot(manager, 'manager-staff-reactivated');
+
+  // ===================== MANAGER + MEDIC: "tooth required" service =====================
+  await manager.goto(`${web}/procedures`, { waitUntil: 'domcontentloaded' });
+  await manager.getByRole('button', { name: 'New procedure', exact: true }).click();
+  const catalogForm = manager.locator('form', { hasText: 'Localizări permise' });
+  check('catalog form offers allowed locations, default "any"', (await catalogForm.getByLabel('Localizări permise').inputValue()) === 'any');
+  const toothCode = `GHID-EXT-${tag}`;
+  await catalogForm.getByLabel('Code').fill(toothCode);
+  await catalogForm.getByLabel('Name').fill(`Extracție ghid ${tag}`);
+  await catalogForm.getByLabel('Base price').fill('300.00');
+  await catalogForm.getByLabel('Localizări permise').selectOption('tooth');
+  const catalogCreated = respond(manager, 'POST', p => p === '/api/procedures');
+  await catalogForm.getByRole('button', { name: 'Save procedure' }).click();
+  const toothService = await (await catalogCreated).json();
+  check('manager creates a service that requires a tooth', toothService.allowed_location === 'tooth' && toothService.code === toothCode, { allowed: toothService.allowed_location });
+  await manager.locator('article.list-row', { hasText: toothCode }).getByText('dinte obligatoriu').waitFor();
+  await doctor.goto(`${web}/appointments/${visitElena.id}/visit`, { waitUntil: 'domcontentloaded' });
+  const visitForm = doctor.locator('form.t07-procedure-form');
+  await visitForm.waitFor();
+  let procedurePosts = 0;
+  doctor.on('request', req => { if (req.method() === 'POST' && new URL(req.url()).pathname === '/api/performed-procedures') procedurePosts += 1; });
+  await visitForm.getByLabel('Procedure from active catalog').selectOption(toothService.id);
+  const save = visitForm.getByRole('button', { name: 'Save procedure' });
+  check('the doctor cannot save the service without a tooth (button disabled, rule shown, nothing sent)',
+    (await save.isDisabled()) && (await visitForm.locator('[role="note"][aria-label="Location rule"]').innerText()).includes('cere un dinte FDI') && procedurePosts === 0);
+  const refusal = await doctorApi.call('POST', '/performed-procedures', { appointment_id: visitElena.id, procedure_catalog_id: toothService.id });
+  check('the server also refuses it without a tooth (422)', refusal.status === 422, { status: refusal.status });
+  await visitForm.getByLabel('Procedure tooth').selectOption('16');
+  const savedWithTooth = respond(doctor, 'POST', p => p === '/api/performed-procedures');
+  await save.click();
+  const savedResponse = await savedWithTooth;
+  check('with tooth 16 the same service saves', savedResponse.status() === 201 && (await savedResponse.json()).tooth_fdi === '16');
+  await shot(doctor, 'doctor-tooth-required');
+
   // ===================== Console classification =====================
   // Expected: exactly the deliberate 404 for the unknown patient id (browser logs it as a resource error).
-  const isExpected = e => e.user === 'doctor' && ((e.httpStatus === 404 && e.path === '/api/patients/:id') || (/404/.test(e.text ?? '') && e.sourcePath === '/api/patients/:id'));
+  const isExpected = e => (e.user === 'member-refused' && ((e.httpStatus === 401 && e.path === '/api/auth/login') || (/401/.test(e.text ?? '') && e.sourcePath === '/api/auth/login'))) || e.user === 'doctor' && ((e.httpStatus === 404 && e.path === '/api/patients/:id') || (/404/.test(e.text ?? '') && e.sourcePath === '/api/patients/:id'));
   summary.classified.expected = summary.consoleErrors.filter(isExpected);
   summary.classified.unexpected = summary.consoleErrors.filter(e => !isExpected(e));
   check('no unexpected console errors or failed requests during the walkthrough', summary.classified.unexpected.length === 0 && summary.pageErrors.length === 0, { unexpected: summary.classified.unexpected.slice(0, 5), pageErrors: summary.pageErrors.length });
