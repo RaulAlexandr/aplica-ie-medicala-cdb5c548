@@ -387,7 +387,7 @@ export function TreatmentPlansPanel({ patientId, timezone }: { patientId: string
   const activeCatalog = (catalog.data ?? []).filter(row => row.is_active);
   return <section className="card clinical-record-section tp-panel" aria-label="Planuri de tratament">
     <div className="detail-heading">
-      <div><p className="eyebrow">T08 · PLANIFICARE (NU EXECUȚIE)</p><h2>Planuri de tratament</h2></div>
+      <div><p className="eyebrow">PLANIFICARE (NU EXECUȚIE)</p><h2>Planuri de tratament</h2></div>
       {mode === 'list' && <button onClick={() => setMode('new')} disabled={catalog.isLoading}>Plan nou</button>}
     </div>
     {catalog.isError && <p className="error" role="alert">Catalogul nu a putut fi încărcat: {apiErrorMessage(catalog.error)}</p>}

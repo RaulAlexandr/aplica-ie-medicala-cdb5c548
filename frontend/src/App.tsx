@@ -11,6 +11,7 @@ import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { acceptInvitation, activateProcedure, apiErrorMessage, Clinic, countPatients, countProcedures, createAppointment, createInvitation, createPatient, createRoom, deactivateProcedure, deactivateStaff, Doctor, getClinic, getPatient, getProcedure, Invitation, listAppointments, listDoctors, listInvitations, listPatients, listProcedures, listRooms, listStaff, login, logout, me, Patient, ProcedureCatalog, register, reissueInvitation, revokeInvitation, Room, Staff, updateClinic, updatePatient, updateRoom, User } from './api/client';
+import { clinicHour, greetingForHour } from './timezone';
 
 const managementRoles = ['clinic_manager', 'administrator'];
 const staffRoles = ['clinic_manager', 'doctor', 'assistant', 'reception', 'administrator'];
@@ -407,15 +408,18 @@ function InvitationAccept() {
   </main>;
 }
 
-function Home({ user }: { user: User }) {
+export function Home({ user }: { user: User }) {
   const count = useQuery({ queryKey: ['patient-count'], queryFn: countPatients });
   const appointments = useQuery({ queryKey: ['appointments'], queryFn: () => listAppointments() });
+  const clinic = useQuery({ queryKey: ['clinic'], queryFn: getClinic });
+  // The greeting follows the clinic wall clock; until the clinic is known, fall back to a neutral greeting.
+  const greeting = clinic.data ? greetingForHour(clinicHour(clinic.data.timezone)) : 'Welcome';
   return <>
-    <header><div><p className="eyebrow">CLINIC OVERVIEW</p><h1>Good morning, {user.full_name.split(' ')[0]}</h1></div></header>
+    <header><div><p className="eyebrow">CLINIC OVERVIEW</p><h1>{greeting}, {user.full_name.split(' ')[0]}</h1></div></header>
     <section className="stats">
       <div className="card"><span>Patients</span><strong>{count.isLoading ? '\u2014' : count.data}</strong></div>
       <div className="card"><span>Appointments</span><strong>{appointments.isLoading ? '\u2014' : appointments.data?.length}</strong></div>
-      <div className="card"><span>Clinic</span><strong className="small">{user.clinic_id.slice(0, 8)}</strong></div>
+      <div className="card"><span>Clinic</span><strong className="small">{clinic.data?.name ?? '\u2014'}</strong></div>
     </section>
     {managementRoles.includes(user.role) && <section className="card notice">
       <h2>Setup actions</h2>

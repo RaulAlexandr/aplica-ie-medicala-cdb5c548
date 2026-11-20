@@ -126,7 +126,7 @@ export function PatientAccountPanel({ patientId }: { patientId: string }) {
   const canReverse = (entry: AccountEntry) => Boolean(data) && entry.kind !== 'reversal' && !entry.reversed_by
     && (['payment', 'refund'].includes(entry.kind) ? data!.permissions.can_record_cash : data!.permissions.can_adjust);
   return <section className="card clinical-record-section finance-panel" aria-label="Cont pacient">
-    <div className="detail-heading"><div><p className="eyebrow">T13 · EVIDENȚĂ INTERNĂ — NU ESTE FACTURĂ SAU BON FISCAL</p><h2>Cont pacient</h2></div></div>
+    <div className="detail-heading"><div><p className="eyebrow">EVIDENȚĂ INTERNĂ — NU ESTE FACTURĂ SAU BON FISCAL</p><h2>Cont pacient</h2></div></div>
     {account.isLoading && <p className="muted">Se încarcă contul…</p>}
     {account.isError && <p className="error" role="alert">{apiErrorMessage(account.error)} <button className="secondary" onClick={() => void account.refetch()}>Reîncearcă</button></p>}
     {data && <>

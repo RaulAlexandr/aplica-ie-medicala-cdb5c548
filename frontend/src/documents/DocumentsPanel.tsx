@@ -144,7 +144,7 @@ export function DocumentsPanel({ patientId, timezone }: { patientId: string; tim
   const sideLabel = limits.data ? `${limits.data.max_image_side} px` : '';
 
   return <section className="card clinical-record-section doc-panel" aria-label="Documente și imagini">
-    <div className="detail-heading"><div><p className="eyebrow">T11 · ACCES PROTEJAT</p><h2>Documente și imagini</h2></div></div>
+    <div className="detail-heading"><div><p className="eyebrow">ACCES PROTEJAT</p><h2>Documente și imagini</h2></div></div>
     <p className="muted doc-rules" data-testid="document-rules">
       Formate acceptate: JPEG și PNG (fotografii, radiografii) și PDF (documente). Maximum {maxLabel} per fișier{sideLabel ? `; imagini de cel mult ${sideLabel} pe latură` : ''}.
       DICOM, SVG, HTML și PDF-uri cu JavaScript sau fișiere atașate sunt respinse. Nu se face scanare antivirus.

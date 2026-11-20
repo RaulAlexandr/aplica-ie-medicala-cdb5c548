@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { User } from '../api/client';
 import { apiErrorMessage } from '../api/client';
 import {
@@ -35,6 +35,7 @@ export function ProcedureCard({ procedure, user, timezone, isVisitClosed, onChan
   isVisitClosed: boolean;
   onChanged: () => Promise<void>;
 }) {
+  const queryClient = useQueryClient();
   const [showSegments, setShowSegments] = useState(false);
   const [showRevisions, setShowRevisions] = useState(false);
   const segments = useQuery({ queryKey: ['procedure-segments', procedure.id], queryFn: () => getProcedureSegments(procedure.id), enabled: showSegments });
@@ -47,7 +48,14 @@ export function ProcedureCard({ procedure, user, timezone, isVisitClosed, onChan
       if (next === 'complete') return completePerformedProcedure(procedure.id);
       return cancelPerformedProcedure(procedure.id);
     },
-    onSuccess: onChanged,
+    onSuccess: async () => {
+      // Open history panels must follow the server after every successful transition.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['procedure-segments', procedure.id] }),
+        queryClient.invalidateQueries({ queryKey: ['procedure-revisions', procedure.id] }),
+        onChanged(),
+      ]);
+    },
   });
   const canManage = clinicalRoles.has(user.role) && (
     procedure.executed_by_id === user.id || managementRoles.has(user.role)
