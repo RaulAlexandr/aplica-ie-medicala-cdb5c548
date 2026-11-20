@@ -282,3 +282,53 @@ async def test_two_simultaneous_posts_with_one_client_request_id_persist_one_mov
         assert await conn.fetchval("SELECT count(*) FROM patient_financial_entries WHERE client_request_id = $1", key) == 1
     finally:
         await conn.close()
+
+
+async def test_losing_the_insert_race_with_another_reason_is_a_conflict_and_persists_the_winner_only(pg_client, monkeypatch):
+    """Same controlled point as above, but the late request carries another reason: the unique constraint
+    still catches it, and the recovery must answer 409 (a different movement), never replay or a 500."""
+    from app.finance import router as finance_router
+
+    client, url, name = pg_client
+    auth, patient = await _setup(client)
+    first_reached, second_reached, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def gate() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_reached.set()
+            await asyncio.wait_for(release.wait(), TIMEOUT)
+        elif calls == 2:
+            second_reached.set()
+
+    monkeypatch.setattr(finance_router, "_after_idempotency_check", gate)
+    key = str(uuid4())
+
+    def post(reason: str):
+        return client.post(f"/api/finance/patients/{patient}/entries", headers=auth, json={
+            "kind": "payment", "amount": "55.50", "method": "card", "reason": reason, "client_request_id": key})
+
+    tasks: list[asyncio.Task] = []
+    try:
+        late = asyncio.create_task(post("motivul întârziatului"))
+        tasks.append(late)
+        await asyncio.wait_for(first_reached.wait(), TIMEOUT)
+        winner = asyncio.create_task(post("motivul câștigătorului"))
+        tasks.append(winner)
+        await asyncio.wait_for(second_reached.wait(), TIMEOUT)
+        winner_response = await asyncio.wait_for(winner, TIMEOUT)
+        release.set()
+        late_response = await asyncio.wait_for(late, TIMEOUT)
+    finally:
+        await _settle(tasks, release)
+
+    assert winner_response.status_code == 201, winner_response.text
+    assert late_response.status_code == 409, late_response.text
+    conn = await asyncpg.connect(_dsn(url, name))
+    try:
+        rows = await conn.fetch("SELECT reason FROM patient_financial_entries WHERE client_request_id = $1", key)
+        assert [row["reason"] for row in rows] == ["motivul câștigătorului"]
+    finally:
+        await conn.close()

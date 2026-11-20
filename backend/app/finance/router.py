@@ -173,10 +173,13 @@ async def _by_request(db: AsyncSession, clinic_id: UUID, client_request_id: str)
 
 
 def _same_movement(entry: PatientFinancialEntry, *, patient_id: UUID, kind: str, amount: Decimal,
-                   method: str | None, appointment_id: UUID | None, reverses_entry_id: UUID | None) -> bool:
+                   method: str | None, appointment_id: UUID | None, reverses_entry_id: UUID | None,
+                   reason: str | None) -> bool:
+    # `reason` is the normalised text (stripped, blank -> None) on both sides, so a retry that only differs
+    # in surrounding whitespace is still the same request, while another reason is a different movement (409).
     return (entry.patient_id == patient_id and entry.kind == kind and Decimal(entry.amount) == amount
             and entry.method == method and entry.appointment_id == appointment_id
-            and entry.reverses_entry_id == reverses_entry_id)
+            and entry.reverses_entry_id == reverses_entry_id and entry.reason == reason)
 
 
 async def _entry_out(db: AsyncSession, entry: PatientFinancialEntry) -> dict:
@@ -200,36 +203,39 @@ def _replay_or_conflict(existing: PatientFinancialEntry, response: Response, **m
 @router.post("/patients/{patient_id}/entries", status_code=status.HTTP_201_CREATED)
 async def create_entry(patient_id: UUID, payload: EntryCreate, response: Response,
                        db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*STAFF_ROLES))) -> dict:
+    # Plain values taken before anything can roll the session back: rollback expires `user`, and reading an
+    # expired attribute afterwards would try a lazy load outside the async greenlet (MissingGreenlet).
+    clinic_id, actor_id, role = user.clinic_id, user.id, user.role
     allowed = CASH_ROLES if payload.kind in CASH_KINDS else ADJUST_ROLES
-    if user.role not in allowed:
+    if role not in allowed:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role cannot record this kind of movement")
-    await _patient(db, user.clinic_id, patient_id)
+    await _patient(db, clinic_id, patient_id)
     request_id = str(payload.client_request_id)
     movement = {"patient_id": patient_id, "kind": payload.kind, "amount": payload.amount, "method": payload.method,
-                "appointment_id": payload.appointment_id, "reverses_entry_id": None}
-    existing = await _by_request(db, user.clinic_id, request_id)
+                "appointment_id": payload.appointment_id, "reverses_entry_id": None, "reason": payload.reason}
+    existing = await _by_request(db, clinic_id, request_id)
     if existing:
         _replay_or_conflict(existing, response, **movement)
         return await _entry_out(db, existing)
     if payload.appointment_id is not None:
         appointment = await db.scalar(select(Appointment).where(
-            Appointment.id == payload.appointment_id, Appointment.clinic_id == user.clinic_id))
+            Appointment.id == payload.appointment_id, Appointment.clinic_id == clinic_id))
         if not appointment or appointment.patient_id != patient_id:
             raise HTTPException(422, "The visit does not belong to this patient")
     await _after_idempotency_check()
     entry = PatientFinancialEntry(
-        clinic_id=user.clinic_id, patient_id=patient_id, appointment_id=payload.appointment_id, kind=payload.kind,
+        clinic_id=clinic_id, patient_id=patient_id, appointment_id=payload.appointment_id, kind=payload.kind,
         amount=payload.amount, currency=CURRENCY, method=payload.method, reason=payload.reason,
-        client_request_id=request_id, created_by_id=user.id, created_at=utcnow())
+        client_request_id=request_id, created_by_id=actor_id, created_at=utcnow())
     db.add(entry)
     try:
         await db.flush()
-        db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="financial_entry",
+        db.add(AuditEvent(clinic_id=clinic_id, actor_id=actor_id, entity_type="financial_entry",
                           entity_id=entry.id, action=payload.kind[:40]))
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        existing = await _by_request(db, user.clinic_id, request_id)
+        existing = await _by_request(db, clinic_id, request_id)
         if not existing:
             raise
         _replay_or_conflict(existing, response, **movement)
@@ -240,38 +246,39 @@ async def create_entry(patient_id: UUID, payload: EntryCreate, response: Respons
 @router.post("/entries/{entry_id}/reverse", status_code=status.HTTP_201_CREATED)
 async def reverse_entry(entry_id: UUID, payload: ReverseRequest, response: Response,
                         db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*STAFF_ROLES))) -> dict:
-    if user.role not in CASH_ROLES:
+    clinic_id, actor_id, role = user.clinic_id, user.id, user.role  # plain values: see create_entry
+    if role not in CASH_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Your role cannot reverse movements")
     request_id = str(payload.client_request_id)
-    target = await _lock_entry(db, user.clinic_id, entry_id)
+    target = await _lock_entry(db, clinic_id, entry_id)
     if not target:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Movement not found")
     movement = {"patient_id": target.patient_id, "kind": "reversal", "amount": Decimal(target.amount), "method": None,
-                "appointment_id": target.appointment_id, "reverses_entry_id": target.id}
-    existing = await _by_request(db, user.clinic_id, request_id)
+                "appointment_id": target.appointment_id, "reverses_entry_id": target.id, "reason": payload.reason}
+    existing = await _by_request(db, clinic_id, request_id)
     if existing:
         _replay_or_conflict(existing, response, **movement)
         return await _entry_out(db, existing)
     if target.kind == "reversal":
         raise HTTPException(status.HTTP_409_CONFLICT, "A reversal cannot be reversed")
-    if target.kind in ADJUST_KINDS and user.role not in ADJUST_ROLES:
+    if target.kind in ADJUST_KINDS and role not in ADJUST_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only a manager can reverse an adjustment")
     already = await db.scalar(select(PatientFinancialEntry.id).where(PatientFinancialEntry.reverses_entry_id == target.id))
     if already:
         raise HTTPException(status.HTTP_409_CONFLICT, "This movement has already been reversed")
     reversal = PatientFinancialEntry(
-        clinic_id=user.clinic_id, patient_id=target.patient_id, appointment_id=target.appointment_id, kind="reversal",
+        clinic_id=clinic_id, patient_id=target.patient_id, appointment_id=target.appointment_id, kind="reversal",
         amount=target.amount, currency=target.currency, method=None, reason=payload.reason,
-        reverses_entry_id=target.id, client_request_id=request_id, created_by_id=user.id, created_at=utcnow())
+        reverses_entry_id=target.id, client_request_id=request_id, created_by_id=actor_id, created_at=utcnow())
     db.add(reversal)
     try:
         await db.flush()
-        db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="financial_entry",
+        db.add(AuditEvent(clinic_id=clinic_id, actor_id=actor_id, entity_type="financial_entry",
                           entity_id=reversal.id, action="reversal"))
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        existing = await _by_request(db, user.clinic_id, request_id)
+        existing = await _by_request(db, clinic_id, request_id)
         if existing:
             _replay_or_conflict(existing, response, **movement)
             return await _entry_out(db, existing)
