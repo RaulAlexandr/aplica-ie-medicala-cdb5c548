@@ -270,11 +270,14 @@ class ProcedureCatalog(Base):
     default_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
     base_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="RON")
+    # T03: any | no_tooth | tooth | tooth_surface; "any" keeps the pre-T03 behaviour.
+    allowed_location: Mapped[str] = mapped_column(String(20), nullable=False, default="any", server_default="any")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow, nullable=False)
     __table_args__ = (
         UniqueConstraint("clinic_id", "code_lower", name="uq_procedure_catalog_clinic_code"),
+        CheckConstraint("allowed_location IN ('any', 'no_tooth', 'tooth', 'tooth_surface')", name="ck_procedure_catalog_allowed_location"),
         Index("ix_procedure_catalog_clinic_active", "clinic_id", "is_active"),
         Index("ix_procedure_catalog_clinic_name", "clinic_id", "name"),
     )
