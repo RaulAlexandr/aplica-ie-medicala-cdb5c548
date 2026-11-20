@@ -2,8 +2,8 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import * as client from './api/client';
-import { StaffDetail } from './App';
+import * as client from '../api/client';
+import { StaffDetail } from './StaffDetail';
 
 const member = (overrides: Partial<client.StaffDetail> = {}): client.StaffDetail => ({
   id: 'staff-1', clinic_id: 'clinic-1', full_name: 'Dr. Fictiv', email: 'fictiv@example.com', role: 'doctor',

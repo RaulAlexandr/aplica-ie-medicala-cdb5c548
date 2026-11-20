@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.service import require_roles
 from app.database import AuditEvent, ProcedureCatalog, User, get_db, utcnow
+from app.procedures.locations import ANY, AllowedLocation
 
 router = APIRouter(prefix="/procedures", tags=["procedures"])
 MANAGERS = ("clinic_manager", "administrator")
@@ -92,6 +93,7 @@ class ProcedureCatalogCreate(BaseModel):
     default_duration_minutes: int = Field(ge=MIN_DURATION_MINUTES, le=MAX_DURATION_MINUTES)
     base_price: Decimal = Field(ge=MIN_PRICE, le=MAX_PRICE)
     currency: str = Field(default=RON, min_length=1, max_length=3)
+    allowed_location: AllowedLocation = ANY
     is_active: bool = Field(default=True)
 
     @field_validator("code", mode="before")
@@ -130,6 +132,7 @@ class ProcedureCatalogUpdate(BaseModel):
     default_duration_minutes: int | None = Field(default=None, ge=MIN_DURATION_MINUTES, le=MAX_DURATION_MINUTES)
     base_price: Decimal | None = Field(default=None, ge=MIN_PRICE, le=MAX_PRICE)
     currency: str | None = Field(default=None, min_length=1, max_length=3)
+    allowed_location: AllowedLocation | None = None
 
     @field_validator("code", mode="before")
     @classmethod
@@ -176,6 +179,7 @@ class ProcedureCatalogResponse(BaseModel):
     default_duration_minutes: int
     base_price: str
     currency: str
+    allowed_location: str
     is_active: bool
     created_at: str
     updated_at: str
@@ -278,6 +282,7 @@ async def create_procedure(
         default_duration_minutes=payload.default_duration_minutes,
         base_price=payload.base_price,
         currency=payload.currency,
+        allowed_location=payload.allowed_location,
         is_active=payload.is_active,
     )
     db.add(procedure)
@@ -322,6 +327,9 @@ async def update_procedure(
         procedure.base_price = payload.base_price
     if payload.currency is not None:
         procedure.currency = payload.currency
+    if payload.allowed_location is not None:
+        # Applies to future records only; stored procedures and plan items keep their location.
+        procedure.allowed_location = payload.allowed_location
     procedure.updated_at = utcnow()
     try:
         await db.flush()
