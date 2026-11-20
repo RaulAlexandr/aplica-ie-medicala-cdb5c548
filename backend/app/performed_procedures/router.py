@@ -21,6 +21,7 @@ from app.database import (
     get_db,
     utcnow,
 )
+from app.procedures.locations import location_violation
 
 router = APIRouter(prefix="/performed-procedures", tags=["performed_procedures"])
 
@@ -533,6 +534,9 @@ async def create_performed_procedure(
         raise HTTPException(422, "Procedure catalog not found or access denied")
     if not catalog.is_active:
         raise HTTPException(409, "Cannot create a performed procedure from an inactive catalog service")
+    violation = location_violation(catalog.allowed_location, catalog.code, payload.tooth_fdi, payload.tooth_surface)
+    if violation:
+        raise HTTPException(422, violation)
 
     # Check if appointment patient matches
     patient = await db.scalar(
