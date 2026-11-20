@@ -3,6 +3,7 @@ T04 procedures, payments/advances/refunds/adjustments, single reversal, idempote
 roles, clinic isolation, currency/amount validation and the clinic-zone daily report."""
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 import pytest
@@ -352,3 +353,123 @@ async def test_schema_constraints_reject_invalid_movements_on_sqlite(env):
     with pytest.raises(IntegrityError):
         await insert(kind="reversal", method=None, reason="a doua", reverses_entry_id=payment_id)
     assert await entry_count(sessions) == 2
+
+
+# --- Idempotent replay after losing the insert race, and `reason` in the idempotent comparison -------------------------
+
+
+async def _competing_entry(sessions, ctx, patient_id: str, key: str, **overrides) -> PatientFinancialEntry:
+    """The row a concurrent request would have committed between this request's pre-check and its insert."""
+    fields = {
+        "id": uuid4(), "clinic_id": UUID(ctx["me"]["clinic_id"]), "patient_id": UUID(patient_id), "kind": "payment",
+        "amount": Decimal("55.50"), "currency": "RON", "method": "card", "reason": None, "client_request_id": key,
+        "created_by_id": UUID(ctx["me"]["id"]), "created_at": datetime.now(UTC)}
+    fields.update(overrides)
+    entry = PatientFinancialEntry(**fields)
+    async with sessions() as session:
+        session.add(entry)
+        await session.commit()
+    return entry
+
+
+def _lose_the_race_after_precheck(monkeypatch, sessions, ctx, patient_id: str, key: str, **overrides):
+    """Same controlled point as the PostgreSQL race test: the competing insert commits after the pre-check."""
+    from app.finance import router as finance_router
+
+    committed: list[PatientFinancialEntry] = []
+
+    async def gate() -> None:
+        committed.append(await _competing_entry(sessions, ctx, patient_id, key, **overrides))
+
+    monkeypatch.setattr(finance_router, "_after_idempotency_check", gate)
+    return committed
+
+
+async def test_losing_the_insert_race_replays_the_winner_instead_of_failing(env, monkeypatch):
+    client, sessions = env
+    ctx = await clinic(client, sessions, "r1")
+    pa = await patient(client, ctx)
+    key = str(uuid4())
+    committed = _lose_the_race_after_precheck(monkeypatch, sessions, ctx, pa, key)
+    response = await post_entry(client, ctx["reception"], pa, kind="payment", amount="55.50", method="card", client_request_id=key)
+    assert response.status_code == 200, response.text  # replay of the winner, not 201 and not a 500
+    assert response.json()["id"] == str(committed[0].id)
+    assert await entry_count(sessions) == 1
+
+
+async def test_losing_the_insert_race_with_another_reason_is_a_conflict(env, monkeypatch):
+    client, sessions = env
+    ctx = await clinic(client, sessions, "r2")
+    pa = await patient(client, ctx)
+    key = str(uuid4())
+    _lose_the_race_after_precheck(monkeypatch, sessions, ctx, pa, key, reason="Motivul câștigătorului")
+    response = await post_entry(client, ctx["reception"], pa, kind="payment", amount="55.50", method="card",
+                                reason="Alt motiv", client_request_id=key)
+    assert response.status_code == 409, response.text
+    assert await entry_count(sessions) == 1
+
+
+async def test_same_key_with_another_reason_is_a_conflict_but_normalised_reason_replays(env):
+    client, sessions = env
+    ctx = await clinic(client, sessions, "r3")
+    pa = await patient(client, ctx)
+    key = str(uuid4())
+    base = {"kind": "refund", "amount": "30.00", "method": "cash", "client_request_id": key}
+    first = await post_entry(client, ctx["reception"], pa, reason="Rambursare serviciu anulat", **base)
+    assert first.status_code == 201, first.text
+    same_after_trim = await post_entry(client, ctx["reception"], pa, reason="  Rambursare serviciu anulat  ", **base)
+    assert same_after_trim.status_code == 200 and same_after_trim.json()["id"] == first.json()["id"]
+    other = await post_entry(client, ctx["reception"], pa, reason="Alt motiv", **base)
+    assert other.status_code == 409, other.text
+    adj_key = str(uuid4())
+    adj = await post_entry(client, ctx["manager"], pa, kind="adjustment_credit", amount="10.00", reason="Gest", client_request_id=adj_key)
+    adj_other = await post_entry(client, ctx["manager"], pa, kind="adjustment_credit", amount="10.00", reason="Alt gest", client_request_id=adj_key)
+    assert adj.status_code == 201 and adj_other.status_code == 409
+    pay_key = str(uuid4())
+    with_reason = await post_entry(client, ctx["reception"], pa, kind="payment", amount="5.00", method="cash", reason="cu motiv", client_request_id=pay_key)
+    without_reason = await post_entry(client, ctx["reception"], pa, kind="payment", amount="5.00", method="cash", client_request_id=pay_key)
+    assert with_reason.status_code == 201 and without_reason.status_code == 409
+    assert await entry_count(sessions) == 3
+
+
+async def test_reversal_replay_compares_the_reason_and_survives_losing_the_race(env):
+    client, sessions = env
+    ctx = await clinic(client, sessions, "r4")
+    pa = await patient(client, ctx)
+    paid = (await post_entry(client, ctx["reception"], pa, kind="payment", amount="40.00", method="cash")).json()
+    key = str(uuid4())
+    url = f"/api/finance/entries/{paid['id']}/reverse"
+    first = await client.post(url, headers=ctx["reception"], json={"reason": "greșit", "client_request_id": key})
+    assert first.status_code == 201, first.text
+    replay = await client.post(url, headers=ctx["reception"], json={"reason": "  greșit ", "client_request_id": key})
+    assert replay.status_code == 200 and replay.json()["id"] == first.json()["id"]
+    other = await client.post(url, headers=ctx["reception"], json={"reason": "alt motiv", "client_request_id": key})
+    assert other.status_code == 409, other.text
+
+    # Lose the race: the competing reversal commits after every pre-check (including "already reversed"),
+    # right before this request's flush, so only the unique client_request_id constraint can catch it.
+    second_paid = (await post_entry(client, ctx["reception"], pa, kind="payment", amount="15.00", method="card")).json()
+    race_key = str(uuid4())
+    armed = {"on": False}
+
+    async def override():
+        async with sessions() as session:
+            original_flush = session.flush
+
+            async def flush_after_competitor(*args, **kwargs):
+                if armed["on"]:
+                    armed["on"] = False
+                    await _competing_entry(sessions, ctx, pa, race_key, kind="reversal", amount=Decimal("15.00"), method=None,
+                                           reason="motivul câștigătorului", reverses_entry_id=UUID(second_paid["id"]))
+                return await original_flush(*args, **kwargs)
+
+            session.flush = flush_after_competitor
+            yield session
+
+    app.dependency_overrides[get_db] = override  # the fixture clears overrides at teardown
+    armed["on"] = True
+    lost = await client.post(f"/api/finance/entries/{second_paid['id']}/reverse", headers=ctx["reception"],
+                             json={"reason": "motivul câștigătorului", "client_request_id": race_key})
+    assert lost.status_code == 200, lost.text
+    assert lost.json()["kind"] == "reversal" and lost.json()["reverses_entry_id"] == second_paid["id"]
+    assert not armed["on"]
