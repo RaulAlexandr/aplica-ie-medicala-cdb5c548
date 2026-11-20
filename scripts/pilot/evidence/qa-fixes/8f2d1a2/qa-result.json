@@ -1,10 +1,10 @@
 {
- "sha": "37ee575",
+ "sha": "8f2d1a2",
  "checks": [
   {
-   "n": "C1 greeting follows clinic hour 17",
+   "n": "C1 greeting follows clinic hour 18",
    "ok": true,
-   "d": "CLINIC OVERVIEW / Good afternoon, Radu / Patients / 5 / Appointments / 5 / Clini"
+   "d": "CLINIC OVERVIEW / Good evening, Radu / Patients / 5 / Appointments / 5 / Clinic "
   },
   {
    "n": "C2 clinic name shown, no id fragment",
@@ -64,12 +64,12 @@
   {
    "n": "F11 row shows Inactive/Activate after Deactivate without reload",
    "ok": true,
-   "d": "QA-FIX53438 - QA fix servicii / No category · 10 min · 11.00 RON · Inactive · localizare liberă / Edit / Activate"
+   "d": "QA-FIX67270 - QA fix servicii / No category · 10 min · 11.00 RON · Inactive · localizare liberă / Edit / Activate"
   },
   {
    "n": "F11 row Active again after Activate",
    "ok": true,
-   "d": "QA-FIX53438 - QA fix servicii / No category · 10 min · 11.00 RON · Active · localizare liberă / Edit / Deactivate"
+   "d": "QA-FIX67270 - QA fix servicii / No category · 10 min · 11.00 RON · Active · localizare liberă / Edit / Deactivate"
   },
   {
    "n": "F05 base_price number → 422",
