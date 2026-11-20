@@ -1,6 +1,7 @@
 """PostgreSQL migration preservation and concurrent publication proof for T12."""
 
 import asyncio
+import json
 import os
 import subprocess
 from urllib.parse import urlparse, urlunparse
@@ -104,7 +105,7 @@ async def test_t12_migration_preserves_t03_populated_rows_and_uses_configured_he
             "SELECT template_version_id, definition FROM form_template_questions WHERE id=$1", question_id,
         )
         assert str(preserved_question["template_version_id"]) == version_id
-        assert preserved_question["definition"] == '{"id":"q","type":"short_text"}'
+        assert json.loads(preserved_question["definition"]) == {"id": "q", "type": "short_text"}
     finally:
         await conn.close()
 
