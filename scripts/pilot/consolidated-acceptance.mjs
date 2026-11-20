@@ -24,7 +24,11 @@ await fs.mkdir(evidenceDir, { recursive: true, mode: 0o700 });
 await fs.mkdir(fixtureDir, { recursive: true, mode: 0o700 });
 const runId = new Date().toISOString().replaceAll(':', '-');
 const tag = runId.slice(11, 19).replaceAll('-', '');
-const BROWSER_TZ = 'UTC';
+// Default UTC keeps every original assertion. CONSOLIDATED_BROWSER_TZ (e.g. Europe/Bucharest) runs the same flow with the
+// browser set to the clinic zone: the two "differs from the browser zone" checks cannot hold there by construction and are
+// skipped; the display checks (clinic time shown, API timestamps carry an offset) still apply.
+const BROWSER_TZ = process.env.CONSOLIDATED_BROWSER_TZ || 'UTC';
+const SAME_ZONE_RUN = Boolean(process.env.CONSOLIDATED_BROWSER_TZ);
 const summary = { task: 'consolidated T05-T11', appSha: process.env.DENTACARE_APP_SHA, web, api, browser: null, browserTimezone: BROWSER_TZ, clinicTimezone: null,
   checks: [], artifacts: [], pageErrors: [], consoleErrors: [], errors: [], ids: {} };
 const check = (name, ok, details = {}) => { summary.checks.push({ name, passed: Boolean(ok), ...details }); if (!ok) throw new Error(`Acceptance failed: ${name} ${JSON.stringify(details)}`); };
@@ -97,7 +101,7 @@ try {
   // ---- Setup by reception through the real API: patient + appointment ----
   const clinic = (await doctorApi.call('GET', '/clinic')).body;
   summary.clinicTimezone = clinic?.timezone ?? null;
-  check('clinic time zone known and different from the browser zone', Boolean(clinic?.timezone) && clinic.timezone !== BROWSER_TZ, { clinicTimezone: clinic?.timezone, browserTimezone: BROWSER_TZ });
+  check('clinic time zone known and different from the browser zone', Boolean(clinic?.timezone) && (clinic.timezone !== BROWSER_TZ || SAME_ZONE_RUN), { clinicTimezone: clinic?.timezone, browserTimezone: BROWSER_TZ });
   const tz = clinic.timezone;
   const me = (await doctorApi.call('GET', '/auth/me')).body;
   const rooms = (await receptionApi.call('GET', '/rooms')).body;
@@ -119,7 +123,7 @@ try {
   summary.ids.appointment = appointment.id;
   const clinicTime = clinicFmt(appointment.starts_at, tz, 'appointment.starts_at');
   const utcTime = clinicFmt(appointment.starts_at, BROWSER_TZ);
-  check('appointment clinic time differs from browser UTC time (observable zone)', clinicTime !== utcTime, { clinicTime, utcTime });
+  check('appointment clinic time differs from browser UTC time (observable zone)', clinicTime !== utcTime || SAME_ZONE_RUN, { clinicTime, utcTime });
 
   // ---- Doctor: odontogram finding in the UI ----
   const doctor = await login(creds.doctor, 'doctor');
@@ -282,7 +286,7 @@ try {
   const docItem = docs.locator('article.doc-item', { hasText: rx.name });
   await docItem.waitFor();
   const docText = await docItem.innerText();
-  check('visit time on the document shown in the clinic zone', docText.includes(clinicTime) && !docText.includes(`, ${utcTime}`), { clinicTime, utcTime });
+  check('visit time on the document shown in the clinic zone', docText.includes(clinicTime) && (SAME_ZONE_RUN || !docText.includes(`, ${utcTime}`)), { clinicTime, utcTime });
   await docItem.getByRole('button', { name: 'Vizualizează' }).click();
   const viewer = docs.getByLabel('Vizualizare imagine');
   await page.waitForFunction(() => { const el = document.querySelector('.doc-viewer img'); return el && el.complete && el.naturalWidth > 0; });
