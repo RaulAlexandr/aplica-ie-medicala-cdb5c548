@@ -117,19 +117,34 @@ def upgrade() -> None:
     op.execute("""
     CREATE FUNCTION prevent_published_form_question_change() RETURNS trigger AS $$
     DECLARE version_status text;
-    DECLARE parent_version_id uuid;
     BEGIN
+      IF TG_OP = 'INSERT' THEN
+        SELECT status INTO version_status FROM form_template_versions
+          WHERE id = NEW.template_version_id FOR UPDATE;
+        IF version_status = 'published' THEN
+          RAISE EXCEPTION 'questions in published form versions are immutable';
+        END IF;
+        RETURN NEW;
+      END IF;
+
       IF TG_OP = 'DELETE' THEN
-        parent_version_id := OLD.template_version_id;
-      ELSE
-        parent_version_id := NEW.template_version_id;
+        SELECT status INTO version_status FROM form_template_versions
+          WHERE id = OLD.template_version_id FOR UPDATE;
+        IF version_status = 'published' THEN
+          RAISE EXCEPTION 'questions in published form versions are immutable';
+        END IF;
+        RETURN OLD;
       END IF;
-      SELECT status INTO version_status FROM form_template_versions
-        WHERE id = parent_version_id;
-      IF version_status = 'published' THEN
-        RAISE EXCEPTION 'questions in published form versions are immutable';
-      END IF;
-      IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+
+      FOR version_status IN
+        SELECT status FROM form_template_versions
+        WHERE id IN (OLD.template_version_id, NEW.template_version_id)
+        ORDER BY id FOR UPDATE
+      LOOP
+        IF version_status = 'published' THEN
+          RAISE EXCEPTION 'questions in published form versions are immutable';
+        END IF;
+      END LOOP;
       RETURN NEW;
     END;
     $$ LANGUAGE plpgsql
