@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -128,7 +128,9 @@ async def test_matching_order_doctor_any_and_expired_validity(ctx):
     assert too_short.json()==[]
 
 @pytest.mark.asyncio
-async def test_dst_matching_and_overnight_window_policy(ctx):
+async def test_dst_matching_and_overnight_window_policy(ctx, monkeypatch):
+    from app.waitlist import router as waitlist_router
+    monkeypatch.setattr(waitlist_router, "utcnow", lambda: datetime(2026, 10, 20, 12, tzinfo=timezone.utc))
     c,_=ctx;h=await register(c,"dst@example.com")
     patient=(await c.post("/api/patients",headers=h,json={"first_name":"Fake","last_name":"DST"})).json()
     identity=(await c.get("/api/auth/me",headers=h)).json();room=(await c.post("/api/rooms",headers=h,json={"name":"DST room"})).json()
