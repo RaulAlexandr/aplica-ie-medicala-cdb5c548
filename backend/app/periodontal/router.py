@@ -25,12 +25,14 @@ FDI = {f"{q}{n}" for q in "1234" for n in range(1, 9)}
 SITES = ("buccal_mesial", "buccal_mid", "buccal_distal", "oral_mesial", "oral_mid", "oral_distal")
 MOBILITY = {"0", "1", "2", "3"}
 FURCATION = {"I", "II", "III"}
+# Product decision (PM, 2026-11-20): deeper than 20 mm is almost certainly a typing error.
+MAX_PROBING_DEPTH_MM = 20
 
 
 class SiteInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     site: str
-    probing_depth_mm: Decimal | None = Field(default=None, max_digits=7, decimal_places=2, ge=0)
+    probing_depth_mm: Decimal | None = Field(default=None, max_digits=7, decimal_places=2, ge=0, le=MAX_PROBING_DEPTH_MM)
     recession_mm: Decimal | None = Field(default=None, max_digits=7, decimal_places=2)
     bop: StrictBool | None = None
     plaque: StrictBool | None = None

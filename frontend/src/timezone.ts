@@ -52,3 +52,14 @@ export function clinicLocalToUtc(value: string, timezone: string, fold?: 0 | 1):
   const selected = candidates.length === 1 ? candidates[0] : candidates[fold ?? 0];
   return new Date(selected).toISOString();
 }
+
+/** Hour (0–23) of the given instant on the clinic wall clock. */
+export function clinicHour(timezone: string, instant: number = Date.now()): number {
+  return Number(wallParts(instant, timezone).slice(11, 13));
+}
+
+export function greetingForHour(hour: number): string {
+  if (hour >= 5 && hour < 12) return 'Good morning';
+  if (hour >= 12 && hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}

@@ -44,7 +44,7 @@ export function VisitFinanceCard({ appointmentId, refreshKey }: { appointmentId:
   }
 
   return <section className="finance-visit-card" aria-label="Încasare vizită">
-    <p className="eyebrow">T13 · EVIDENȚĂ INTERNĂ</p>
+    <p className="eyebrow">EVIDENȚĂ INTERNĂ</p>
     {summary.isLoading && <p className="muted">Se încarcă suma vizitei…</p>}
     {summary.isError && <p className="error" role="alert">{apiErrorMessage(summary.error)}</p>}
     {data && <>

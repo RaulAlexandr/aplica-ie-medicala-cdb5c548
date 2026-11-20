@@ -5,7 +5,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,6 +58,13 @@ class AppointmentCreate(BaseModel):
         return self
 class AppointmentUpdate(BaseModel):
     patient_id: UUID | None = None; doctor_id: UUID | None = None; assistant_id: UUID | None = None; room_id: UUID | None = None; starts_at: datetime | None = None; local_start: datetime | None = None; timezone_fold: int | None = Field(default=None, ge=0, le=1); duration_minutes: int | None = Field(default=None, ge=5, le=24 * 60); appointment_type: str | None = Field(default=None, min_length=1, max_length=100); notes: str | None = Field(default=None, max_length=5000)
+    @field_validator("patient_id", "doctor_id", "room_id", "duration_minutes", "appointment_type", mode="before")
+    @classmethod
+    def required_when_present(cls, value):
+        # Omit the field to keep the current value; an explicit null would reach calculations/NOT NULL columns.
+        if value is None:
+            raise ValueError("This field cannot be null; omit it to keep the current value")
+        return value
     @model_validator(mode="after")
     def has_one_start(self) -> AppointmentUpdate:
         if self.starts_at is not None and self.local_start is not None:

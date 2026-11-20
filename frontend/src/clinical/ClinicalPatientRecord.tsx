@@ -125,7 +125,7 @@ export function ClinicalPatientRecord({ patientId, appointmentId, user }: { pati
       </section>
 
       <section className="card clinical-record-section">
-        <div className="detail-heading"><div><p className="eyebrow">T04 VISITS</p><h2>Procedures and visits</h2></div></div>
+        <div className="detail-heading"><div><p className="eyebrow">VIZITE ȘI MANOPERE</p><h2>Procedures and visits</h2></div></div>
         {record.data.performed_procedures.length === 0 && <p className="muted">No procedures recorded yet.</p>}
         <div className="clinical-list">{record.data.performed_procedures.map(procedure => <article className="clinical-list-item detail-heading" key={procedure.id}>
           <div><h3>{procedure.procedure_code} · {procedure.procedure_name}</h3><p className="muted">{procedure.status} · {procedure.tooth_fdi ? `FDI ${procedure.tooth_fdi}` : 'No tooth'}{procedure.tooth_surface ? ` · ${procedure.tooth_surface}` : ''} · {formatClinicDate(procedure.created_at, timezone)}</p></div>

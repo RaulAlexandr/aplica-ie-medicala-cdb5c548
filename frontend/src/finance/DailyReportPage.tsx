@@ -30,7 +30,7 @@ export function DailyReportPage() {
   const day = date || (timezone ? clinicToday(timezone) : '');
   const report = useQuery({ queryKey: ['finance-daily', day], queryFn: () => getDailyReport(day), enabled: Boolean(day) });
   return <section className="card finance-daily" aria-label="Încasări zi">
-    <header><div><p className="eyebrow">T13 · EVIDENȚĂ INTERNĂ — NU ESTE RAPORT FISCAL</p><h1>Încasări zi</h1></div></header>
+    <header><div><p className="eyebrow">EVIDENȚĂ INTERNĂ — NU ESTE RAPORT FISCAL</p><h1>Încasări zi</h1></div></header>
     {clinic.isError && <p className="error" role="alert">Fusul clinicii nu a putut fi încărcat: {apiErrorMessage(clinic.error)}</p>}
     <label>Ziua (în fusul clinicii)<input type="date" aria-label="Ziua raportului" value={day} onChange={event => setDate(event.target.value)} /></label>
     {report.isLoading && <p className="muted">Se încarcă…</p>}
