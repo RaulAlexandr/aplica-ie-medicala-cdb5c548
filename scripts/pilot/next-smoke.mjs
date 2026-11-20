@@ -160,18 +160,7 @@ try {
   // A failure in the UI part is recorded as a section failure (the run still fails) and the backend part is then
   // exercised through the API, so T24 and the integration are still verified; the fallback never counts as UI proof.
   let slot = null;
-  activePage = reception;
-  try {
-  await reception.getByRole('link', { name: 'Lista de așteptare', exact: true }).click();
-  const waitlist = reception.getByRole('region', { name: 'Listă de așteptare' });
-  await waitlist.waitFor();
   const service = `Control smoke ${tag}`;
-  await waitlist.getByLabel('Pacient ID').fill(elena.id);
-  await waitlist.getByLabel('Serviciu').fill(service);
-  const entryCreated = respond(reception, 'POST', p => p === '/api/waitlist/entries');
-  await waitlist.getByRole('button', { name: 'Adaugă în listă' }).click();
-  check('reception adds the waitlist entry (201)', (await entryCreated).status() === 201);
-  await waitlist.getByText(new RegExp(`${service} · active`)).waitFor();
   // The UI entry window is "today's weekday, 09:00-17:00 clinic time": look for a free slot on that weekday a week or more ahead.
   for (let week = 1; week <= 8 && !slot; week += 1) {
     const day = addDays(today, 7 * week);
@@ -180,6 +169,17 @@ try {
     if (hour) slot = { day, hour, week };
   }
   check('a free clinic-local slot exists on the same weekday', Boolean(slot), { slot });
+  activePage = reception;
+  try {
+  await reception.getByRole('link', { name: 'Lista de așteptare', exact: true }).click();
+  const waitlist = reception.getByRole('region', { name: 'Listă de așteptare' });
+  await waitlist.waitFor();
+  await waitlist.getByLabel('Pacient ID').fill(elena.id);
+  await waitlist.getByLabel('Serviciu').fill(service);
+  const entryCreated = respond(reception, 'POST', p => p === '/api/waitlist/entries');
+  await waitlist.getByRole('button', { name: 'Adaugă în listă' }).click();
+  check('reception adds the waitlist entry (201)', (await entryCreated).status() === 201);
+  await waitlist.getByText(new RegExp(`${service} · active`)).waitFor();
   await waitlist.getByLabel('Medic ID').fill(doctorUser.id);
   await waitlist.getByLabel('Cabinet ID').fill(room.id);
   await waitlist.getByLabel('Început').fill(`${slot.day}T${slot.hour}`);
