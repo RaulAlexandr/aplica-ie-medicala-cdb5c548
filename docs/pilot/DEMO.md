@@ -9,22 +9,22 @@ Pentru Serena și echipă. Ghidul se urmează pe roluri (recepție, medic, manag
 Din checkout-ul curat al aplicației (aceeași comandă pe laptopul lui Raul):
 
 ```bash
-cd /home/raul/Projects/worktrees/aplica-ie-pilot-demo
+cd <calea-către-checkout-ul-curat>   # worktree-ul aplica-ie-pilot-demo; pe laptopul lui Raul: /home/raul/Projects/worktrees/aplica-ie-pilot-demo
 scripts/pilot/demo.sh up        # creează config, venv, bază NOUĂ, pornește API + web, rulează seed-ul
 ```
 
-La final apar adresele: **web `http://127.0.0.1:5179`**, API `http://127.0.0.1:8039/health`. Deschide adresa web într-un browser setat pe fusul **Europe/Bucharest** (fusul clinicii).
+**Prima rulare are nevoie de rețea** (pip și npm descarcă dependențele în venv și `frontend/node_modules`); următoarele porniri nu. La final apar adresele: **web `http://127.0.0.1:5179`**, API `http://127.0.0.1:8039/health`. Deschide adresa web într-un browser setat pe fusul **Europe/Bucharest** (fusul clinicii).
 
 | Ce vrei | Comandă |
 |---|---|
-| Oprire | `scripts/pilot/demo.sh stop` |
-| Repornire pe ACEEAȘI bază (seed-ul nu dublează nimic) | `scripts/pilot/demo.sh resume` |
+| Oprire | `scripts/pilot/demo.sh stop` — cu **aceleași** `DENTACARE_PILOT_HOME` și `PILOT_CONFIG` ca la pornire, dacă ai folosit un demo cu alt home |
+| Repornire pe ACEEAȘI bază (seed-ul nu dublează nimic) | `scripts/pilot/demo.sh resume` — cu aceleași `DENTACARE_PILOT_HOME` și `PILOT_CONFIG` ca la `up`; fără ele se aplică demo-ului implicit |
 | Demo complet nou | `DENTACARE_PILOT_HOME=$HOME/.local/share/dentacare-demo-2 PILOT_CONFIG=$HOME/.config/dentacare-demo-2/pilot.env scripts/pilot/demo.sh up` (alte porturi în config dacă rulează și primul) |
 
 - **Demo-uri create înainte de scurtarea reviziei Alembic T13** (`t13_add_patient_financial_entries` → `t13_patient_financial_entries`): nu le relua cu `resume`; pornește un demo nou, cu bază nouă:
 
   ```bash
-  cd /home/raul/Projects/worktrees/aplica-ie-pilot-demo
+  cd <calea-către-checkout-ul-curat>
   DENTACARE_PILOT_HOME=$HOME/.local/share/dentacare-pilot-demo-v2 PILOT_CONFIG=$HOME/.config/dentacare-pilot-demo-v2/pilot.env scripts/pilot/demo.sh up
   ```
 
@@ -54,7 +54,7 @@ La fiecare pas: **Fă** (acțiunea) și **Observă** (ce trebuie să se întâmp
 ### Recepție (Radu)
 
 1. **Agenda.** Fă: *Appointments*. Observă: ziua curentă, cabinetele „Cabinet Demo 1/2”, trei vizite la 09:00 (în desfășurare), 11:00 (programată), 14:00 (confirmată), cu orele fusului clinicii, nu ale browserului.
-2. **Programare nouă.** Fă: **New appointment**; caută „Elena”, alege pacienta, doctorul, cabinetul, **Clinic-local start** (o zi liberă), tipul; **Create appointment**. Observă: programarea apare în agendă; orele se introduc ca ore ale clinicii. Dacă intervalul e ocupat, aplicația îl refuză cu mesaj.
+2. **Programare nouă.** Fă: **New appointment**; caută „Elena”, alege pacienta, doctorul, cabinetul, **Clinic-local start** (o zi liberă); **Appointment type** vine precompletat cu „Consultation” (poți schimba textul); **Create appointment**. Pacienții **noi** nu se creează din acest formular, ci din *Patients* → **New patient**. Observă: programarea apare în agendă; orele se introduc ca ore ale clinicii. Dacă intervalul e ocupat (medic sau cabinet), aplicația îl refuză cu mesaj.
 3. **Încasare.** Fă: *Patients* → Ioana Exemplu → secțiunea **Cont pacient**. Observă: *Servicii efectuate 400 RON*, *Încasat net 200 RON*, *Sold 200 RON de plată*; mișcarea de 50 RON apare **anulată** cu motivul ei (istoricul nu se rescrie). Fă: tip **Încasare**, sumă `100.00`, metodă **Numerar**, vizita asociată, motiv, **Înregistrează**. Observă: încasatul crește cu exact 100 RON, soldul se recalculează; un dublu clic nu înregistrează de două ori.
 4. **Încasări zi.** Fă: meniul **Încasări zi**. Observă: net pe metodă (numerar/card/transfer/alta), total net, anulările listate, mențiunea că **nu este raport fiscal**.
 5. **Limite de rol.** Observă: nu ai *Clinic setup* sau *Staff*; nu poți face ajustări (doar managerul).
@@ -63,16 +63,16 @@ La fiecare pas: **Fă** (acțiunea) și **Observă** (ce trebuie să se întâmp
 
 1. **Vizita în desfășurare.** Fă: *Appointments* → vizita Ioanei → deschide vizita. Observă: manopera **REST-DEMO · FDI 16 · occlusal** *Completed*, prețul catalogului ca snapshot (400 RON), timpul activ măsurat; manopera finalizată **nu a închis vizita** (butonul **Close visit** rămâne o acțiune separată). Deschiderea fișei sau a vizitei nu pornește niciun timp.
 2. **Odontograma.** Fă: *Patients* → Ioana → **Odontogramă clinică**; apasă dintele **1.6**. Observă: constatarea *Carie* (ocluzală) **Finalizată**; 1.8 și 2.8 sunt **Lipsă**; istoricul din dreapta arată cine și când. Constatarea, tratamentul planificat și manopera efectuată sunt înregistrări distincte.
-3. **Manoperă din dinte.** Fă: pe Elena Test, apasă dintele **3.6** → **Add performed procedure for this tooth**; alege vizita de azi, serviciul PROF-DEMO, o notă; **Save procedure**. Observă: dintele e precompletat, manopera e salvată *pending* și **timpul nu a pornit**. Fă: deschide vizita → pe cardul manoperii **Start**, **Pause**, **Resume**, **Complete**. Observă: pauza nu intră în timpul activ; segmentele de timp se păstrează; vizita rămâne deschisă.
+3. **Manoperă din dinte.** Fă: pe Elena Test, apasă dintele **3.6** → **Add performed procedure for this tooth**. Formularul se deschide și pagina derulează la el; dacă nu îl vezi, derulează în jos până la „Add procedure for selected tooth”. Alege vizita de azi („Choose a visit”), serviciul PROF-DEMO, o notă; **Save procedure**. Observă: dintele e precompletat, manopera e salvată *pending* și **timpul nu a pornit**. Fă: deschide vizita → pe cardul manoperii **Start**, **Pause**, **Resume**, **Complete**. Observă: pauza nu intră în timpul activ; panoul **Timer segments** se actualizează după fiecare pas (dacă rămâne gol, reîncarcă pagina și raportează); cronometrul nu afișează un ceas care curge, ci timpul activ al segmentelor închise; vizita rămâne deschisă.
 4. **Planul.** Fă: Ioana → **Planuri de tratament** → *Plan restaurativ demonstrativ* → **Deschide planul**. Observă: două etape, versiunea acceptată, prima manoperă **Efectuat** și legată de manopera efectuată; estimarea nu este factură.
 5. **Parodontal.** Fă: Andrei → **Evaluare parodontală**; la **Prima evaluare** alege data de acum 90 de zile, la **A doua evaluare** data de acum 2 zile; **Compară**. Observă: diferențele (adâncimile scad cu 1 mm, `Δ -1`), BOP pe a doua evaluare; evaluările vechi rămân neschimbate. Gol = nemăsurat, „Nu” = măsurat și absent.
-6. **Documente.** Fă: Elena → **Documente și imagini**; la radiografie **Vizualizează**, apoi **Mărește**. Observă: imaginea se deschide autorizat, zoom 125%; fotografia și PDF-ul sunt listate; există **Descarcă**, **Compară**, **Arhivează**. Fișierele nu sunt accesibile fără autentificare.
+6. **Documente.** Fă: Elena → **Documente și imagini**; la radiografie **Vizualizează**, apoi **Mărește**. Pentru comparație bifează căsuța **Compară** de pe rândul a două imagini (radiografia și fotografia), apoi apasă **Compară imaginile** (apare deasupra listei; **Golește selecția** o anulează). Observă: imaginea se deschide autorizat, zoom 125%; fotografia și PDF-ul sunt listate; există **Descarcă** și **Arhivează**. Fișierele nu sunt accesibile fără autentificare.
 7. **Pacient inexistent.** Fă: în bara de adrese pune un ID de pacient inventat (`/patients/00000000-0000-4000-8000-000000000000`). Observă: imediat, mesajul **„Pacient inexistent sau fără acces”** (același mesaj pentru un pacient din altă clinică).
 
 ### Manager (Mara)
 
 1. **Configurare.** Fă: **Clinic setup**. Observă: fusul clinicii (Europe/Bucharest), programul de lucru (inițial *Unconfigured*: programarea este permisă), cele două cabinete cu **Rename/Deactivate**, blocarea disponibilității unui medic/cabinet.
-2. **Catalog.** Fă: **Procedure catalog**. Observă: CONS-DEMO, PROF-DEMO, REST-DEMO cu durată și preț; **Edit/Deactivate**. Schimbarea prețului nu modifică retroactiv manoperele deja efectuate (au tariful istoric ca snapshot).
+2. **Catalog.** Fă: **Procedure catalog**. Observă: CONS-DEMO, PROF-DEMO, REST-DEMO cu durată și preț; **Edit/Deactivate**. Lista se actualizează singură după **Deactivate/Activate** sau **New procedure** (dacă un rând pare neschimbat, reîncarcă pagina și raportează). Schimbarea prețului nu modifică retroactiv manoperele deja efectuate (au tariful istoric ca snapshot).
 3. **Ajustare și anulare.** Fă: Elena → **Cont pacient** → tip **Ajustare de plată suplimentară**, sumă `10.00`, motiv, **Înregistrează**; apoi la mișcarea nouă **Anulează mișcarea**, motiv, **Confirmă anularea**. Observă: ambele mișcări rămân în istoric; efectul net este zero; doar managerul face ajustări.
 4. **Personal.** Fă: **Staff** — invitații și activare conturi. (Nu este scenariul principal al acestui demo.)
 
@@ -86,6 +86,14 @@ La fiecare pas: **Fă** (acțiunea) și **Observă** (ce trebuie să se întâmp
 - Browserul trebuie să fie pe Europe/Bucharest pentru ca orele să coincidă cu cele ale clinicii în câmpurile native.
 - Pe ecranele *Procedure catalog*, *Clinic setup* și *Staff* separatorul „·” apare ca text `·` (defect cunoscut, în afara acestui livrabil).
 - `demo-walkthrough.mjs` **adaugă date** (o programare, o încasare, o ajustare cu anulare, o manoperă): rulează-l pe o copie restaurată, nu pe baza pe care o arăți.
+
+### Ce să nu interpretezi ca defect
+
+- **Texte în engleză amestecate cu română** și formate de dată diferite între ecrane: interfața este un pilot, nu are încă o limbă unică.
+- **Etichete interne** precum „T13 · EVIDENȚĂ INTERNĂ”, „T04 VISITS”, „T08 · PLANIFICARE”: sunt marcaje de lucru ale pilotului.
+- **Date fictive**: nume, sume, imagini și documente sunt inventate; salutul „Good morning” este fix.
+- **Fără fiscal**: nu există factură, bon sau raport fiscal; „Încasări zi” este evidență internă.
+- **Baza este locală** (SQLite pe laptop): nu se sincronizează nicăieri.
 
 ## 4. Cum raportezi o problemă
 
