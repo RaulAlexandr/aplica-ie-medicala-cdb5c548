@@ -870,6 +870,7 @@ async def cancel_procedure(
 
     # Update procedure status
     now = utcnow()
+    previous_status = procedure.status
     procedure.status = "cancelled"
     procedure.updated_at = now
 
@@ -881,17 +882,17 @@ async def cancel_procedure(
         action="cancelled"
     ))
 
-    if payload.notes:
-        db.add(PerformedProcedureRevision(
-            clinic_id=user.clinic_id,
-            performed_procedure_id=procedure.id,
-            actor_id=user.id,
-            field="status",
-            previous_value=procedure.status,
-            new_value="cancelled",
-            reason=payload.notes,
-            occurred_at=now
-        ))
+    # The status changed whether or not a reason was given, so the revision is always written.
+    db.add(PerformedProcedureRevision(
+        clinic_id=user.clinic_id,
+        performed_procedure_id=procedure.id,
+        actor_id=user.id,
+        field="status",
+        previous_value=previous_status,
+        new_value="cancelled",
+        reason=payload.notes or None,
+        occurred_at=now
+    ))
 
     await db.commit()
     await db.refresh(procedure)

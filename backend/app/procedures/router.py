@@ -56,9 +56,9 @@ def validate_price_value(value: object) -> Decimal:
             raise ValueError("Price must be a valid decimal number") from exc
     elif isinstance(value, (int, float)):
         # JSON numbers come through as int/float - reject for exact decimal safety
-        raise TypeError("Price must be provided as a string for exact decimal representation")
+        raise ValueError("Price must be provided as a string for exact decimal representation")
     else:
-        raise TypeError("Price must be a decimal number")
+        raise ValueError("Price must be a decimal number")
     
     # Check for non-finite values
     if value.is_infinite() or value.is_nan():
@@ -77,9 +77,16 @@ def validate_price_value(value: object) -> Decimal:
     return value
 
 
+def require_text(value: object, label: str) -> str:
+    """Reject non-string JSON values with a validation error (422) before any string operation."""
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be text")
+    return value
+
+
 def validate_currency_value(value: str) -> str:
     """Validate currency is RON only for this milestone."""
-    value = value.strip().upper()
+    value = require_text(value, "Currency").strip().upper()
     if value != RON:
         raise ValueError("Only RON currency is supported for this milestone")
     return value
@@ -99,7 +106,7 @@ class ProcedureCatalogCreate(BaseModel):
     @field_validator("code", mode="before")
     @classmethod
     def clean_code(cls, value: str) -> str:
-        value = value.strip()
+        value = require_text(value, "Code").strip()
         if not value:
             raise ValueError("Code cannot be empty")
         return value
@@ -107,7 +114,7 @@ class ProcedureCatalogCreate(BaseModel):
     @field_validator("name", mode="before")
     @classmethod
     def clean_name(cls, value: str) -> str:
-        value = value.strip()
+        value = require_text(value, "Name").strip()
         if not value:
             raise ValueError("Name cannot be empty")
         return value
@@ -139,7 +146,7 @@ class ProcedureCatalogUpdate(BaseModel):
     def clean_code(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        value = value.strip()
+        value = require_text(value, "Code").strip()
         if not value:
             raise ValueError("Code cannot be empty")
         return value
@@ -149,7 +156,7 @@ class ProcedureCatalogUpdate(BaseModel):
     def clean_name(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        value = value.strip()
+        value = require_text(value, "Name").strip()
         if not value:
             raise ValueError("Name cannot be empty")
         return value
