@@ -27,9 +27,38 @@ def verify_password(value: str, hashed: str) -> bool:
     return password_hash.verify(value, hashed)
 
 
+ISSUED_AT_CLAIM = "iat_us"
+
+
+def _epoch_us(value: datetime) -> int:
+    value = value.replace(tzinfo=UTC) if value.tzinfo is None else value
+    delta = value - datetime(1970, 1, 1, tzinfo=UTC)
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+
 def create_access_token(user: User) -> str:
-    expires = datetime.now(UTC) + timedelta(minutes=settings.access_token_minutes)
-    return jwt.encode({"sub": str(user.id), "exp": expires}, settings.jwt_secret, algorithm=ALGORITHM)
+    now = datetime.now(UTC)
+    expires = now + timedelta(minutes=settings.access_token_minutes)
+    # Microsecond issue time: lets a reactivated account reject tokens issued before its last deactivation.
+    claims = {"sub": str(user.id), "exp": expires, ISSUED_AT_CLAIM: _epoch_us(now)}
+    return jwt.encode(claims, settings.jwt_secret, algorithm=ALGORITHM)
+
+
+def issued_before_deactivation(payload: dict, user: User) -> bool:
+    """True when the token predates the user's last deactivation (or cannot prove otherwise)."""
+    if user.deactivated_at is None:
+        return False
+    issued = payload.get(ISSUED_AT_CLAIM)
+    return not isinstance(issued, int) or issued <= _epoch_us(user.deactivated_at)
+
+
+async def revoke_refresh_tokens(db: AsyncSession, user_id: UUID) -> int:
+    records = (await db.scalars(select(RefreshToken).where(
+        RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None)).with_for_update())).all()
+    now = utcnow()
+    for record in records:
+        record.revoked_at = now
+    return len(records)
 
 
 def _hash_refresh(token: str) -> str:
@@ -76,6 +105,8 @@ async def get_current_user(credentials=Depends(bearer), db: AsyncSession = Depen
     user = await db.get(User, user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User is inactive or missing")
+    if issued_before_deactivation(payload, user):
+        raise HTTPException(status_code=401, detail="Session ended by deactivation; sign in again")
     return user
 
 

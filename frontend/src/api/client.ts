@@ -6,7 +6,8 @@ export type Patient = { id: string; clinic_id: string; first_name: string; last_
 export type Room = { id: string; clinic_id: string; name: string; is_active: boolean };
 export type Clinic = { id: string; name: string; timezone: string; created_at: string; updated_at: string };
 export type Staff = { id: string; clinic_id: string; full_name: string; email: string; role: string; specialization: string | null; phone: string | null; is_active: boolean; deactivated_at: string | null; created_at: string; updated_at: string };
-export type StaffDetail = Staff & { upcoming_appointment_count: number };
+export type StaffHistoryEntry = { action: 'created_from_invitation' | 'deactivated' | 'reactivated' | string; occurred_at: string; actor_id: string; actor_name: string | null };
+export type StaffDetail = Staff & { upcoming_appointment_count: number; history?: StaffHistoryEntry[] };
 export type Invitation = { id: string; email: string; full_name: string; role: string; expires_at: string; revoked_at: string | null; accepted_at: string | null; created_at: string; invitation_url: string | null };
 export type Appointment = { id: string; clinic_id: string; patient_id: string; doctor_id: string; assistant_id: string | null; room_id: string; starts_at: string; ends_at: string; local_start: string; local_end: string; timezone: string; duration_minutes: number; appointment_type: string; status: string; notes: string | null; patient_name: string | null; doctor_name: string | null; assistant_name: string | null; room_name: string | null };
 export type AuthResponse = { access_token: string; refresh_token: string; token_type: string };
@@ -160,6 +161,7 @@ export async function createInvitation(input: { email: string; full_name: string
 export async function listInvitations() { return (await api.get<Invitation[]>('/staff/invitations')).data; }
 export async function revokeInvitation(id: string) { return (await api.post<Invitation>(`/staff/invitations/${id}/revoke`)).data; }
 export async function reissueInvitation(id: string) { return (await api.post<Invitation>(`/staff/invitations/${id}/reissue`)).data; }
+export async function reactivateStaff(id: string) { return (await api.post<Staff>(`/staff/${id}/reactivate`)).data; }
 export async function deactivateStaff(id: string) { return (await api.post<{ staff: Staff; affected_appointments: Array<{ id: string; starts_at: string; status: string }> }>(`/staff/${id}/deactivate`)).data; }
 export async function acceptInvitation(token: string, password: string) { return (await api.post<Staff>('/staff/invitations/accept', { password }, { params: { token } })).data; }
 export async function listAppointments(filters: AppointmentFilters = {}) { return (await api.get<Appointment[]>('/appointments', { params: Object.fromEntries(Object.entries(filters).filter(([, value]) => value)) })).data; }

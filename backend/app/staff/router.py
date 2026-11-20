@@ -7,13 +7,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from app.auth.service import get_current_user, hash_password, require_roles
+from app.auth.service import get_current_user, hash_password, require_roles, revoke_refresh_tokens
 from app.database import Appointment, AuditEvent, StaffInvitation, User, get_db, utcnow
 
 router = APIRouter(prefix="/staff", tags=["staff"])
 MANAGEMENT_ROLES = ("clinic_manager", "administrator")
 INVITABLE_ROLES = ("doctor", "assistant", "reception")
+STAFF_HISTORY_ACTIONS = ("created_from_invitation", "deactivated", "reactivated")
 ACTIVE_APPOINTMENT_STATUSES = ("scheduled", "confirmed", "arrived", "in_progress", "completed")
 INVITATION_DAYS = 3
 
@@ -45,8 +47,16 @@ class StaffResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class StaffHistoryEntry(BaseModel):
+    action: str
+    occurred_at: datetime
+    actor_id: UUID
+    actor_name: str | None
+
+
 class StaffDetailResponse(StaffResponse):
     upcoming_appointment_count: int
+    history: list[StaffHistoryEntry] = []
 
 
 class InvitationCreate(BaseModel):
@@ -104,7 +114,19 @@ async def get_staff(staff_id: UUID, user: User = Depends(get_current_user), db: 
     if not staff:
         raise HTTPException(404, "Staff member not found")
     upcoming = int(await db.scalar(select(func.count(Appointment.id)).where(Appointment.clinic_id == user.clinic_id, Appointment.starts_at > utcnow(), Appointment.status.in_(ACTIVE_APPOINTMENT_STATUSES), (Appointment.doctor_id == staff.id) | (Appointment.assistant_id == staff.id))) or 0)
-    return StaffDetailResponse.model_validate({**staff.__dict__, "upcoming_appointment_count": upcoming}, from_attributes=True)
+    history = await staff_history(db, staff) if user.role in MANAGEMENT_ROLES else []
+    return StaffDetailResponse.model_validate({**staff.__dict__, "upcoming_appointment_count": upcoming, "history": history}, from_attributes=True)
+
+
+async def staff_history(db: AsyncSession, staff: User) -> list[StaffHistoryEntry]:
+    actor = aliased(User)
+    rows = (await db.execute(
+        select(AuditEvent.action, AuditEvent.occurred_at, AuditEvent.actor_id, actor.full_name)
+        .join(actor, actor.id == AuditEvent.actor_id)
+        .where(AuditEvent.clinic_id == staff.clinic_id, AuditEvent.entity_type == "staff",
+               AuditEvent.entity_id == staff.id, AuditEvent.action.in_(STAFF_HISTORY_ACTIONS))
+        .order_by(AuditEvent.occurred_at.desc(), AuditEvent.id))).all()
+    return [StaffHistoryEntry(action=row[0], occurred_at=row[1], actor_id=row[2], actor_name=row[3]) for row in rows]
 
 
 @router.post("/invitations", response_model=InvitationResponse, status_code=201)
@@ -194,9 +216,32 @@ async def deactivate_staff(staff_id: UUID, user: User = Depends(require_invitati
     affected = (await db.scalars(select(Appointment).where(Appointment.clinic_id == user.clinic_id, Appointment.starts_at > utcnow(), Appointment.status.in_(ACTIVE_APPOINTMENT_STATUSES), (Appointment.doctor_id == staff.id) | (Appointment.assistant_id == staff.id)).order_by(Appointment.starts_at))).all()
     if affected:
         return StaffStatusResponse(staff=staff, affected_appointments=[{"id": str(item.id), "starts_at": item.starts_at.isoformat(), "status": item.status} for item in affected])
+    now = utcnow()
     staff.is_active = False
-    staff.deactivated_at = utcnow()
-    db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="staff", entity_id=staff.id, action="deactivated"))
+    staff.deactivated_at = now
+    # Sessions end with the deactivation and are never revived by a later reactivation.
+    await revoke_refresh_tokens(db, staff.id)
+    db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="staff", entity_id=staff.id, action="deactivated", occurred_at=now))
     await db.commit()
     await db.refresh(staff)
     return StaffStatusResponse(staff=staff, affected_appointments=[])
+
+
+@router.post("/{staff_id}/reactivate", response_model=StaffResponse)
+async def reactivate_staff(staff_id: UUID, user: User = Depends(require_invitation_manager), db: AsyncSession = Depends(get_db)) -> StaffResponse:
+    staff = await db.scalar(select(User).where(User.id == staff_id, User.clinic_id == user.clinic_id).with_for_update())
+    if not staff:
+        raise HTTPException(404, "Staff member not found")
+    if staff.id == user.id:
+        raise HTTPException(409, "You cannot reactivate your own account")
+    if staff.role in MANAGEMENT_ROLES:
+        raise HTTPException(409, "Manager and administrator accounts cannot be reactivated here")
+    if staff.is_active:
+        raise HTTPException(409, "Staff member is already active")
+    # deactivated_at stays as the session cutoff: tokens issued before it remain invalid.
+    staff.is_active = True
+    await revoke_refresh_tokens(db, staff.id)
+    db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="staff", entity_id=staff.id, action="reactivated", occurred_at=utcnow()))
+    await db.commit()
+    await db.refresh(staff)
+    return staff
