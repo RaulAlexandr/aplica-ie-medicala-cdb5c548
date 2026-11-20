@@ -102,7 +102,9 @@ try {
   const tz = clinic.timezone;
   const me = (await doctorApi.call('GET', '/auth/me')).body;
   const rooms = (await receptionApi.call('GET', '/rooms')).body;
-  const catalog = (await doctorApi.call('GET', '/procedures?active=true&limit=50')).body;
+  // Only services without a location rule: this flow books procedures without a tooth, and other scripts or the guide
+  // may have added "tooth required" / "no tooth" services to the same database (allowed_location is absent on older APIs = any).
+  const catalog = (await doctorApi.call('GET', '/procedures?active=true&limit=50')).body.filter(service => (service.allowed_location ?? 'any') === 'any');
   check('three active catalog services', catalog.length >= 3, { services: catalog.length });
   const mkPatient = async first => (await receptionApi.call('POST', '/patients', { first_name: first, last_name: `T13Fictiv${tag}` })).body;
   const patientA = await mkPatient('Doina');
