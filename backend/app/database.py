@@ -21,6 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
     event,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -724,6 +725,67 @@ Index(
     postgresql_where=PatientFinancialEntry.reverses_entry_id.isnot(None),
     sqlite_where=PatientFinancialEntry.reverses_entry_id.isnot(None),
 )
+
+
+class WaitlistEntry(Base):
+    __tablename__ = "waitlist_entries"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="RESTRICT"), nullable=False, index=True)
+    desired_service: Mapped[str | None] = mapped_column(String(120))
+    desired_duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    preferred_doctor_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    windows: Mapped[list] = mapped_column(JSON, nullable=False)
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_until: Mapped[date] = mapped_column(Date, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    notes: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    __table_args__ = (CheckConstraint("desired_duration_minutes BETWEEN 5 AND 1440", name="ck_waitlist_duration"), CheckConstraint("valid_until >= valid_from", name="ck_waitlist_validity"), CheckConstraint("status IN ('active','offered','booked','cancelled','expired')", name="ck_waitlist_status"))
+
+
+class WaitlistOffer(Base):
+    __tablename__ = "waitlist_offers"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    entry_id: Mapped[UUID] = mapped_column(ForeignKey("waitlist_entries.id", ondelete="RESTRICT"), nullable=False, index=True)
+    doctor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    room_id: Mapped[UUID] = mapped_column(ForeignKey("rooms.id", ondelete="RESTRICT"), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    appointment_id: Mapped[UUID | None] = mapped_column(ForeignKey("appointments.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    __table_args__ = (CheckConstraint("duration_minutes BETWEEN 5 AND 1440", name="ck_waitlist_offer_duration"), CheckConstraint("status IN ('active','confirmed','expired','cancelled')", name="ck_waitlist_offer_status"), Index("uq_waitlist_active_interval", "clinic_id", "doctor_id", "room_id", "starts_at", "duration_minutes", unique=True, postgresql_where=text("status = 'active'"), sqlite_where=text("status = 'active'")))
+
+
+class Recall(Base):
+    __tablename__ = "patient_recalls"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="RESTRICT"), nullable=False, index=True)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    reason: Mapped[str] = mapped_column(String(240), nullable=False)
+    service: Mapped[str | None] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    __table_args__ = (CheckConstraint("status IN ('pending','contacted','scheduled','refused')", name="ck_recall_status"),)
+
+
+class RecallHistory(Base):
+    __tablename__ = "patient_recall_history"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    recall_id: Mapped[UUID] = mapped_column(ForeignKey("patient_recalls.id", ondelete="RESTRICT"), nullable=False, index=True)
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, nullable=False)
+    __table_args__ = (CheckConstraint("action IN ('contacted','scheduled','refused')", name="ck_recall_history_action"),)
 
 
 class FormTemplate(Base):
