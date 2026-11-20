@@ -1,3 +1,4 @@
+import { AxiosError } from 'axios';
 import { Calendar } from './Calendar';
 import { AvailabilitySettings } from './AvailabilitySettings';
 import { VisitPage } from './clinical/VisitPage';
@@ -89,19 +90,24 @@ function PatientDetailRoute({ user }: { user: User }) {
   return <PatientDetail key={id} id={id} appointmentId={searchParams.get('appointment_id') ?? undefined} user={user} />;
 }
 
-function PatientDetail({ user, id, appointmentId }: { user: User; id: string; appointmentId?: string }) {
+// A 4xx answer is final (missing, foreign-clinic or malformed id): never retry it and never reveal which case it is.
+const PATIENT_UNAVAILABLE = 'Pacient inexistent sau fără acces';
+const isClientError = (error: unknown) => error instanceof AxiosError && (error.response?.status ?? 0) >= 400 && (error.response?.status ?? 0) < 500;
+
+export function PatientDetail({ user, id, appointmentId }: { user: User; id: string; appointmentId?: string }) {
   const [editing, setEditing] = useState(false);
-  const query = useQuery({ queryKey: ['patient', id], queryFn: () => getPatient(id) });
+  const query = useQuery({ queryKey: ['patient', id], queryFn: () => getPatient(id), retry: (count, error) => !isClientError(error) && count < 2 });
   const client = useQueryClient();
-  if (query.isLoading) return <p className="muted">Loading patient\u2026</p>;
+  if (query.isLoading) return <p className="muted">Loading patient…</p>;
+  if (query.isError && isClientError(query.error)) return <><Link to="/patients">← Patients</Link><p className="error" role="alert">{PATIENT_UNAVAILABLE}</p></>;
   if (query.isError || !query.data) return <ErrorState error={query.error} />;
-  if (editing) return <><Link to="/patients">\u2190 Patients</Link><PatientForm initial={query.data} onSaved={() => { setEditing(false); client.invalidateQueries({ queryKey: ['patient', id] }); }} /></>;
+  if (editing) return <><Link to="/patients">← Patients</Link><PatientForm initial={query.data} onSaved={() => { setEditing(false); client.invalidateQueries({ queryKey: ['patient', id] }); }} /></>;
   const p = query.data;
   return <>
     <header><div><p className="eyebrow">PATIENT DETAIL</p><h1>{p.first_name} {p.last_name}</h1></div>{canEditPatients(user.role) && <button onClick={() => setEditing(true)}>Edit patient</button>}</header>
     <section className="card">
       <h2>Contact</h2>
-      <p>{p.phone || 'No phone'} \u00b7 {p.email || 'No email'}</p>
+      <p>{p.phone || 'No phone'} · {p.email || 'No email'}</p>
       <p>{p.address || 'No address recorded'}{p.emergency_contact ? ` · Emergency contact: ${p.emergency_contact}` : ''}</p>
       <h2>Clinical alerts</h2>
       <p>{p.allergies || 'No allergies recorded.'}</p>

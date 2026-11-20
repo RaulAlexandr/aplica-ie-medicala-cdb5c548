@@ -1,0 +1,198 @@
+{
+  "task": "T33",
+  "sha": "3b897f3d35dc99a4f9f6e73f3edbe9999eef884e",
+  "browserTimezone": "Europe/Bucharest (TZ env; consolidated via CONSOLIDATED_BROWSER_TZ; the t13 script fixes UTC itself)",
+  "runtime": "restored copy of the seeded demo DB, ports 8039/5179",
+  "demo_walkthrough": {
+    "checks": 42,
+    "passed": 42,
+    "pageErrors": 0,
+    "consoleErrors": 2,
+    "unexpected": 0,
+    "expected": "deliberate 404 for an unknown patient id"
+  },
+  "browser_acceptance": {
+    "checks": 60,
+    "passed": 60,
+    "errors": []
+  },
+  "t08": {
+    "checks": 26,
+    "passed": 26,
+    "errors": [],
+    "consoleNote": "503 on POST treatment-plans is the script's mocked error (form keeps draft)"
+  },
+  "periodontal": {
+    "file": "periodontal-acceptance-LATEST.json",
+    "checks": 26,
+    "passed": 26
+  },
+  "t11": {
+    "file": "t11-browser-summary.json",
+    "checks": 30,
+    "passed": 30
+  },
+  "consolidated_bucharest": {
+    "file": "consolidated-summary.json",
+    "checks": 40,
+    "passed": 40
+  },
+  "consolidated_utc": {
+    "file": "consolidated-summary.json",
+    "checks": 40,
+    "passed": 40
+  },
+  "t13": {
+    "file": "t13-browser-summary.json",
+    "checks": 35,
+    "passed": 35
+  },
+  "restore_verification": {
+    "checks": [
+      {
+        "name": "patients",
+        "rows": 3,
+        "digest_source": "65563fc84058e5d4",
+        "digest_copy": "65563fc84058e5d4",
+        "identical": true
+      },
+      {
+        "name": "documents",
+        "rows": 4,
+        "digest_source": "1ace7f44fb967793",
+        "digest_copy": "1ace7f44fb967793",
+        "identical": true
+      },
+      {
+        "name": "document_files",
+        "rows": 4,
+        "digest_source": "74a5be189b70cb54",
+        "digest_copy": "74a5be189b70cb54",
+        "identical": true
+      },
+      {
+        "name": "assessments",
+        "rows": 2,
+        "digest_source": "d0faee8c3d77fed9",
+        "digest_copy": "d0faee8c3d77fed9",
+        "identical": true
+      },
+      {
+        "name": "assessment_sites",
+        "rows": 1,
+        "digest_source": "6edb5affe7250c48",
+        "digest_copy": "6edb5affe7250c48",
+        "identical": true
+      },
+      {
+        "name": "plans",
+        "rows": 1,
+        "digest_source": "76594b990b93a9e6",
+        "digest_copy": "76594b990b93a9e6",
+        "identical": true
+      },
+      {
+        "name": "plan_items",
+        "rows": 3,
+        "digest_source": "871040e693cebec7",
+        "digest_copy": "871040e693cebec7",
+        "identical": true
+      },
+      {
+        "name": "performed",
+        "rows": 1,
+        "digest_source": "bd8a14c7ee71f9c6",
+        "digest_copy": "bd8a14c7ee71f9c6",
+        "identical": true
+      },
+      {
+        "name": "entries",
+        "rows": 5,
+        "digest_source": "9708212dd8820eb8",
+        "digest_copy": "9708212dd8820eb8",
+        "identical": true
+      },
+      {
+        "name": "net_received",
+        "rows": 3,
+        "digest_source": "fb2d1c794eda7e4e",
+        "digest_copy": "fb2d1c794eda7e4e",
+        "identical": true
+      },
+      {
+        "name": "services_completed",
+        "rows": 1,
+        "digest_source": "4742d5fedebb7e6f",
+        "digest_copy": "4742d5fedebb7e6f",
+        "identical": true
+      },
+      {
+        "name": "balance_due",
+        "rows": 3,
+        "digest_source": "c8069b30736e42b1",
+        "digest_copy": "c8069b30736e42b1",
+        "identical": true
+      }
+    ],
+    "ok": true,
+    "documents_hash_verified_in_copy": 4,
+    "balance_due_by_patient_count": 3
+  },
+  "restore_api_read": {
+    "patients": [
+      "Andrei",
+      "Elena",
+      "Ioana"
+    ],
+    "ioana_account": {
+      "currency": "RON"
+    },
+    "elena_documents": {
+      "count": 3,
+      "hash_matches_stored": [
+        true,
+        true,
+        true
+      ]
+    },
+    "andrei_finalized_assessments": 2,
+    "ioana_plan": {
+      "title": "Plan restaurativ demonstrativ",
+      "status": "in_progress",
+      "stages": 2,
+      "linked_item_progress": "done"
+    },
+    "ioana_totals": {
+      "services_completed": "400.00",
+      "paid_net": "200.00",
+      "balance": "200.00 due"
+    }
+  },
+  "npm_audit": {
+    "omit_dev": {
+      "moderate": 2,
+      "high": 2,
+      "critical": 0,
+      "high_packages": [
+        "follow-redirects",
+        "zod"
+      ]
+    },
+    "full": {
+      "moderate": 5,
+      "high": 4,
+      "critical": 2,
+      "critical_packages": [
+        "tinypool",
+        "vitest"
+      ],
+      "high_packages": [
+        "follow-redirects",
+        "source-map-js",
+        "vite",
+        "zod"
+      ]
+    },
+    "upgrades": "none (not authorized)"
+  }
+}
