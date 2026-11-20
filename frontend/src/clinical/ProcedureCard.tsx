@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { User } from '../api/client';
 import { apiErrorMessage } from '../api/client';
@@ -24,6 +24,13 @@ function durationLabel(seconds: number | null) {
   return minutes ? `${minutes} min ${remaining} sec` : `${remaining} sec`;
 }
 
+/** Display-only ticking clock: server totals stay the source of truth, this only adds the open run segment. */
+export function liveSeconds(total: number | null, openRunStartedAt: string | null, now: number): number | null {
+  if (!openRunStartedAt) return total;
+  const elapsed = Math.max(0, Math.floor((now - new Date(openRunStartedAt).getTime()) / 1000));
+  return (total ?? 0) + elapsed;
+}
+
 function clinicDateTime(value: string, timezone: string) {
   return new Intl.DateTimeFormat('ro-RO', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date(value));
 }
@@ -38,8 +45,17 @@ export function ProcedureCard({ procedure, user, timezone, isVisitClosed, onChan
   const queryClient = useQueryClient();
   const [showSegments, setShowSegments] = useState(false);
   const [showRevisions, setShowRevisions] = useState(false);
-  const segments = useQuery({ queryKey: ['procedure-segments', procedure.id], queryFn: () => getProcedureSegments(procedure.id), enabled: showSegments });
   const revisions = useQuery({ queryKey: ['procedure-revisions', procedure.id], queryFn: () => getPerformedProcedureRevisions(procedure.id), enabled: showRevisions });
+  const isRunning = procedure.status === 'running';
+  const segments = useQuery({ queryKey: ['procedure-segments', procedure.id], queryFn: () => getProcedureSegments(procedure.id), enabled: showSegments || isRunning });
+  const openRun = isRunning ? segments.data?.find(segment => segment.segment_type === 'run' && segment.ended_at === null) : undefined;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!openRun) return undefined;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [openRun?.id]);
   const action = useMutation({
     mutationFn: (next: Action) => {
       if (next === 'start') return startPerformedProcedure(procedure.id);
@@ -80,6 +96,7 @@ export function ProcedureCard({ procedure, user, timezone, isVisitClosed, onChan
     <p><strong>Catalog price snapshot:</strong> {procedure.procedure_base_price} {procedure.procedure_currency}</p>
     {procedure.current_price !== null && procedure.current_price !== procedure.procedure_base_price && <p><strong>Current recorded price:</strong> {procedure.current_price} {procedure.procedure_currency}</p>}
     <p><strong>Active time from server:</strong> {durationLabel(procedure.total_duration_seconds)}{procedure.status === 'running' ? ' · current segment is not included until stopped' : ''}</p>
+    {openRun && <p className="procedure-live-timer" role="timer" aria-label="Elapsed active time"><strong>Running now:</strong> {durationLabel(liveSeconds(procedure.total_duration_seconds, openRun.started_at, now))} (display only; the server total above is the record)</p>}
     {procedure.notes && <p className="clinical-note-text">{procedure.notes}</p>}
     {canMutate && actions.length > 0 && <div className="clinical-actions">
       {actions.map(item => <button key={item.action} className={item.className ?? ''} disabled={action.isPending} onClick={() => action.mutate(item.action)}>{action.isPending ? 'Saving…' : item.label}</button>)}

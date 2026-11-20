@@ -8,6 +8,7 @@ import type { Appointment, ProcedureCatalog, User } from '../api/client';
 import * as clinicalApi from './api';
 import type { PerformedProcedure, VisitSummary } from './api';
 import { VisitPage } from './VisitPage';
+import { liveSeconds } from './ProcedureCard';
 
 const user: User = { id: 'doctor-1', clinic_id: 'clinic-1', full_name: 'Dr. Sample', email: 'doctor@example.test', role: 'doctor' };
 const appointment: Appointment = {
@@ -120,5 +121,35 @@ describe('F12: history panels already open follow the server after a procedure t
 
     expect(revisionsQuery.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(text(renderer.root)).toContain('status: pending → cancelled');
+  });
+});
+
+
+describe('S5: a running procedure shows a ticking time computed from the open run segment', () => {
+  it('adds the open segment to the server total, ticks every second, and is absent when not running', async () => {
+    const started = '2026-10-28T08:05:00Z';
+    const running = { ...procedure, status: 'running' as const, total_duration_seconds: 30 };
+    vi.spyOn(apiClient, 'getAppointment').mockResolvedValue(appointment);
+    vi.spyOn(apiClient, 'listProcedures').mockResolvedValue([]);
+    vi.spyOn(clinicalApi, 'getVisitSummary').mockImplementation(async () => summaryOf(running));
+    vi.spyOn(clinicalApi, 'getProcedureSegments').mockResolvedValue([{ ...runSegment, started_at: started }]);
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'], now: new Date('2026-10-28T08:06:05Z') });
+    try {
+      let renderer!: TestRenderer.ReactTestRenderer;
+      await act(async () => { renderer = TestRenderer.create(makeTree()); await flush(); });
+      await until(() => text(renderer.root).includes('Running now:'), 'the live timer');
+      // 30 s from the server + 65 s since the open segment began = 95 s.
+      expect(text(renderer.root)).toContain('Running now: 1 min 35 sec');
+      expect(text(renderer.root)).toContain('Active time from server: 30 sec');
+      await act(async () => { vi.advanceTimersByTime(5000); });
+      expect(text(renderer.root)).toContain('Running now: 1 min 40 sec');
+      renderer.unmount();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('liveSeconds is the server total when there is no open run segment and never goes negative', () => {
+    expect(liveSeconds(42, null, Date.now())).toBe(42);
+    expect(liveSeconds(null, null, Date.now())).toBeNull();
+    expect(liveSeconds(10, '2030-01-01T00:00:00Z', Date.parse('2029-01-01T00:00:00Z'))).toBe(10);
   });
 });
