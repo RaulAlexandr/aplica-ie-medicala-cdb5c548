@@ -404,31 +404,41 @@ def seed_clinical(credentials: dict, ids: dict[str, UUID], manager_token: str) -
 
     # --- T09/T10 two finalized periodontal assessments (second follows the first) ---------
     assessments = request("GET", f"/api/periodontal/patients/{andrei}/assessments", token=doctor)
-    if sum(1 for row in assessments if row["status"] == "finalized") < 2:
-        def measurements(depth_shift: int, bop_every: int) -> dict:
-            teeth = []
-            for tooth_index, tooth in enumerate(("16", "11", "26", "36", "46")):
-                sites = []
-                for site_index, site in enumerate(("buccal_mesial", "buccal_mid", "buccal_distal", "oral_mesial", "oral_mid", "oral_distal")):
-                    base = 3 + (tooth_index + site_index) % 4
-                    sites.append({"site": site, "probing_depth_mm": str(max(1, base - depth_shift)),
-                                  "recession_mm": str((tooth_index + site_index) % 2),
-                                  "bop": (tooth_index + site_index) % bop_every == 0,
-                                  "plaque": (site_index % 3 == 0) if depth_shift == 0 else (site_index % 5 == 0),
-                                  "suppuration": False})
-                teeth.append({"tooth_fdi": tooth, "is_excluded": False, "sites": sites})
-            return {"teeth": teeth}
 
+    def measurements(depth_shift: int, bop_every: int) -> dict:
+        teeth = []
+        for tooth_index, tooth in enumerate(("16", "11", "26", "36", "46")):
+            sites = []
+            for site_index, site in enumerate(("buccal_mesial", "buccal_mid", "buccal_distal", "oral_mesial", "oral_mid", "oral_distal")):
+                base = 3 + (tooth_index + site_index) % 4
+                sites.append({"site": site, "probing_depth_mm": max(1, base - depth_shift),
+                              "recession_mm": (tooth_index + site_index) % 2,
+                              "bop": (tooth_index + site_index) % bop_every == 0,
+                              "plaque": (site_index % 3 == 0) if depth_shift == 0 else (site_index % 5 == 0),
+                              "suppuration": False})
+            teeth.append({"tooth_fdi": tooth, "is_excluded": False, "sites": sites})
+        return {"teeth": teeth}
+
+    def complete(assessment: dict, data: dict) -> dict:
+        # Resume-safe: a draft left by an interrupted run is measured and finalized, never duplicated.
+        if assessment["status"] == "draft":
+            request("PUT", f"/api/periodontal/assessments/{assessment['id']}/measurements", data, doctor)
+            request("POST", f"/api/periodontal/assessments/{assessment['id']}/finalize", token=doctor)
+            count("evaluări parodontale")
+        return assessment
+
+    ordered = sorted(assessments, key=lambda row: row["clinical_date"])
+    first = next((row for row in ordered if row["previous_assessment_id"] is None), None)
+    if first is None:
         first = request("POST", f"/api/periodontal/patients/{andrei}/assessments",
                         {"clinical_date": (today - timedelta(days=90)).isoformat()}, doctor)
-        request("PUT", f"/api/periodontal/assessments/{first['id']}/measurements", measurements(0, 2), doctor)
-        request("POST", f"/api/periodontal/assessments/{first['id']}/finalize", token=doctor)
+    complete(first, measurements(0, 2))
+    second = next((row for row in ordered if row["previous_assessment_id"] == first["id"]), None)
+    if second is None:
         second = request("POST", f"/api/periodontal/patients/{andrei}/assessments", {
             "clinical_date": (today - timedelta(days=2)).isoformat(), "previous_assessment_id": first["id"],
             "relationship_kind": "follow_up", "change_reason": "Reevaluare după igienizare (fictiv)."}, doctor)
-        request("PUT", f"/api/periodontal/assessments/{second['id']}/measurements", measurements(1, 4), doctor)
-        request("POST", f"/api/periodontal/assessments/{second['id']}/finalize", token=doctor)
-        count("evaluări parodontale")
+    complete(second, measurements(1, 4))
 
     # --- T11 documents: real PNG/JPEG/PDF generated locally -------------------------------
     images = fictional_images()
