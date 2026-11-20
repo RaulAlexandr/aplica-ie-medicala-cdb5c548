@@ -111,14 +111,19 @@ async def test_matching_order_doctor_any_and_expired_validity(ctx):
         wrong_doctor=WaitlistEntry(clinic_id=clinic.id,patient_id=patient["id"],desired_duration_minutes=30,
             preferred_doctor_id=other_doctor.id,windows=common["windows"],valid_from=day,valid_until=day,priority=99,status="active",created_by_id=identity["id"])
         s.add_all([preferred,wrong_doctor])
-        expired=WaitlistEntry(clinic_id=clinic.id,patient_id=patient["id"],desired_duration_minutes=30,
+        future_expiry=WaitlistEntry(clinic_id=clinic.id,patient_id=patient["id"],desired_duration_minutes=30,
             windows=common["windows"],valid_from=day-timedelta(days=3),valid_until=day-timedelta(days=2),priority=100,status="active",created_by_id=identity["id"])
-        s.add(expired); await s.commit()
+        genuinely_expired=WaitlistEntry(clinic_id=clinic.id,patient_id=patient["id"],desired_duration_minutes=30,
+            windows=common["windows"],valid_from=date.today()-timedelta(days=3),valid_until=date.today()-timedelta(days=2),priority=101,status="active",created_by_id=identity["id"])
+        s.add_all([future_expiry,genuinely_expired]); await s.commit()
     room=(await c.post("/api/rooms",headers=h,json={"name":"Room fake"})).json()
     params={"doctor_id":doctor_id,"room_id":room["id"],"starts_at":f"{day.isoformat()}T10:00:00+02:00","duration_minutes":30}
     result=await c.post("/api/waitlist/slots/candidates",headers=h,json=params)
     assert result.status_code==200
     assert [item["id"] for item in result.json()]==[str(preferred.id),ids[1],ids[0]]
+    async with ctx[1]() as s:
+        assert (await s.get(WaitlistEntry,future_expiry.id)).status=="active"
+        assert (await s.get(WaitlistEntry,genuinely_expired.id)).status=="expired"
     too_short=await c.post("/api/waitlist/slots/candidates",headers=h,json={**params,"duration_minutes":20})
     assert too_short.json()==[]
 
