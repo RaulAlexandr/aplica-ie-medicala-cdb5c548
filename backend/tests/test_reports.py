@@ -179,8 +179,12 @@ async def test_report_auth_foreign_filters_invalid_period_and_unconfigured_room(
         foreign_id = foreign_room.id
     wrong_filter = await client.get(f"/api/reports/appointments_total?from=2026-10-25&to=2026-10-25&room_id={foreign_id}", headers=headers)
     assert wrong_filter.status_code == 404
+    wrong_room_records = await client.get(f"/api/reports/appointments_total/records?from=2026-10-25&to=2026-10-25&room_id={foreign_id}", headers=headers)
+    assert wrong_room_records.status_code == 404
     wrong_doctor = await client.get(f"/api/reports/appointments_total?from=2026-10-25&to=2026-10-25&doctor_id={foreign_doctor.id}", headers=headers)
     assert wrong_doctor.status_code == 404
+    wrong_doctor_records = await client.get(f"/api/reports/appointments_total/records?from=2026-10-25&to=2026-10-25&doctor_id={foreign_doctor.id}", headers=headers)
+    assert wrong_doctor_records.status_code == 404
     invalid = await client.get("/api/reports/appointments_total?from=2025-01-01&to=2026-01-02", headers=headers)
     assert invalid.status_code == 422
     backwards = await client.get("/api/reports/appointments_total?from=2026-10-26&to=2026-10-25", headers=headers)
