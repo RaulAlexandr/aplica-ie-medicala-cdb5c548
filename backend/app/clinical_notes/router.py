@@ -59,6 +59,16 @@ TIMELINE_EVENT_TYPES = {
     "alert",
 }
 
+# Only these persisted entity/event pairs are part of the supported timeline
+# contract. Legacy imports may contain arbitrary text, so unknown pairs must
+# never reach non-clinical users.
+KNOWN_TIMELINE_EVENT_PAIRS = {
+    ("appointment", "appointment"),
+    ("performed_procedure", "performed_procedure"),
+    ("clinical_note", "clinical_note"),
+    ("patient_revision", "patient_revision"),
+}
+
 # FDI tooth validation
 FDI_PATTERN = r"^[1-4][1-8]$"
 VALID_SURFACES = {
@@ -260,6 +270,14 @@ def _sanitize_timeline_event(event: PatientTimelineEvent, user: User, db: AsyncS
     # Non-clinical roles: assistant, reception
     CLINICAL_ROLES = {"clinic_manager", "doctor", "administrator"}
     is_clinical_role = user.role in CLINICAL_ROLES
+
+    if (
+        not is_clinical_role
+        and (event.entity_type, event.event_type) not in KNOWN_TIMELINE_EVENT_PAIRS
+    ):
+        result["title"] = "Eveniment din istoric"
+        result["description"] = ""
+        return result
 
     # Sanitize based on entity type
     if event.entity_type == "clinical_note":

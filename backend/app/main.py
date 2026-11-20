@@ -11,14 +11,17 @@ from app.clinical_notes.router import router as clinical_notes_router
 from app.config import settings
 from app.documents.router import router as documents_router
 from app.finance.router import router as finance_router
+from app.forms.router import router as forms_router
 from app.odontogram.router import router as odontogram_router
 from app.patients.router import router as patients_router
 from app.performed_procedures.router import router as performed_procedures_router
 from app.periodontal.router import router as periodontal_router
 from app.procedures.router import router as procedures_router
+from app.reports.router import router as reports_router
 from app.rooms_router import router as rooms_router
 from app.staff.router import router as staff_management_router
 from app.treatment_plans.router import router as treatment_plans_router
+from app.waitlist.router import router as waitlist_router
 
 
 @asynccontextmanager
@@ -40,10 +43,13 @@ app.include_router(periodontal_router, prefix="/api")
 app.include_router(treatment_plans_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(finance_router, prefix="/api")
+app.include_router(waitlist_router, prefix="/api")
+app.include_router(forms_router, prefix="/api")
 app.include_router(availability_router, prefix="/api")
 app.include_router(rooms_router, prefix="/api")
 app.include_router(staff_router, prefix="/api")
 app.include_router(staff_management_router, prefix="/api")
+app.include_router(reports_router, prefix="/api")
 
 
 @app.get("/health")

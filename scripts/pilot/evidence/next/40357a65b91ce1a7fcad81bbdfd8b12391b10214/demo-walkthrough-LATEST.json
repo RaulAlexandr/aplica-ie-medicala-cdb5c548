@@ -1,0 +1,359 @@
+{
+  "task": "T33-walkthrough",
+  "appSha": "40357a65b91ce1a7fcad81bbdfd8b12391b10214",
+  "web": "http://127.0.0.1:5191",
+  "api": "http://127.0.0.1:8051/api",
+  "browser": "151.0.7922.34",
+  "browserTimezone": "Europe/Bucharest",
+  "clinicTimezone": "Europe/Bucharest",
+  "checks": [
+    {
+      "name": "clinic zone is Europe/Bucharest (the demo clinic)",
+      "passed": true,
+      "tz": "Europe/Bucharest"
+    },
+    {
+      "name": "the three seeded demo patients exist",
+      "passed": true
+    },
+    {
+      "name": "seed placed visits on today in the clinic zone",
+      "passed": true,
+      "today": "2026-11-20",
+      "visits": 3
+    },
+    {
+      "name": "reception menu: patients, agenda, catalog, daily cash; no setup/staff",
+      "passed": true,
+      "nav": [
+        "Overview",
+        "Patients",
+        "Appointments",
+        "Procedure catalog",
+        "Lista de așteptare",
+        "Încasări zi"
+      ]
+    },
+    {
+      "name": "agenda today shows the three seeded visits at their clinic-zone hours",
+      "passed": true,
+      "hasIoana": true
+    },
+    {
+      "name": "agenda shows both rooms and the visit statuses",
+      "passed": true
+    },
+    {
+      "name": "a free clinic-local slot was found for the demo booking",
+      "passed": true,
+      "slot": "2026-12-30T09:00"
+    },
+    {
+      "name": "reception books a new appointment in the UI",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "the booked time is read back in the clinic zone (UI input = clinic wall time)",
+      "passed": true,
+      "sent": "2026-12-30T09:00",
+      "localStart": "2026-12-30T09:00:00+02:00"
+    },
+    {
+      "name": "Ioana account: services 400.00 and paid net at least 200.00 (the reversed 50.00 is excluded)",
+      "passed": true,
+      "services": "400.00 RON",
+      "paid": "200.00 RON",
+      "balance": "200.00 RON de plată"
+    },
+    {
+      "name": "the reversed movement is visible with its reason (history is not rewritten)",
+      "passed": true
+    },
+    {
+      "name": "reception records a payment (201)",
+      "passed": true
+    },
+    {
+      "name": "paid net increased by exactly the recorded 100.00 and the balance text was recomputed",
+      "passed": true,
+      "before": {
+        "services": "400.00 RON",
+        "paid": "200.00 RON",
+        "balance": "200.00 RON de plată"
+      },
+      "after": {
+        "services": "400.00 RON",
+        "paid": "300.00 RON",
+        "balance": "100.00 RON de plată"
+      }
+    },
+    {
+      "name": "daily cash page: per-method net, total, reversal listed, explicitly not fiscal",
+      "passed": true,
+      "text": "EVIDENȚĂ INTERNĂ — NU ESTE RAPORT FISCAL\n\nÎncasări zi\nZiua (în fusul clinicii)\nMetodă\tNet (RON)\nNumerar\t300.00\nCard\t300.00\nTransfer\t0.00\nAltă metodă\t0.00\nTotal "
+    },
+    {
+      "name": "doctor menu has no daily cash, setup or staff",
+      "passed": true,
+      "nav": [
+        "Overview",
+        "Patients",
+        "Appointments",
+        "Procedure catalog",
+        "Lista de așteptare"
+      ]
+    },
+    {
+      "name": "visit shows the completed REST-DEMO on 16 with the price snapshot and a recorded active time",
+      "passed": true,
+      "text": "← Calendar\n\nTREATMENT VISIT\n\nIoana Exemplu\n\n20.11.2026, 09:00:00 · Obturație demonstrativă\n\nPatient record\n\nVISIT STATUS\n\nin progress\nIn Progress\nClose visit\n\nAll procedures are resolved. Closing the appointment is a separate action.\n\nPROCEDURES\n\nPerformed procedures\n1 saved\nREST-DEMO · Obturație demonstrativă\n\ncompleted · FDI 16 · occlusal\n\nCompleted\n\nCatalog price snapshot: 400.00 RON\n\nActive ti"
+    },
+    {
+      "name": "completed procedure did not close the visit (still in progress, closing is separate)",
+      "passed": true
+    },
+    {
+      "name": "odontogram shows 1.8 and 2.8 as missing",
+      "passed": true
+    },
+    {
+      "name": "selecting tooth 16 shows the finalized seeded finding (carie, occlusal) without starting any timer",
+      "passed": true
+    },
+    {
+      "name": "tooth 36 is preselected from the odontogram",
+      "passed": true
+    },
+    {
+      "name": "procedure from the tooth is saved pending, no timer started",
+      "passed": true
+    },
+    {
+      "name": "timer start -> running",
+      "passed": true
+    },
+    {
+      "name": "timer pause -> paused",
+      "passed": true
+    },
+    {
+      "name": "timer resume -> running",
+      "passed": true
+    },
+    {
+      "name": "timer complete -> completed",
+      "passed": true
+    },
+    {
+      "name": "exactly one new procedure was added, and the visit is still open",
+      "passed": true
+    },
+    {
+      "name": "plan: two stages, accepted version, first item done and linked to the performed procedure",
+      "passed": true
+    },
+    {
+      "name": "periodontal history lists two finalized sessions",
+      "passed": true,
+      "options": 3
+    },
+    {
+      "name": "the two seeded sessions are selectable by clinical date",
+      "passed": true,
+      "options": 3
+    },
+    {
+      "name": "comparison shows the persisted probing-depth improvement (Δ -1)",
+      "passed": true
+    },
+    {
+      "name": "Elena has the radiograph, the photo and the consent document",
+      "passed": true
+    },
+    {
+      "name": "zoom works on the authorized image",
+      "passed": true
+    },
+    {
+      "name": "downloaded bytes hash equals the stored SHA-256",
+      "passed": true
+    },
+    {
+      "name": "unknown/foreign patient id shows the clear message quickly, not \"Loading patient\"",
+      "passed": true
+    },
+    {
+      "name": "favicon is linked and served",
+      "passed": true
+    },
+    {
+      "name": "manager menu includes setup, staff, catalog and daily cash",
+      "passed": true,
+      "nav": [
+        "Overview",
+        "Patients",
+        "Appointments",
+        "Procedure catalog",
+        "Lista de așteptare",
+        "Încasări zi",
+        "Rapoarte",
+        "Clinic setup",
+        "Staff"
+      ]
+    },
+    {
+      "name": "setup shows the clinic zone, both rooms and working hours",
+      "passed": true
+    },
+    {
+      "name": "catalog lists the three demo services with prices",
+      "passed": true
+    },
+    {
+      "name": "manager records an adjustment with a reason (201)",
+      "passed": true
+    },
+    {
+      "name": "manager reverses it with a reason (201)",
+      "passed": true
+    },
+    {
+      "name": "after adjustment + reversal the balance equals the starting balance (net effect zero, history kept)",
+      "passed": true,
+      "before": {
+        "services": "250.00 RON",
+        "paid": "0.00 RON",
+        "balance": "225.00 RON de plată"
+      },
+      "after": {
+        "services": "250.00 RON",
+        "paid": "0.00 RON",
+        "balance": "225.00 RON de plată"
+      }
+    },
+    {
+      "name": "setup: manager invites a fictional assistant",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "setup: the assistant accepts the invitation",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "name": "manager deactivates the member from the staff list",
+      "passed": true
+    },
+    {
+      "name": "a deactivated member cannot sign in (clear refusal, no menu)",
+      "passed": true
+    },
+    {
+      "name": "reactivation asks for confirmation first",
+      "passed": true
+    },
+    {
+      "name": "manager reactivates the member (200)",
+      "passed": true
+    },
+    {
+      "name": "after reactivation the member signs in again (new login)",
+      "passed": true
+    },
+    {
+      "name": "catalog form offers allowed locations, default \"any\"",
+      "passed": true
+    },
+    {
+      "name": "manager creates a service that requires a tooth",
+      "passed": true,
+      "allowed": "tooth"
+    },
+    {
+      "name": "the doctor cannot save the service without a tooth (button disabled, rule shown, nothing sent)",
+      "passed": true
+    },
+    {
+      "name": "the server also refuses it without a tooth (422)",
+      "passed": true,
+      "status": 422
+    },
+    {
+      "name": "with tooth 16 the same service saves",
+      "passed": true
+    },
+    {
+      "name": "no unexpected console errors or failed requests during the walkthrough",
+      "passed": true,
+      "unexpected": [],
+      "pageErrors": 0
+    }
+  ],
+  "artifacts": [
+    "demo-reception-agenda.png",
+    "demo-reception-account.png",
+    "demo-doctor-visit.png",
+    "demo-doctor-plan.png",
+    "demo-doctor-periodontal-comparison.png",
+    "demo-doctor-document-zoom.png",
+    "demo-manager-adjustment-reversal.png",
+    "demo-manager-staff-reactivated.png"
+  ],
+  "pageErrors": [],
+  "consoleErrors": [
+    {
+      "user": "doctor",
+      "httpStatus": 404,
+      "method": "GET",
+      "path": "/api/patients/:id"
+    },
+    {
+      "user": "doctor",
+      "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "sourcePath": "/api/patients/:id"
+    },
+    {
+      "user": "member-refused",
+      "httpStatus": 401,
+      "method": "POST",
+      "path": "/api/auth/login"
+    },
+    {
+      "user": "member-refused",
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "sourcePath": "/api/auth/login"
+    }
+  ],
+  "classified": {
+    "expected": [
+      {
+        "user": "doctor",
+        "httpStatus": 404,
+        "method": "GET",
+        "path": "/api/patients/:id"
+      },
+      {
+        "user": "doctor",
+        "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "sourcePath": "/api/patients/:id"
+      },
+      {
+        "user": "member-refused",
+        "httpStatus": 401,
+        "method": "POST",
+        "path": "/api/auth/login"
+      },
+      {
+        "user": "member-refused",
+        "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+        "sourcePath": "/api/auth/login"
+      }
+    ],
+    "unexpected": []
+  },
+  "errors": [],
+  "passed": 54,
+  "total": 54
+}

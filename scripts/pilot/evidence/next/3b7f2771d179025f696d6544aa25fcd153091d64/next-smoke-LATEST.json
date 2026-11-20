@@ -1,0 +1,182 @@
+{
+  "sectionFailures": [],
+  "task": "INT2-next-smoke",
+  "appSha": "3b7f2771d179025f696d6544aa25fcd153091d64",
+  "web": "http://127.0.0.1:5191",
+  "api": "http://127.0.0.1:8051/api",
+  "browser": "151.0.7922.34",
+  "browserTimezone": "Europe/Bucharest",
+  "clinicTimezone": "Europe/Bucharest",
+  "checks": [
+    {
+      "name": "clinic zone is Europe/Bucharest (the demo clinic)",
+      "passed": true,
+      "tz": "Europe/Bucharest"
+    },
+    {
+      "name": "the seeded patient Elena Test exists",
+      "passed": true
+    },
+    {
+      "name": "an active doctor and room exist",
+      "passed": true
+    },
+    {
+      "name": "manager menu has waitlist and reports links",
+      "passed": true,
+      "nav": [
+        "Overview",
+        "Patients",
+        "Appointments",
+        "Procedure catalog",
+        "Lista de așteptare",
+        "Încasări zi",
+        "Rapoarte",
+        "Clinic setup",
+        "Staff"
+      ]
+    },
+    {
+      "name": "manager creates a draft template (201)",
+      "passed": true
+    },
+    {
+      "name": "manager publishes the template version (2xx)",
+      "passed": true
+    },
+    {
+      "name": "the published template is visible to reception with 2 questions in 1 section",
+      "passed": true
+    },
+    {
+      "name": "reception menu: waitlist yes, reports no",
+      "passed": true,
+      "nav": [
+        "Overview",
+        "Patients",
+        "Appointments",
+        "Procedure catalog",
+        "Lista de așteptare",
+        "Încasări zi"
+      ]
+    },
+    {
+      "name": "reception submits the filled form (2xx)",
+      "passed": true
+    },
+    {
+      "name": "reception sees no validate button and no correction history",
+      "passed": true
+    },
+    {
+      "name": "the server returns the form as submitted and hides the answers from reception",
+      "passed": true,
+      "status": "submitted",
+      "hasAnswers": false
+    },
+    {
+      "name": "reception cannot read the correction history (403)",
+      "passed": true,
+      "status": 403
+    },
+    {
+      "name": "doctor menu: waitlist yes, reports no",
+      "passed": true,
+      "nav": [
+        "Overview",
+        "Patients",
+        "Appointments",
+        "Procedure catalog",
+        "Lista de așteptare"
+      ]
+    },
+    {
+      "name": "the doctor sees the submitted answer",
+      "passed": true
+    },
+    {
+      "name": "doctor validates the form (2xx)",
+      "passed": true
+    },
+    {
+      "name": "the stored form is validated with a validation time",
+      "passed": true,
+      "status": "validated"
+    },
+    {
+      "name": "a free clinic-local slot exists on the same weekday",
+      "passed": true,
+      "slot": {
+        "day": "2026-11-27",
+        "hour": "10:00",
+        "week": 1
+      }
+    },
+    {
+      "name": "reception adds the waitlist entry (201)",
+      "passed": true
+    },
+    {
+      "name": "candidate search answers 2xx",
+      "passed": true
+    },
+    {
+      "name": "the phone offer is recorded (201)",
+      "passed": true
+    },
+    {
+      "name": "the confirmation creates the appointment (201)",
+      "passed": true,
+      "status": 201
+    },
+    {
+      "name": "the appointment exists at the offered clinic-local time",
+      "passed": true,
+      "day": "2026-11-27",
+      "hour": "10:00"
+    },
+    {
+      "name": "the agenda shows the booked visit for Elena Test at the offered hour",
+      "passed": true,
+      "hour": "10:00"
+    },
+    {
+      "name": "reception is redirected from /reports to the overview",
+      "passed": true
+    },
+    {
+      "name": "all 15 report indicators loaded with 2xx",
+      "passed": true,
+      "loads": 15,
+      "statuses": [
+        200
+      ]
+    },
+    {
+      "name": "the appointments indicator counts at least the seeded visits plus the new booking",
+      "passed": true,
+      "total": 4
+    },
+    {
+      "name": "the source records list includes the booked appointment of Elena Test",
+      "passed": true,
+      "rows": 4
+    },
+    {
+      "name": "no console errors, page errors or failed requests during the smoke",
+      "passed": true,
+      "consoleErrors": [],
+      "pageErrors": []
+    }
+  ],
+  "artifacts": [
+    "next-form-validated.png",
+    "next-agenda-booked.png",
+    "next-report-records.png"
+  ],
+  "pageErrors": [],
+  "consoleErrors": [],
+  "errors": [],
+  "passed": 28,
+  "total": 28
+}

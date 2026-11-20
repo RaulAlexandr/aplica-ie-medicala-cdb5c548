@@ -1116,3 +1116,59 @@ async def test_timeline_sanitizes_old_events_without_refresh(client_and_db):
         event_inaccessible = inaccessible_events[0]
         assert "INACCESSIBLE_TITLE_MARKER" not in event_inaccessible["title"], "Inaccessible note title should be sanitized"
         assert "INACCESSIBLE_METADATA_MARKER" not in str(event_inaccessible.get("metadata", {})), "Inaccessible note metadata should be sanitized"
+
+
+@pytest.mark.asyncio
+async def test_timeline_hides_unknown_legacy_event_text_from_nonclinical_roles(client_and_db):
+    client, sessions = client_and_db
+    tokens = await register(client, email="f14-manager@example.com")
+    manager_headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    me = (await client.get("/api/auth/me", headers=manager_headers)).json()
+    patient = await client.post("/api/patients", headers=manager_headers, json={
+        "first_name": "F14", "last_name": "Test"
+    })
+    assert patient.status_code == 201
+    patient_id = UUID(patient.json()["id"])
+    event_text = "F14_LEGACY_CLINICAL_TEXT"
+
+    async with sessions() as session:
+        event = PatientTimelineEvent(
+            clinic_id=UUID(me["clinic_id"]), patient_id=patient_id,
+            event_type="legacy_import", entity_type="patient_revision",
+            entity_id=patient_id, title=event_text, description=event_text,
+            actor_id=UUID(me["id"]), occurred_at=datetime.now(UTC),
+            recorded_at=datetime.now(UTC), source="legacy_import",
+            metadata={"notes": event_text},
+        )
+        session.add(event)
+        await session.commit()
+        event_id = event.id
+
+        users = [
+            User(clinic_id=UUID(me["clinic_id"]), full_name=f"F14 {role.title()}",
+                 email=f"f14-{role}@example.com", password_hash=hash_password("password-123456"),
+                 role=role, is_active=True)
+            for role in ("assistant", "reception", "doctor")
+        ]
+        session.add_all(users)
+        await session.commit()
+        user_ids = {user.role: user.id for user in users}
+
+    url = f"/api/clinical-notes/patients/{patient_id}/timeline"
+    for role in ("assistant", "reception"):
+        response = await client.get(url, headers={
+            "Authorization": f"Bearer {create_test_token(str(user_ids[role]), me['clinic_id'], role)}"
+        })
+        assert response.status_code == 200
+        event_response = next(item for item in response.json() if item["id"] == str(event_id))
+        assert event_response["title"] == "Eveniment din istoric"
+        assert event_response["description"] == ""
+        assert event_text not in response.text
+
+    doctor_response = await client.get(url, headers={
+        "Authorization": f"Bearer {create_test_token(str(user_ids['doctor']), me['clinic_id'], 'doctor')}"
+    })
+    assert doctor_response.status_code == 200
+    doctor_event = next(item for item in doctor_response.json() if item["id"] == str(event_id))
+    assert doctor_event["title"] == event_text
+    assert doctor_event["description"] == event_text

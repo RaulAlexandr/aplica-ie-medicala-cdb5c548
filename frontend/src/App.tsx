@@ -5,6 +5,9 @@ import { VisitPage } from './clinical/VisitPage';
 import { ClinicalPatientRecord } from './clinical/ClinicalPatientRecord';
 import { PatientAccountPanel } from './finance/PatientAccountPanel';
 import { DailyReportPage } from './finance/DailyReportPage';
+import { FormTemplateEditor, PatientFormsPanel } from './forms/Forms';
+import { WaitlistPanel } from './waitlist/Waitlist';
+import { ReportsPage } from './reports/ReportsPage';
 import { StaffDetail } from './staff/StaffDetail';
 import { locationLabel, ruleOf } from './catalog/locations';
 import { CatalogProcedureForm } from './catalog/CatalogProcedureForm';
@@ -42,7 +45,9 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {staffRoles.includes(user.role) && <Link to="/patients">Patients</Link>}
         {staffRoles.includes(user.role) && <Link to="/appointments">Appointments</Link>}
         {staffRoles.includes(user.role) && <Link to="/procedures">Procedure catalog</Link>}
+        {staffRoles.includes(user.role) && <Link to="/waitlist">Lista de așteptare</Link>}
         {cashRoles.includes(user.role) && <Link to="/finance/daily">Încasări zi</Link>}
+        {managementRoles.includes(user.role) && <Link to="/reports">Rapoarte</Link>}
         {managementRoles.includes(user.role) && <><Link to="/setup">Clinic setup</Link><Link to="/staff">Staff</Link></>}
       </nav>
       <button className="link logout" onClick={() => void onLogout()}>Sign out</button>
@@ -125,6 +130,7 @@ export function PatientDetail({ user, id, appointmentId }: { user: User; id: str
       <p>{p.notes || 'No notes recorded.'}</p>
     </section>
     {staffRoles.includes(user.role) && <PatientAccountPanel key={`${id}:account`} patientId={id} />}
+    {staffRoles.includes(user.role) && <PatientFormsPanel key={`${id}:forms`} patientId={id} canReview={clinicalRoles.includes(user.role)} />}
     {clinicalRoles.includes(user.role) && <ClinicalPatientRecord key={id} patientId={id} appointmentId={appointmentId} user={user} />}
   </>;
 }
@@ -333,6 +339,7 @@ function Setup({ user }: { user: User }) {
     <ClinicSettings />
     <AvailabilitySettings />
     <Rooms />
+    <FormTemplateEditor />
     <section className="card notice">
       <h2>Next step</h2>
       <p>{rooms.data?.length ? 'Invite your doctor, assistant, and receptionist from Staff.' : 'Create at least one active treatment room before booking appointments.'}</p>
@@ -452,10 +459,12 @@ export default function App() {
       <Route path="/patients" element={<Patients user={user} />} />
       <Route path="/patients/:id" element={<PatientDetailRoute user={user} />} />
       <Route path="/appointments" element={<Appointments user={user} />} />
+      <Route path="/waitlist" element={staffRoles.includes(user.role) ? <WaitlistPanel /> : <Navigate to="/" />} />
       <Route path="/appointments/:appointmentId/visit" element={<VisitPage user={user} />} />
       <Route path="/procedures" element={<Procedures user={user} />} />
       <Route path="/procedures/:id" element={<ProcedureDetail user={user} />} />
       <Route path="/finance/daily" element={cashRoles.includes(user.role) ? <DailyReportPage /> : <Navigate to="/" />} />
+      <Route path="/reports" element={managementRoles.includes(user.role) ? <ReportsPage /> : <Navigate to="/" />} />
       <Route path="/setup" element={managementRoles.includes(user.role) ? <Setup user={user} /> : <Navigate to="/" />} />
       <Route path="/staff" element={managementRoles.includes(user.role) ? <StaffOnboarding /> : <Navigate to="/" />} />
       <Route path="/staff/:id" element={managementRoles.includes(user.role) ? <StaffDetail /> : <Navigate to="/" />} />
