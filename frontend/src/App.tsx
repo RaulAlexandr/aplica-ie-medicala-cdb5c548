@@ -159,6 +159,8 @@ function Procedures({ user }: { user: User }) {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<ProcedureCatalog | undefined>(undefined);
   const client = useQueryClient();
+  // List and count use different key roots; refresh both (and other catalog lists) after a change.
+  const invalidateCatalog = () => { client.invalidateQueries({ queryKey: ['procedures'] }); client.invalidateQueries({ queryKey: ['procedures-count'] }); };
   const query = useQuery({
     queryKey: ['procedures', search, activeFilter, page, limit],
     queryFn: () => listProcedures(search || undefined, activeFilter === 'all' ? null : activeFilter === 'active', limit, page * limit)
@@ -169,13 +171,13 @@ function Procedures({ user }: { user: User }) {
   });
   const activateMutation = useMutation({
     mutationFn: activateProcedure,
-    onSuccess: () => { client.invalidateQueries({ queryKey: ['procedures', 'procedures-count'] }); },
-    onError: (error) => { client.invalidateQueries({ queryKey: ['procedures', 'procedures-count'] }); }
+    onSuccess: () => { invalidateCatalog(); },
+    onError: (error) => { invalidateCatalog(); }
   });
   const deactivateMutation = useMutation({
     mutationFn: deactivateProcedure,
-    onSuccess: () => { client.invalidateQueries({ queryKey: ['procedures', 'procedures-count'] }); },
-    onError: (error) => { client.invalidateQueries({ queryKey: ['procedures', 'procedures-count'] }); }
+    onSuccess: () => { invalidateCatalog(); },
+    onError: (error) => { invalidateCatalog(); }
   });
   const canEdit = managementRoles.includes(user.role);
 
@@ -201,7 +203,7 @@ function Procedures({ user }: { user: User }) {
 
   return <>
     <header><div><p className="eyebrow">PROCEDURE CATALOG</p><h1>Procedure catalog</h1></div>{canEdit && <button onClick={() => { setShowForm(!showForm); setEditing(undefined); }}>{showForm ? 'Close' : 'New procedure'}</button>}</header>
-    {showForm && <CatalogProcedureForm key={editing?.id ?? 'new'} initial={editing} onSaved={() => { setShowForm(false); setEditing(undefined); client.invalidateQueries({ queryKey: ['procedures', 'procedures-count'] }); }} onCancel={() => { setShowForm(false); setEditing(undefined); }} />}
+    {showForm && <CatalogProcedureForm key={editing?.id ?? 'new'} initial={editing} onSaved={() => { setShowForm(false); setEditing(undefined); invalidateCatalog(); }} onCancel={() => { setShowForm(false); setEditing(undefined); }} />}
     <section className="card">
       <label>Search procedures<input placeholder="Code, name, category or description" value={search} onChange={e => setSearch(e.target.value)} /></label>
       <label>Filter:
