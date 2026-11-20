@@ -31,6 +31,12 @@ export function ReportsPage() {
   const [loading, setLoading] = useState(false);
 
   async function loadReports() {
+    const start = Date.parse(`${from}T00:00:00Z`);
+    const end = Date.parse(`${to}T00:00:00Z`);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) { setError('Alegeți date valide pentru perioadă.'); return; }
+    if (start > end) { setError('Data de început nu poate fi după data de final.'); return; }
+    const calendarDays = (end - start) / 86_400_000 + 1;
+    if (calendarDays > 366) { setError('Perioada trebuie să aibă între 1 și 366 de zile calendaristice.'); return; }
     setLoading(true); setError(''); setRecords({});
     try {
       const filters = { ...(doctorId ? { doctor_id: doctorId } : {}), ...(roomId ? { room_id: roomId } : {}) };
@@ -40,11 +46,12 @@ export function ReportsPage() {
     finally { setLoading(false); }
   }
 
-  async function toggleRecords(indicator: string) {
+  async function toggleRecords(report: ReportResult) {
+    const indicator = report.indicator;
     if (records[indicator]) { setRecords(current => { const next = { ...current }; delete next[indicator]; return next; }); return; }
     try {
-      const filters = { ...(doctorId ? { doctor_id: doctorId } : {}), ...(roomId ? { room_id: roomId } : {}) };
-      const result = await getReportRecords(indicator, from, to, filters);
+      const filters = { ...(report.filters.doctor_id ? { doctor_id: report.filters.doctor_id } : {}), ...(report.filters.room_id ? { room_id: report.filters.room_id } : {}) };
+      const result = await getReportRecords(indicator, report.period.from, report.period.to, filters);
       setRecords(current => ({ ...current, [indicator]: result }));
     }
     catch (err) { setError(apiErrorMessage(err)); }
@@ -69,9 +76,9 @@ export function ReportsPage() {
         {report.undefined_reason && <p>{report.undefined_reason}</p>}
         <p>{report.definition}</p>
         <small>{report.period.from} – {report.period.to} ({report.period.timezone}) · Sursă: {report.source}</small>
-        <button type="button" onClick={() => void toggleRecords(report.indicator)}>
+        <a href={report.records_url} onClick={event => { event.preventDefault(); void toggleRecords(report); }}>
           {records[report.indicator] ? 'Ascunde înregistrările' : 'Vezi înregistrările'}
-        </button>
+        </a>
         {report.indicator === 'consumptions' && <p>Indisponibil până la T17.</p>}
         {records[report.indicator] && <ul aria-label={`Înregistrări ${labels[report.indicator]}`}>
           {records[report.indicator].records.map(record => <li key={`${record.entity}:${record.id}:${record.date}`}>{record.date} · {record.entity} · {record.patient_name ?? '—'} · {record.status}{record.amount ? ` · ${record.amount}` : ''}</li>)}
