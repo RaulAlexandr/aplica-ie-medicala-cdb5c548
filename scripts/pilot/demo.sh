@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # One command to start the pilot on a NEW fictional SQLite database (T33).
 #   scripts/pilot/demo.sh up   [--checkout PATH] [--allow-dirty]
+#   scripts/pilot/demo.sh resume [--checkout PATH]   # restart the SAME demo database (idempotent seed)
 #   scripts/pilot/demo.sh stop [--checkout PATH]
 # `up` refuses when the target database already exists: it never overwrites, deletes or resets anything.
 # To resume an existing demo use start.sh/stop.sh; for a fresh one choose another DENTACARE_PILOT_HOME.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 COMMAND="${1:-}"; [[ -n "$COMMAND" ]] && shift || true
-case "$COMMAND" in up|stop) ;; *) echo "Utilizare: demo.sh up|stop [--checkout PATH] [--allow-dirty]" >&2; exit 2 ;; esac
+case "$COMMAND" in up|stop|resume) ;; *) echo "Utilizare: demo.sh up|resume|stop [--checkout PATH] [--allow-dirty]" >&2; exit 2 ;; esac
 export DENTACARE_PILOT_HOME="${DENTACARE_PILOT_HOME:-$HOME/.local/share/dentacare-pilot-demo}"
 CONFIG_PATH="${PILOT_CONFIG:-$HOME/.config/dentacare-pilot-demo/pilot.env}"
 CHECKOUT_ARGS=(--checkout "$(cd "$HERE/../.." && pwd -P)")
@@ -20,6 +21,10 @@ esac; done
 COMMON=("${CHECKOUT_ARGS[@]}" --config "$CONFIG_PATH" "${PASS[@]}")
 
 if [[ "$COMMAND" == stop ]]; then exec "$HERE/stop.sh" "${COMMON[@]}"; fi
+if [[ "$COMMAND" == resume ]]; then
+  [[ -f "$CONFIG_PATH" && -f "$DENTACARE_PILOT_HOME/fictional-clinic.sqlite3" ]] || { echo "Nu există un demo de reluat în $DENTACARE_PILOT_HOME; folosește demo.sh up." >&2; exit 2; }
+  exec "$HERE/start.sh" "${COMMON[@]}"
+fi
 
 # Step 1 — config (created once, mode 600, no secrets). An existing config is never rewritten.
 if [[ ! -f "$CONFIG_PATH" ]]; then
