@@ -4,14 +4,17 @@ Sessions ended by the deactivation stay ended: refresh tokens are revoked and ac
 before the deactivation are rejected even after reactivation; the person signs in again.
 """
 
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from jose import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.auth.service import hash_password
+from app.auth.service import ALGORITHM, hash_password
+from app.config import settings
 from app.database import AuditEvent, Base, RefreshToken, User, get_db
 from app.main import app
 
@@ -160,3 +163,24 @@ async def test_history_is_only_exposed_to_management(ctx):
     seen = await client.get(f"/api/staff/members/{reception_id}", headers=doctor)
     assert seen.status_code == 200 and seen.json()["history"] == []
     assert len((await client.get(f"/api/staff/members/{reception_id}", headers=manager)).json()["history"]) == 3
+
+
+def legacy_token(user_id: str) -> dict:
+    """Access token shaped like those issued before this change: no iat_us claim."""
+    claims = {"sub": user_id, "exp": datetime.now(UTC) + timedelta(minutes=5)}
+    return {"Authorization": f"Bearer {jwt.encode(claims, settings.jwt_secret, algorithm=ALGORITHM)}"}
+
+
+async def test_pre_upgrade_tokens_keep_working_for_never_deactivated_users(ctx):
+    client, _ = ctx
+    manager = bearer(await register(client, "Upgrade Clinic", "t01r-upgrade@example.com"))
+    manager_id = (await client.get("/api/auth/me", headers=manager)).json()["id"]
+    doctor_id = await invite_member(client, manager, "t01r-upgrade-doctor@example.com")
+    # Never deactivated: a token without iat_us (issued before the upgrade) stays valid.
+    assert (await client.get("/api/auth/me", headers=legacy_token(manager_id))).status_code == 200
+    assert (await client.get("/api/auth/me", headers=legacy_token(doctor_id))).status_code == 200
+    # Once deactivated and reactivated, a token that cannot prove it postdates the deactivation is rejected.
+    assert (await client.post(f"/api/staff/{doctor_id}/deactivate", headers=manager)).status_code == 200
+    assert (await client.post(f"/api/staff/{doctor_id}/reactivate", headers=manager)).status_code == 200
+    assert (await client.get("/api/auth/me", headers=legacy_token(doctor_id))).status_code == 401
+    assert (await client.get("/api/auth/me", headers=legacy_token(manager_id))).status_code == 200
