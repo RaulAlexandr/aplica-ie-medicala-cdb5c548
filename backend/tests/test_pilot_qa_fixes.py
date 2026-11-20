@@ -1,3 +1,4 @@
+# ruff: noqa: F811  (pytest fixtures are imported, then requested by argument name)
 """HTTP regression tests for the pilot QA fixes (F05, F08, S6)."""
 
 import pytest

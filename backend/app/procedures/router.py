@@ -56,9 +56,9 @@ def validate_price_value(value: object) -> Decimal:
             raise ValueError("Price must be a valid decimal number") from exc
     elif isinstance(value, (int, float)):
         # JSON numbers come through as int/float - reject for exact decimal safety
-        raise ValueError("Price must be provided as a string for exact decimal representation")
+        raise ValueError("Price must be provided as a string for exact decimal representation")  # noqa: TRY004 - Pydantic only turns ValueError into a 422
     else:
-        raise ValueError("Price must be a decimal number")
+        raise ValueError("Price must be a decimal number")  # noqa: TRY004
     
     # Check for non-finite values
     if value.is_infinite() or value.is_nan():
@@ -80,7 +80,7 @@ def validate_price_value(value: object) -> Decimal:
 def require_text(value: object, label: str) -> str:
     """Reject non-string JSON values with a validation error (422) before any string operation."""
     if not isinstance(value, str):
-        raise ValueError(f"{label} must be text")
+        raise ValueError(f"{label} must be text")  # noqa: TRY004
     return value
 
 
