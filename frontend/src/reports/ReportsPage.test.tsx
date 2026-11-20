@@ -24,6 +24,7 @@ describe('ReportsPage', () => {
     });
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(<ReportsPage />); });
+    act(() => { renderer.root.findByProps({ 'aria-label': 'Cabinet' }).props.onChange({ target: { value: 'room-1' } }); });
     const button = renderer.root.findAllByType('button')[0];
     await act(async () => { button.props.onClick(); await flush(); });
     expect(report).toHaveBeenCalledTimes(15);
@@ -39,6 +40,7 @@ describe('ReportsPage', () => {
     const report = vi.spyOn(reportApi, 'getReport').mockImplementation(async indicator => result(indicator));
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(<ReportsPage />); });
+    act(() => { renderer.root.findByProps({ 'aria-label': 'Cabinet' }).props.onChange({ target: { value: 'room-1' } }); });
     const from = renderer.root.findByProps({ 'aria-label': 'De la' });
     const to = renderer.root.findByProps({ 'aria-label': 'Până la' });
     act(() => {
@@ -74,6 +76,7 @@ describe('ReportsPage', () => {
     });
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(<ReportsPage />); });
+    act(() => { renderer.root.findByProps({ 'aria-label': 'Cabinet' }).props.onChange({ target: { value: 'room-1' } }); });
     const generate = renderer.root.findAllByType('button').find(button => text(button) === 'Generează raportul')!;
     await act(async () => { await generate.props.onClick(); await flush(); });
     expect(text(renderer.root)).toContain('Nedefinit');
@@ -91,6 +94,20 @@ describe('ReportsPage', () => {
     expect(getRecords).toHaveBeenCalledWith('appointments_total', '2026-10-25', '2026-10-25', { doctor_id: 'doctor-1', room_id: 'room-1' });
     expect(text(renderer.root)).toContain('Ana Test');
     expect(report).toHaveBeenCalledTimes(15);
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it('keeps clinic-wide indicators available and explains room occupancy without a room', async () => {
+    const report = vi.spyOn(reportApi, 'getReport').mockImplementation(async indicator => result(indicator));
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<ReportsPage />); });
+    const generate = renderer.root.findAllByType('button').find(button => text(button) === 'Generează raportul')!;
+    await act(async () => { await generate.props.onClick(); });
+    expect(report).toHaveBeenCalledTimes(14);
+    expect(report).not.toHaveBeenCalledWith('room_occupancy', expect.any(String), expect.any(String), expect.anything());
+    expect(text(renderer.root)).toContain('Selectați un cabinet pentru a calcula ocuparea.');
+    const occupancyCard = renderer.root.findAllByType('article').find(article => text(article).includes('Ocupare cabinet'))!;
+    expect(occupancyCard.findAllByType('a')).toHaveLength(0);
     await act(async () => { renderer.unmount(); });
   });
 });

@@ -40,7 +40,18 @@ export function ReportsPage() {
     setLoading(true); setError(''); setRecords({});
     try {
       const filters = { ...(doctorId ? { doctor_id: doctorId } : {}), ...(roomId ? { room_id: roomId } : {}) };
-      const next = await Promise.all(indicators.map(key => getReport(key, from, to, filters)));
+      const next = await Promise.all(indicators.filter(key => key !== 'room_occupancy' || Boolean(roomId))
+        .map(key => getReport(key, from, to, filters)));
+      if (!roomId) {
+        const occupancyIndex = indicators.indexOf('room_occupancy');
+        const reason = 'Selectați un cabinet pentru a calcula ocuparea.';
+        next.splice(occupancyIndex, 0, {
+          indicator: 'room_occupancy', value: { status: 'undefined', reason }, unit: 'minute și %',
+          definition: 'Minute active programate / minute disponibile din WorkingHours pentru cabinet.',
+          period: next[0].period, filters: { doctor_id: doctorId || null, room_id: null },
+          source: 'appointments, working_hours', undefined_reason: reason, records_url: '',
+        });
+      }
       setResults(next);
     } catch (err) { setError(apiErrorMessage(err)); }
     finally { setLoading(false); }
@@ -63,7 +74,7 @@ export function ReportsPage() {
       <label>De la<input type="date" aria-label="De la" value={from} onChange={e => setFrom(e.target.value)} /></label>
       <label>Până la<input type="date" aria-label="Până la" value={to} onChange={e => setTo(e.target.value)} /></label>
       <label>Medic (UUID opțional)<input aria-label="Medic" value={doctorId} onChange={e => setDoctorId(e.target.value)} /></label>
-      <label>Cabinet (UUID opțional)<input aria-label="Cabinet" value={roomId} onChange={e => setRoomId(e.target.value)} /></label>
+      <label>Cabinet (UUID; necesar pentru ocupare)<input aria-label="Cabinet" value={roomId} onChange={e => setRoomId(e.target.value)} /></label>
       <button type="button" onClick={loadReports} disabled={loading || !from || !to}>{loading ? 'Se încarcă…' : 'Generează raportul'}</button>
     </div>
     <p className="reports-financial-note">Evidență internă, nu raport fiscal.</p>
@@ -76,9 +87,11 @@ export function ReportsPage() {
         {report.undefined_reason && <p>{report.undefined_reason}</p>}
         <p>{report.definition}</p>
         <small>{report.period.from} – {report.period.to} ({report.period.timezone}) · Sursă: {report.source}</small>
-        <a href={report.records_url} onClick={event => { event.preventDefault(); void toggleRecords(report); }}>
-          {records[report.indicator] ? 'Ascunde înregistrările' : 'Vezi înregistrările'}
-        </a>
+        {report.indicator === 'room_occupancy' && !report.filters.room_id
+          ? <p>Selectați cabinetul pentru a vedea înregistrările ocupării.</p>
+          : <a href={report.records_url} onClick={event => { event.preventDefault(); void toggleRecords(report); }}>
+            {records[report.indicator] ? 'Ascunde înregistrările' : 'Vezi înregistrările'}
+          </a>}
         {report.indicator === 'consumptions' && <p>Indisponibil până la T17.</p>}
         {records[report.indicator] && <ul aria-label={`Înregistrări ${labels[report.indicator]}`}>
           {records[report.indicator].records.map(record => <li key={`${record.entity}:${record.id}:${record.date}`}>{record.date} · {record.entity} · {record.patient_name ?? '—'} · {record.status}{record.amount ? ` · ${record.amount}` : ''}</li>)}
