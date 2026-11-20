@@ -167,7 +167,8 @@ try {
   check('an existing seeded service is still "any"', Boolean(legacy), { code: legacy?.code });
   const patient = (await doctorApi('POST', '/patients', { first_name: 'Elena', last_name: `T03 Fictiv ${tag}` })).body;
   const rooms = (await doctorApi('GET', '/rooms')).body;
-  const start = new Date(Date.now() + 2 * 86400000); start.setUTCHours(7, Math.floor(Math.random() * 6) * 10, 0, 0);
+  // Wide random slot space so repeated runs on the same fictional DB do not collide with earlier visits.
+  const start = new Date(Date.now() + (2 + Math.floor(Math.random() * 60)) * 86400000); start.setUTCHours(6 + Math.floor(Math.random() * 10), Math.random() < 0.5 ? 0 : 30, 0, 0);
   const visit = await doctorApi('POST', '/appointments', { patient_id: patient.id, doctor_id: doctorMe.id, room_id: rooms[0].id, starts_at: start.toISOString(), duration_minutes: 30, appointment_type: 'Tratament T03 fictiv' });
   check('setup: fictional visit', visit.status === 201, { status: visit.status, detail: visit.body?.detail });
 
