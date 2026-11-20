@@ -1,7 +1,7 @@
 # T03 v1 — localizări permise ale unui serviciu din catalog
 
 Status: pilot local, date fictive. Completează T03 (catalog) pentru T04 (manoperă efectuată), T07 (ambele trasee)
-și T08 (item de plan). Migrare: `t03_catalog_allowed_locations` (down: `t13_add_patient_financial_entries`).
+și T08 (item de plan). Migrare: `t03_catalog_allowed_locations` (down: `t13_patient_financial_entries`).
 
 ## Ce localizări există azi
 

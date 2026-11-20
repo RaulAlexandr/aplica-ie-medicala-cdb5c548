@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "t03_catalog_allowed_locations"
-down_revision = "t13_add_patient_financial_entries"
+down_revision = "t13_patient_financial_entries"
 branch_labels = None
 depends_on = None
 

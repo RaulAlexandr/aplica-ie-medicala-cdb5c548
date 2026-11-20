@@ -1,5 +1,5 @@
 """PostgreSQL proof for T03 allowed locations: additive migration over a database populated at
-t13_add_patient_financial_entries, data preserved, existing services become 'any', the CHECK constraint
+t13_patient_financial_entries, data preserved, existing services become 'any', the CHECK constraint
 holds, and the API on the migrated database keeps the old behaviour for existing services while
 refusing a forbidden location for a restricted one."""
 
@@ -21,7 +21,7 @@ from tests.alembic_helpers import configured_alembic_head, revision_is_in_head_l
 
 pytestmark = pytest.mark.postgres
 PASSWORD = "correct horse battery staple"
-BASE_REVISION = "t13_add_patient_financial_entries"
+BASE_REVISION = "t13_patient_financial_entries"
 
 
 def _dsn(url: str, database: str) -> str:
