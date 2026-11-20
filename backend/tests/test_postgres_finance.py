@@ -80,7 +80,7 @@ async def test_t13_migration_preserves_existing_data_and_enforces_ledger_constra
     conn = await asyncpg.connect(_dsn(url, name))
     try:
         assert await conn.fetchval("SELECT version_num FROM alembic_version") == configured_alembic_head()
-        assert revision_is_in_head_lineage("t13_add_patient_financial_entries")
+        assert revision_is_in_head_lineage("t13_patient_financial_entries")
         assert revision_is_in_head_lineage("merge_pilot_t09_t11")
         assert await conn.fetchval("SELECT current_price FROM performed_procedures WHERE id = $1", ids["performed"]) == 230
         assert await conn.fetchval("SELECT status FROM performed_procedures WHERE id = $1", ids["performed"]) == "completed"
