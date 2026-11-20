@@ -1,0 +1,30 @@
+{
+  "task": "integration step 1b",
+  "sha": "9faa1c4d23a9f1f9f0791d36e0ea0b220d7cb311",
+  "merged": "feat/pilot-t01-t03-gaps ba65350",
+  "order_copy_sequence": [
+    "demo_walkthrough",
+    "t01_t03",
+    "t13"
+  ],
+  "demo_walkthrough": {
+    "checks": 54,
+    "passed": 54,
+    "pageErrors": 0,
+    "unexpected": 0
+  },
+  "t01_t03": {
+    "checks": 37,
+    "passed": 37
+  },
+  "t13_after_walkthrough_and_t01_t03": {
+    "checks": 35,
+    "passed": 35
+  },
+  "t13_fresh_copy": {
+    "checks": 35,
+    "passed": 35
+  },
+  "browser": "Europe/Bucharest via TZ (t13 fixes UTC itself)",
+  "runtime": "int, ports 8049/5189, restored copies of the pristine int backup"
+}
