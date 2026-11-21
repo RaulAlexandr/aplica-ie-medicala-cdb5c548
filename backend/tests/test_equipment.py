@@ -344,3 +344,19 @@ async def test_dependency_requires_exactly_one_target_and_allows_separate_servic
         with pytest.raises(IntegrityError):
             await session.commit()
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_completed_check_rejects_future_time_and_missing_result(ctx):
+    client, _sessions = ctx
+    manager = await register(client, "equipment-invalid-completion@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit verificare viitoare", "equipment_type": "unit", "responsible_id": identity["id"]})).json()
+    path = f"/api/equipment/{equipment['id']}/checks"
+    due_at = (datetime.now(UTC) + timedelta(days=2)).isoformat()
+    future = await client.post(path, headers=manager, json={"check_type": "inspection", "due_at": due_at,
+        "completed_at": (datetime.now(UTC) + timedelta(days=3)).isoformat(), "result": "Conform fictiv"})
+    missing_result = await client.post(path, headers=manager, json={"check_type": "inspection", "due_at": due_at,
+        "completed_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat()})
+    assert future.status_code == 422
+    assert missing_result.status_code == 422

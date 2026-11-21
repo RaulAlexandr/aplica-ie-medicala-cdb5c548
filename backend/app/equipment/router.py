@@ -69,6 +69,15 @@ class CheckInput(BaseModel):
     completed_at: datetime | None = None
     result: str | None = Field(default=None, max_length=2000)
 
+    @field_validator("result", mode="before")
+    @classmethod
+    def clean_result(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Rezultatul nu poate fi gol")
+        return value.strip()
+
 
 class CheckCompletionInput(BaseModel):
     result: str = Field(min_length=1, max_length=2000)
@@ -256,6 +265,11 @@ async def add_check(equipment_id: UUID, payload: CheckInput, db: AsyncSession = 
         raise HTTPException(422, "Tipul verificării nu este acceptat")
     due = await _clinic_datetime(db, user.clinic_id, payload.due_at)
     completed = await _clinic_datetime(db, user.clinic_id, payload.completed_at) if payload.completed_at else None
+    if completed is not None:
+        if completed > utcnow():
+            raise HTTPException(422, "Momentul efectuării nu poate fi în viitor")
+        if payload.result is None:
+            raise HTTPException(422, "Rezultatul este obligatoriu pentru o verificare efectuată")
     value = EquipmentCheck(clinic_id=user.clinic_id, equipment_id=equipment.id, author_id=user.id,
         check_type=payload.check_type, due_at=due, completed_at=completed,
         completed_by_id=user.id if completed else None, result=payload.result)
