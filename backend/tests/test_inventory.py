@@ -122,3 +122,11 @@ async def test_inventory_names_units_and_lot_codes_trim_and_reject_blank(ctx):
     lot=await c.post("/api/inventory/lots",headers=h,json={"item_id":created.json()["id"],"code":"  LOT-ALB  "});assert lot.status_code==201
     assert (await c.get("/api/inventory",headers=h)).json()["balances"][0]["lot"]=="LOT-ALB"
     assert (await c.patch(f"/api/inventory/items/{created.json()['id']}",headers=h,json={"name":"  ","unit":"buc","minimum_quantity":"0","is_active":True})).status_code==422
+
+@pytest.mark.asyncio
+async def test_inventory_retry_normalizes_decimal_scale(ctx):
+    c,_=ctx;h=await register(c,"inv-decimal-retry@example.com");item,lot,loc,_=await setup_stock(c,h,minimum="0")
+    body=movement(item,lot,loc,"10");first=await c.post("/api/inventory/movements/receipt",headers=h,json=body);assert first.status_code==201
+    retry=await c.post("/api/inventory/movements/receipt",headers=h,json={**body,"quantity":"10.000"})
+    assert retry.status_code==201 and retry.json()["id"]==first.json()["id"]
+    changed=await c.post("/api/inventory/movements/receipt",headers=h,json={**body,"quantity":"10.001"});assert changed.status_code==409

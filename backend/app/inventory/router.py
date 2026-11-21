@@ -73,7 +73,8 @@ class ReverseIn(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
 
 def _signature(kind, p):
-    return json.dumps({"kind":kind,"item_id":str(p.item_id),"lot_id":str(p.lot_id),"location_id":str(p.location_id),"quantity":str(p.quantity),"destination_location_id":str(p.destination_location_id) if p.destination_location_id else None,"reason":p.reason.strip(),"direction":p.direction},sort_keys=True,separators=(",",":"))
+    quantity=format(p.quantity.normalize(),"f")
+    return json.dumps({"kind":kind,"item_id":str(p.item_id),"lot_id":str(p.lot_id),"location_id":str(p.location_id),"quantity":quantity,"destination_location_id":str(p.destination_location_id) if p.destination_location_id else None,"reason":p.reason.strip(),"direction":p.direction},sort_keys=True,separators=(",",":"))
 
 async def _balance(db, clinic_id, lot_id, location_id):
     incoming = await db.scalar(select(func.coalesce(func.sum(InventoryMovement.quantity), 0)).where(
