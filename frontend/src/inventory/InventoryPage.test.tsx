@@ -32,7 +32,7 @@ describe('pagina Stocuri',()=>{
     await act(async()=>renderer.unmount());
   });
   it('blochează dublul click și păstrează cheia la reîncercarea aceleiași mișcări',async()=>{
-    const pending: Array<{resolve:(value:unknown)=>void;reject:(reason:Error)=>void}> = [];
+    const pending: Array<{resolve:(value:any)=>void;reject:(reason:Error)=>void}> = [];
     vi.mocked(addInventoryMovement).mockImplementation(()=>new Promise((resolve,reject)=>pending.push({resolve,reject})));
     const renderer=await page('doctor');
     const selects=renderer.root.findAllByType('select');
@@ -52,7 +52,7 @@ describe('pagina Stocuri',()=>{
   it('blochează dublul click la corecție și păstrează cheia după eroare',async()=>{
     vi.stubGlobal('window',{prompt:()=> 'Motiv fictiv'});
     vi.mocked(inventoryHistory).mockResolvedValue([{id:'move-1',item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Manager fictiv',kind:'receipt',quantity:'1',reason:'',transfer_id:null,reverses_movement_id:null,is_correction:false,is_corrected:false,created_at:'2026-11-21T10:00:00Z'}]);
-    const pending:Array<{resolve:(v:unknown)=>void;reject:(e:Error)=>void}>=[];
+    const pending:Array<{resolve:(v:any)=>void;reject:(e:Error)=>void}>=[];
     vi.mocked(reverseInventoryMovement).mockImplementation(()=>new Promise((resolve,reject)=>pending.push({resolve,reject})));
     const renderer=await page('clinic_manager');const button=renderer.root.findAllByType('button').find(x=>textOf(x)==='Corectează')!;
     await act(async()=>{button.props.onClick();button.props.onClick();});
@@ -105,7 +105,7 @@ describe('pagina Stocuri',()=>{
   });
   it('resetează lotul la schimbarea articolului și ascunde opțiunile inactive, marcând lotul expirat la consum',async()=>{
     vi.mocked(inventoryOverview).mockResolvedValue({items:[{id:'item-1',name:'Material fictiv',unit:'buc',minimum_quantity:'2',quantity_total:'5',below_minimum:false,is_active:true},{id:'item-2',name:'Inactiv',unit:'buc',minimum_quantity:'0',quantity_total:'0',below_minimum:false,is_active:false}],locations:[{id:'loc-1',name:'Depozit fictiv',is_active:true},{id:'loc-2',name:'Depozit inactiv',is_active:false}],lots:[{id:'lot-1',item_id:'item-1',item:'Material fictiv',code:'LOT-EXPIRAT',expires_on:'2020-01-01'},{id:'lot-2',item_id:'item-2',item:'Inactiv',code:'LOT-INACTIV',expires_on:null}],balances:[]});
-    const renderer=await page('clinic_manager');const movementForm=renderer.root.findAllByType('form').at(-1)!;const article=movementForm.findAllByType('select').find(x=>x.parent?.children[0]==='Articol')!,lot=movementForm.findAllByType('select').find(x=>x.parent?.children[0]==='Lot')!;
+    const renderer=await page('clinic_manager');const forms=renderer.root.findAllByType('form');const movementForm=forms[forms.length-1];const article=movementForm.findAllByType('select').find(x=>x.parent?.children[0]==='Articol')!,lot=movementForm.findAllByType('select').find(x=>x.parent?.children[0]==='Lot')!;
     await act(async()=>article.props.onChange({target:{value:'item-1'}}));await act(async()=>lot.props.onChange({target:{value:'lot-1'}}));
     await act(async()=>article.props.onChange({target:{value:'item-2'}}));
     expect(movementForm.findAllByType('select').find(x=>x.parent?.children[0]==='Lot')?.props.value).toBe('');expect(movementForm.findAllByType('option').map(textOf)).not.toContain('Inactiv');expect(movementForm.findAllByType('option').map(textOf)).not.toContain('Depozit inactiv');
