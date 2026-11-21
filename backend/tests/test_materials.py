@@ -11,6 +11,7 @@ from app.auth.service import create_access_token
 from app.database import (
     Appointment,
     Base,
+    PerformedProcedure,
     ProcedureCatalog,
     TreatmentPlan,
     TreatmentPlanItem,
@@ -397,3 +398,46 @@ async def test_replenishment_does_not_recount_need_covered_by_reservations(env):
     assert line["suggested_quantity"] == "2.000"
     assert line["uncovered_needed"] == "0.000"
     assert line["available"] == "0.000" and line["reserved"] == "5.000"
+
+@pytest.mark.asyncio
+async def test_confirmation_list_includes_recent_completed_and_marks_existing_consumption(env):
+    client, sessions = env
+    ctx = await register(client)
+    stock = await add_stock(client, ctx["auth"], quantity="5")
+    procedure_id = await add_procedure(client, ctx["auth"])
+    recent_confirmed = await add_appointment(client, ctx, starts_at="2026-12-02T09:00:00+00:00")
+    recent_unconfirmed = await add_appointment(client, ctx, starts_at="2026-12-03T09:00:00+00:00")
+    cancelled = await add_appointment(client, ctx, starts_at="2026-12-04T09:00:00+00:00")
+    no_show = await add_appointment(client, ctx, starts_at="2026-12-05T09:00:00+00:00")
+    older = await add_appointment(client, ctx, starts_at="2026-11-30T09:00:00+00:00")
+    performed_ids = {}
+    for key, appointment_id in (("confirmed", recent_confirmed), ("unconfirmed", recent_unconfirmed),
+                                ("cancelled", cancelled), ("no_show", no_show), ("older", older)):
+        response = await client.post("/api/performed-procedures", headers=ctx["auth"], json={
+            "appointment_id": appointment_id, "procedure_catalog_id": procedure_id,
+        })
+        assert response.status_code == 201, response.text
+        performed_ids[key] = response.json()["id"]
+    consumed = await client.post(f"/api/materials/performed-procedures/{performed_ids['confirmed']}/confirm",
+        headers=ctx["auth"], json={"client_request_id": str(uuid4()), "lines":[{
+            **stock, "quantity":"1",
+        }]})
+    assert consumed.status_code == 201, consumed.text
+    async with sessions() as session:
+        for key, appointment_id in (("confirmed", recent_confirmed), ("unconfirmed", recent_unconfirmed)):
+            (await session.get(Appointment, UUID(appointment_id))).status = "completed"
+            (await session.get(PerformedProcedure, UUID(performed_ids[key]))).status = "completed"
+        (await session.get(Appointment, UUID(cancelled))).status = "cancelled"
+        (await session.get(Appointment, UUID(no_show))).status = "no_show"
+        (await session.get(Appointment, UUID(older))).status = "completed"
+        (await session.get(PerformedProcedure, UUID(performed_ids["older"]))).status = "completed"
+        await session.commit()
+
+    result = await client.get("/api/materials/requirements", headers=ctx["auth"], params={
+        "from_date":"2026-12-08", "to_date":"2026-12-14",
+    })
+    assert result.status_code == 200, result.text
+    rows = {row["id"]: row for row in result.json()["performed_procedures"]}
+    assert set(rows) == {performed_ids["confirmed"], performed_ids["unconfirmed"]}
+    assert rows[performed_ids["confirmed"]]["consumption_confirmed"] is True
+    assert rows[performed_ids["unconfirmed"]]["consumption_confirmed"] is False

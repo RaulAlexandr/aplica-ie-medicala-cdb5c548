@@ -363,7 +363,8 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
         item = item_map[item_id]
         shortages.append({"item_id": str(item_id), "item_name": item.name, "unit": item.unit,
                           "quantity": format(data["quantity"], ".3f"), "appointments": data["appointments"]})
-    performed_rows = await _performed_materials(db, user, start_utc, end_utc)
+    performed_start, _ = local_bounds(start_day - timedelta(days=7), clinic.timezone)
+    performed_rows = await _performed_materials(db, user, performed_start, end_utc)
     return {
         "from_date": start_day.isoformat(), "to_date": end_day.isoformat(), "timezone": clinic.timezone,
         "appointments": appointment_output,
@@ -384,13 +385,18 @@ async def _performed_materials(db: AsyncSession, user: User, start_utc: datetime
     ).where(
         PerformedProcedure.clinic_id == user.clinic_id,
         Appointment.clinic_id == user.clinic_id,
-        Appointment.status.in_(ACTIVE_APPOINTMENTS),
+        Appointment.status.in_((*ACTIVE_APPOINTMENTS, "completed")),
         Appointment.starts_at >= start_utc,
         Appointment.starts_at < end_utc,
         PerformedProcedure.status != "cancelled",
     ).order_by(Appointment.starts_at, PerformedProcedure.id))).all()
     procedure_ids = {procedure.procedure_catalog_id for procedure, _appointment, _patient, _catalog in rows}
     latest, lines_by_version = await _latest_recipes(db, user.clinic_id, procedure_ids)
+    performed_ids = {procedure.id for procedure, _appointment, _patient, _catalog in rows}
+    consumption_confirmed_ids = set((await db.scalars(select(MaterialConsumptionBatch.performed_procedure_id).where(
+        MaterialConsumptionBatch.clinic_id == user.clinic_id,
+        MaterialConsumptionBatch.performed_procedure_id.in_(performed_ids) if performed_ids else False,
+    ))).all())
     item_ids = {line.item_id for recipe_lines in lines_by_version.values() for line in recipe_lines}
     items = (await db.scalars(select(InventoryItem).where(InventoryItem.clinic_id == user.clinic_id,
         InventoryItem.id.in_(item_ids) if item_ids else False))).all()
@@ -402,6 +408,7 @@ async def _performed_materials(db: AsyncSession, user: User, start_utc: datetime
             "starts_at": appointment.starts_at.isoformat(), "local_date": appointment.starts_at.astimezone(ZoneInfo(clinic.timezone)).date().isoformat(),
             "procedure_name": catalog.name, "patient_name": f"{patient.first_name} {patient.last_name}",
             "status": procedure.status, "recipe_version": recipe.version if recipe else None,
+            "consumption_confirmed": procedure.id in consumption_confirmed_ids,
             "lines": [{"item_id": str(line.item_id), "item_name": item_map[line.item_id].name,
                        "unit": item_map[line.item_id].unit, "recipe_line_id": str(line.id),
                        "estimated_quantity": format(_decimal(line.estimated_quantity), ".3f")}
