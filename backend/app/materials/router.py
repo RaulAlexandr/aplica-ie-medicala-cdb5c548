@@ -40,6 +40,7 @@ from app.materials.models import (
 router = APIRouter(prefix="/materials", tags=["materials"])
 READ_ROLES = ("clinic_manager", "administrator", "doctor", "assistant", "reception")
 MANAGERS = ("clinic_manager", "administrator")
+ACTUALS_ROLES = tuple(role for role in READ_ROLES if role != "reception")
 ACTIVE_APPOINTMENTS = ("scheduled", "confirmed", "arrived", "in_progress")
 
 
@@ -364,7 +365,7 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
         shortages.append({"item_id": str(item_id), "item_name": item.name, "unit": item.unit,
                           "quantity": format(data["quantity"], ".3f"), "appointments": data["appointments"]})
     performed_start, _ = local_bounds(start_day - timedelta(days=7), clinic.timezone)
-    performed_rows = await _performed_materials(db, user, performed_start, end_utc)
+    performed_rows = [] if user.role == "reception" else await _performed_materials(db, user, performed_start, end_utc)
     return {
         "from_date": start_day.isoformat(), "to_date": end_day.isoformat(), "timezone": clinic.timezone,
         "appointments": appointment_output,
@@ -778,7 +779,7 @@ async def confirm_consumption(performed_id: UUID, payload: ConsumptionConfirmIn,
 
 @router.get("/actuals")
 async def actuals(from_date: date | None = Query(default=None), to_date: date | None = Query(default=None),
-                  user: User = Depends(require_roles(*READ_ROLES)), db: AsyncSession = Depends(get_db)):
+                  user: User = Depends(require_roles(*ACTUALS_ROLES)), db: AsyncSession = Depends(get_db)):
     _clinic, _zone, start_day, end_day, start_utc, end_utc = await _clinic_window(db, user.clinic_id, from_date, to_date)
     batches = (await db.scalars(select(MaterialConsumptionBatch).join(
         PerformedProcedure, PerformedProcedure.id == MaterialConsumptionBatch.performed_procedure_id,

@@ -453,3 +453,23 @@ async def test_confirmation_list_includes_recent_completed_and_marks_existing_co
     assert set(rows) == {performed_ids["confirmed"], performed_ids["unconfirmed"]}
     assert rows[performed_ids["confirmed"]]["consumption_confirmed"] is True
     assert rows[performed_ids["unconfirmed"]]["consumption_confirmed"] is False
+
+@pytest.mark.asyncio
+async def test_reception_cannot_see_performed_procedures_or_actuals(env):
+    client, _sessions = env
+    ctx = await register(client)
+    reception = await add_user(_sessions, ctx["me"]["clinic_id"], "reception")
+    procedure_id = await add_procedure(client, ctx["auth"])
+    appointment_id = await add_appointment(client, ctx)
+    performed = await client.post("/api/performed-procedures", headers=ctx["auth"], json={
+        "appointment_id": appointment_id, "procedure_catalog_id": procedure_id,
+    })
+    assert performed.status_code == 201, performed.text
+    params = {"from_date":"2026-12-01", "to_date":"2026-12-14"}
+    manager_data = await client.get("/api/materials/requirements", headers=ctx["auth"], params=params)
+    reception_data = await client.get("/api/materials/requirements", headers=reception, params=params)
+    assert manager_data.status_code == reception_data.status_code == 200
+    assert any(row["id"] == performed.json()["id"] for row in manager_data.json()["performed_procedures"])
+    assert reception_data.json()["performed_procedures"] == []
+    actuals = await client.get("/api/materials/actuals", headers=reception, params=params)
+    assert actuals.status_code == 403
