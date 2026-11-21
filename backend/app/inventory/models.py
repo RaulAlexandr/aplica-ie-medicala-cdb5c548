@@ -58,7 +58,7 @@ class InventoryMovement(Base):
     kind: Mapped[str] = mapped_column(String(20), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     client_request_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    signature: Mapped[str] = mapped_column(String(1024), nullable=False)
+    signature: Mapped[str] = mapped_column(String(64), nullable=False)
     transfer_id: Mapped[UUID | None] = mapped_column(UUIDType)
     reverses_movement_id: Mapped[UUID | None] = mapped_column(ForeignKey("inventory_movements.id", ondelete="RESTRICT"))
     reason: Mapped[str] = mapped_column(Text, nullable=False)

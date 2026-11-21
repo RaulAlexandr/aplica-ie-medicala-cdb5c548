@@ -130,3 +130,12 @@ async def test_inventory_retry_normalizes_decimal_scale(ctx):
     retry=await c.post("/api/inventory/movements/receipt",headers=h,json={**body,"quantity":"10.000"})
     assert retry.status_code==201 and retry.json()["id"]==first.json()["id"]
     changed=await c.post("/api/inventory/movements/receipt",headers=h,json={**body,"quantity":"10.001"});assert changed.status_code==409
+
+@pytest.mark.asyncio
+async def test_movement_and_correction_signatures_are_sha256(ctx):
+    c,s=ctx;h=await register(c,"inv-signature@example.com");item,lot,loc,_=await setup_stock(c,h,minimum="0")
+    body=movement(item,lot,loc,"10",reason="ă"*500);created=await c.post("/api/inventory/movements/receipt",headers=h,json=body);assert created.status_code==201,created.text
+    reverse=await c.post(f"/api/inventory/movements/{created.json()['id']}/reverse",headers=h,json={"client_request_id":str(uuid4()),"reason":"ș"*500});assert reverse.status_code==200,reverse.text
+    async with s() as db:
+        rows=(await db.scalars(select(InventoryMovement).order_by(InventoryMovement.created_at))).all()
+        assert len(rows)==2 and all(len(row.signature)==64 for row in rows)

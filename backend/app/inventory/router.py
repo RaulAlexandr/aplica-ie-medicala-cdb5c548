@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import date, timedelta
 from decimal import Decimal
@@ -74,7 +75,8 @@ class ReverseIn(BaseModel):
 
 def _signature(kind, p):
     quantity=format(p.quantity.normalize(),"f")
-    return json.dumps({"kind":kind,"item_id":str(p.item_id),"lot_id":str(p.lot_id),"location_id":str(p.location_id),"quantity":quantity,"destination_location_id":str(p.destination_location_id) if p.destination_location_id else None,"reason":p.reason.strip(),"direction":p.direction},sort_keys=True,separators=(",",":"))
+    canonical=json.dumps({"kind":kind,"item_id":str(p.item_id),"lot_id":str(p.lot_id),"location_id":str(p.location_id),"quantity":quantity,"destination_location_id":str(p.destination_location_id) if p.destination_location_id else None,"reason":p.reason.strip(),"direction":p.direction},sort_keys=True,separators=(",",":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 async def _balance(db, clinic_id, lot_id, location_id):
     incoming = await db.scalar(select(func.coalesce(func.sum(InventoryMovement.quantity), 0)).where(
@@ -225,7 +227,8 @@ async def reverse(movement_id: UUID,p: ReverseIn,user: User=Depends(require_role
     original=await db.scalar(select(InventoryMovement).where(InventoryMovement.id==movement_id,InventoryMovement.clinic_id==user.clinic_id))
     if not original:raise HTTPException(404,"Mișcare inexistentă")
     if not p.reason.strip():raise HTTPException(422,"Motivul corecției este obligatoriu")
-    req=str(p.client_request_id);sig=json.dumps({"reverse":str(movement_id),"reason":p.reason.strip()},sort_keys=True)
+    req=str(p.client_request_id);canonical=json.dumps({"reverse":str(movement_id),"reason":p.reason.strip()},sort_keys=True)
+    sig=hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     prior_req=await db.scalar(select(InventoryMovement).where(InventoryMovement.clinic_id==user.clinic_id,InventoryMovement.client_request_id==req))
     if prior_req:
         if prior_req.signature!=sig:raise HTTPException(409,"client_request_id deja folosit cu alt conținut")
