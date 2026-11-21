@@ -1,0 +1,428 @@
+import TestRenderer, { act } from 'react-test-renderer';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+import { ReactNode } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as client from '../api/client';
+import * as team from '../team/api';
+import * as collab from './api';
+import { allUnreadLoaded, CollabNavLink, CollabPage, Composer, fetchNewest, HandoverCard, mergeMessages, MEDICAL_NOTICE, POLL_MS, POLL_OPTIONS, TaskRow } from './CollabPage';
+
+const tz = 'Europe/Bucharest';
+const userWith = (role: string) => ({ id: 'me', clinic_id: 'c', full_name: 'Persoană Fictivă', email: 'x@example.com', role }) as client.User;
+const member = (id: string, role: string): team.TeamMember => ({ id, full_name: `Nume ${id}`, role, is_active: true, specialization: null, job_title: null });
+const message = (seq: number, extra: Partial<collab.Message> = {}): collab.Message => ({ id: `m${seq}`, conversation_id: 'k1', seq, sender_id: 'o', sender: 'Nume o', body: `Mesaj ${seq}`, client_request_id: 'r', created_at: '2026-11-23T07:00:00Z', recipients: [], ...extra });
+const conversation = (extra: Partial<collab.Conversation> = {}): collab.Conversation => ({ id: 'k1', kind: 'direct', title: 'Nume o', room_id: null, created_by_id: 'me', last_read_seq: 0, unread: 2, can_write: true, members: [], last_message: null, activity_at: '2026-11-23T07:00:00Z', ...extra });
+const task = (extra: Partial<collab.Task> = {}): collab.Task => ({ id: 't1', title: 'Sarcină fictivă', description: null, assignee_id: 'me', assignee: 'Persoană Fictivă', created_by_id: 'o', created_by: 'Nume o', due_at: null, status: 'open', version: 3, overdue: false, created_at: '', updated_at: '', events: [], ...extra });
+const handover = (extra: Partial<collab.Handover> = {}): collab.Handover => ({ id: 'h1', shift_id: 's1', shift_starts_at: '2026-11-23T07:00:00Z', shift_ends_at: '2026-11-23T11:00:00Z', from_user_id: 'o', from_user: 'Nume o', to_user_id: 'me', to_user: 'Persoană Fictivă', created_by: 'Nume o', notes: 'Note fictive', created_at: '2026-11-23T11:00:00Z', acknowledged_at: null, tasks: [], ...extra });
+const text = (node: TestRenderer.ReactTestInstance): string => node.children.map(child => (typeof child === 'string' ? child : text(child))).join('');
+const flush = async () => { for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); };
+const buttons = (r: TestRenderer.ReactTestRenderer, label: string) => r.root.findAllByType('button').filter(item => text(item).startsWith(label));
+const submit = (r: TestRenderer.ReactTestRenderer) => r.root.findByType('form').props.onSubmit({ preventDefault() {} });
+const type = async (r: TestRenderer.ReactTestRenderer, value: string) => { await act(async () => { r.root.findByType('textarea').props.onChange({ target: { value } }); }); };
+
+async function render(node: ReactNode) {
+  let renderer!: TestRenderer.ReactTestRenderer;
+  const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  await act(async () => { renderer = TestRenderer.create(<QueryClientProvider client={queries}><MemoryRouter>{node}</MemoryRouter></QueryClientProvider>); });
+  await flush();
+  return renderer;
+}
+
+beforeEach(() => {
+  vi.spyOn(client, 'getClinic').mockResolvedValue({ id: 'c', name: 'Clinică', timezone: tz, created_at: '', updated_at: '' });
+  vi.spyOn(client, 'listRooms').mockResolvedValue([{ id: 'r1', clinic_id: 'c', name: 'Cabinet 3', is_active: true }]);
+  vi.spyOn(team, 'listMembers').mockResolvedValue([member('me', 'doctor'), member('o', 'reception')]);
+  vi.spyOn(team, 'getSchedule').mockResolvedValue({ timezone: tz, range_start: '', range_end: '', days: [], shifts: [], leaves: [] });
+  vi.spyOn(collab, 'getSummary').mockResolvedValue({ unread: 0, pending_handovers: 0 });
+  vi.spyOn(collab, 'listConversations').mockResolvedValue([]);
+  vi.spyOn(collab, 'listMessages').mockResolvedValue({ messages: [], has_more: false, oldest_unread_seq: null });
+  vi.spyOn(collab, 'markRead').mockResolvedValue({ last_read_seq: 0 });
+  vi.spyOn(collab, 'listTasks').mockResolvedValue([]);
+  vi.spyOn(collab, 'listHandovers').mockResolvedValue([]);
+});
+afterEach(() => { vi.restoreAllMocks(); });
+
+describe('T20 request ids', () => {
+  it('creates valid, distinct version 4 UUIDs without a secure context', () => {
+    const first = collab.newRequestId();
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(collab.newRequestId()).not.toBe(first);
+  });
+});
+
+describe('T20 composer', () => {
+  it('shows the medical data notice', async () => {
+    const r = await render(<Composer target={{ kind: 'conversation', id: 'k1' }} onSent={() => {}} />);
+    expect(text(r.root)).toContain(MEDICAL_NOTICE);
+    expect(MEDICAL_NOTICE).toBe('Nu scrie date medicale în chat; folosește dosarul pacientului');
+    await act(async () => r.unmount());
+  });
+  it('keeps the text after a failed send and retries with the same request id', async () => {
+    const send = vi.spyOn(collab, 'sendMessage').mockRejectedValueOnce(new Error('Rețea indisponibilă')).mockResolvedValueOnce(message(1));
+    const onSent = vi.fn();
+    const r = await render(<Composer target={{ kind: 'conversation', id: 'k1' }} onSent={onSent} />);
+    await type(r, 'Text important');
+    await act(async () => { submit(r); });
+    await flush();
+    expect(r.root.findByType('textarea').props.value).toBe('Text important');
+    expect(text(r.root)).toContain('Rețea indisponibilă');
+    expect(onSent).not.toHaveBeenCalled();
+    await act(async () => { submit(r); });
+    await flush();
+    expect(send.mock.calls[0][2]).toBe(send.mock.calls[1][2]);
+    expect(r.root.findByType('textarea').props.value).toBe('');
+    expect(onSent).toHaveBeenCalledTimes(1);
+    await act(async () => r.unmount());
+  });
+  it('uses a new request id when the text changes after a failure', async () => {
+    const send = vi.spyOn(collab, 'sendMessage').mockRejectedValueOnce(new Error('Eroare')).mockResolvedValueOnce(message(1));
+    const r = await render(<Composer target={{ kind: 'conversation', id: 'k1' }} onSent={() => {}} />);
+    await type(r, 'Primul');
+    await act(async () => { submit(r); });
+    await flush();
+    await type(r, 'Primul, corectat');
+    await act(async () => { submit(r); });
+    await flush();
+    expect(send.mock.calls[0][2]).not.toBe(send.mock.calls[1][2]);
+    await act(async () => r.unmount());
+  });
+  it('sends once on a double submit and refuses blank text', async () => {
+    let finish!: (value: collab.Message) => void;
+    const send = vi.spyOn(collab, 'sendMessage').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const r = await render(<Composer target={{ kind: 'conversation', id: 'k1' }} onSent={() => {}} />);
+    await type(r, '    ');
+    await act(async () => { submit(r); });
+    expect(send).not.toHaveBeenCalled();
+    await type(r, 'Un mesaj');
+    await act(async () => { submit(r); });
+    await act(async () => { submit(r); });
+    expect(send).toHaveBeenCalledTimes(1);
+    await act(async () => { finish(message(1)); });
+    await flush();
+    await act(async () => r.unmount());
+  });
+  it('locks the text while sending, so nothing typed meanwhile is cleared', async () => {
+    let finish!: (value: collab.Message) => void;
+    vi.spyOn(collab, 'sendMessage').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const r = await render(<Composer target={{ kind: 'conversation', id: 'k1' }} onSent={() => {}} />);
+    await type(r, 'Un mesaj');
+    expect(r.root.findByType('textarea').props.readOnly).toBe(false);
+    await act(async () => { submit(r); });
+    await flush();
+    expect(r.root.findByType('textarea').props.readOnly).toBe(true);
+    await act(async () => { finish(message(1)); });
+    await flush();
+    expect(r.root.findByType('textarea').props.readOnly).toBe(false);
+    await act(async () => r.unmount());
+  });
+  it('keeps the text when the room changes after a refusal and uses a new request id', async () => {
+    const room = vi.spyOn(collab, 'sendToRoom').mockRejectedValueOnce(new Error('Nimeni nu este repartizat acum')).mockResolvedValueOnce(message(1));
+    const tree = (id: string) => <QueryClientProvider client={queries}><MemoryRouter><Composer target={{ kind: 'room', id }} onSent={() => {}} /></MemoryRouter></QueryClientProvider>;
+    const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let r!: TestRenderer.ReactTestRenderer;
+    await act(async () => { r = TestRenderer.create(tree('r1')); });
+    await type(r, 'Mesaj important');
+    await act(async () => { submit(r); });
+    await flush();
+    await act(async () => { r.update(tree('r2')); });
+    await flush();
+    expect(r.root.findByType('textarea').props.value).toBe('Mesaj important');
+    expect(text(r.root)).not.toContain('Nimeni nu este repartizat');
+    await act(async () => { submit(r); });
+    await flush();
+    expect(room.mock.calls[1][0]).toBe('r2');
+    expect(room.mock.calls[0][2]).not.toBe(room.mock.calls[1][2]);
+    await act(async () => r.unmount());
+  });
+  it('sends a room message to the room route and shows a refusal without losing the text', async () => {
+    const room = vi.spyOn(collab, 'sendToRoom').mockRejectedValue(new Error('Nimeni nu este repartizat acum la Cabinet 3. Mesajul nu a fost trimis.'));
+    const r = await render(<Composer target={{ kind: 'room', id: 'r1' }} onSent={() => {}} />);
+    await type(r, 'Către cabinet');
+    await act(async () => { submit(r); });
+    await flush();
+    expect(room.mock.calls[0][0]).toBe('r1');
+    expect(text(r.root)).toContain('Nimeni nu este repartizat');
+    expect(r.root.findByType('textarea').props.value).toBe('Către cabinet');
+    await act(async () => r.unmount());
+  });
+});
+
+describe('T20 double submit', () => {
+  const pending = <T,>() => new Promise<T>(() => {});
+  const formIn = (r: TestRenderer.ReactTestRenderer, label: string) => r.root.findAll(item => item.type === 'form' && item.props['aria-label'] === label)[0];
+  const sectionForm = (r: TestRenderer.ReactTestRenderer, label: string) => r.root.findAll(item => item.type === 'section' && item.props['aria-label'] === label)[0].findAllByType('form')[0];
+  const twice = async (handler: (event: { preventDefault(): void }) => void) => { await act(async () => { handler({ preventDefault() {} }); handler({ preventDefault() {} }); }); await flush(); };
+  const openTab = async (r: TestRenderer.ReactTestRenderer, label: string) => { await act(async () => { buttons(r, label)[0].props.onClick(); }); await flush(); };
+
+  it('the composer sends one request for two submits in the same tick', async () => {
+    const send = vi.spyOn(collab, 'sendMessage').mockImplementation(() => pending());
+    const r = await render(<Composer target={{ kind: 'conversation', id: 'k1' }} onSent={() => {}} />);
+    await type(r, 'Un mesaj');
+    await twice(r.root.findByType('form').props.onSubmit);
+    expect(send).toHaveBeenCalledTimes(1);
+    await act(async () => r.unmount());
+  });
+  it('the composer can send again after a failed request', async () => {
+    const send = vi.spyOn(collab, 'sendMessage').mockRejectedValue(new Error('Eroare'));
+    const r = await render(<Composer target={{ kind: 'conversation', id: 'k1' }} onSent={() => {}} />);
+    await type(r, 'Un mesaj');
+    await twice(r.root.findByType('form').props.onSubmit);
+    await act(async () => { submit(r); });
+    await flush();
+    expect(send).toHaveBeenCalledTimes(2);
+    await act(async () => r.unmount());
+  });
+  it('direct and group forms send one request', async () => {
+    const direct = vi.spyOn(collab, 'openDirect').mockImplementation(() => pending());
+    const group = vi.spyOn(collab, 'createConversation').mockImplementation(() => pending());
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await twice(formIn(r, 'Mesaj direct').props.onSubmit);
+    await twice(formIn(r, 'Grup sau canal').props.onSubmit);
+    expect(direct).toHaveBeenCalledTimes(1);
+    expect(group).toHaveBeenCalledTimes(1);
+    await act(async () => r.unmount());
+  });
+  it('the add-member form sends one request', async () => {
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ kind: 'group', title: 'Grup', unread: 0 })]);
+    const add = vi.spyOn(collab, 'addMember').mockImplementation(() => pending());
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
+    await flush();
+    await twice(formIn(r, 'Adaugă membru').props.onSubmit);
+    expect(add).toHaveBeenCalledTimes(1);
+    await act(async () => r.unmount());
+  });
+  it('task and handover forms send one request', async () => {
+    const create = vi.spyOn(collab, 'createTask').mockImplementation(() => pending());
+    const handed = vi.spyOn(collab, 'createHandover').mockImplementation(() => pending());
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await openTab(r, 'Sarcini');
+    await twice(sectionForm(r, 'Sarcină nouă').props.onSubmit);
+    await openTab(r, 'Predări');
+    await twice(sectionForm(r, 'Predare nouă').props.onSubmit);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(handed).toHaveBeenCalledTimes(1);
+    await act(async () => r.unmount());
+  });
+  it('a task change and a handover confirmation send one request', async () => {
+    const change = vi.spyOn(collab, 'changeTask').mockImplementation(() => pending());
+    const row = await render(<TaskRow task={task()} user={userWith('doctor')} members={[member('me', 'doctor')]} timezone={tz} />);
+    await act(async () => { row.root.findAllByType('select')[0].props.onChange({ target: { value: 'resolved' } }); });
+    await twice(row.root.findByType('form').props.onSubmit);
+    expect(change).toHaveBeenCalledTimes(1);
+    await act(async () => row.unmount());
+    const ack = vi.spyOn(collab, 'acknowledgeHandover').mockImplementation(() => pending());
+    const card = await render(<HandoverCard item={handover()} user={userWith('doctor')} timezone={tz} />);
+    const click = buttons(card, 'Confirm primirea')[0].props.onClick;
+    await act(async () => { click(); click(); });
+    await flush();
+    expect(ack).toHaveBeenCalledTimes(1);
+    await act(async () => card.unmount());
+  });
+});
+
+describe('T20 unread and polling', () => {
+  it('shows the unread badge in the menu', async () => {
+    vi.mocked(collab.getSummary).mockResolvedValue({ unread: 3, pending_handovers: 0 });
+    const r = await render(<CollabNavLink />);
+    expect(text(r.root)).toContain('Mesaje și sarcini3');
+    await act(async () => r.unmount());
+  });
+  it('shows no badge without unread messages', async () => {
+    const r = await render(<CollabNavLink />);
+    expect(r.root.findAll(item => item.props.className === 'collab-badge')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
+  it('polls every 15 seconds and not in the background (real timing is proven in the browser run)', () => {
+    expect(POLL_MS).toBe(15000);
+    expect(POLL_OPTIONS).toEqual({ refetchInterval: 15000, refetchIntervalInBackground: false });
+  });
+  it('marks a conversation read up to the last displayed message', async () => {
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation()]);
+    vi.mocked(collab.listMessages).mockResolvedValue({ messages: [message(1), message(2)], has_more: false, oldest_unread_seq: null });
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
+    await flush();
+    expect(collab.markRead).toHaveBeenCalledWith('k1', 2);
+    expect(text(r.root)).toContain('Mesaj 2');
+    await act(async () => r.unmount());
+  });
+  it('lets the group creator add an active member who is not in the group', async () => {
+    vi.mocked(team.listMembers).mockResolvedValue([member('me', 'doctor'), member('o', 'reception'), member('n', 'assistant'), { ...member('x', 'assistant'), is_active: false }]);
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ kind: 'group', title: 'Grup', unread: 0, members: [{ id: 'me', full_name: 'Nume me', is_active: true }, { id: 'o', full_name: 'Nume o', is_active: true }] })]);
+    const add = vi.spyOn(collab, 'addMember').mockResolvedValue(conversation({ kind: 'group' }));
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
+    await flush();
+    const form = r.root.findAll(item => item.type === 'form' && item.props['aria-label'] === 'Adaugă membru')[0];
+    const options = form.findAllByType('option').map(item => item.props.value);
+    expect(options).toEqual(['', 'n']);
+    await act(async () => { form.findByType('select').props.onChange({ target: { value: 'n' } }); });
+    await act(async () => { r.root.findAll(item => item.type === 'form' && item.props['aria-label'] === 'Adaugă membru')[0].props.onSubmit({ preventDefault() {} }); });
+    await flush();
+    expect(add).toHaveBeenCalledWith('k1', 'n');
+    await act(async () => r.unmount());
+  });
+  it('does not offer adding members to someone who may not add them', async () => {
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ kind: 'group', title: 'Grup', unread: 0, created_by_id: 'o' })]);
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
+    await flush();
+    expect(r.root.findAll(item => item.type === 'form' && item.props['aria-label'] === 'Adaugă membru')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
+  it('keeps history readable but offers no composer for an inactive person', async () => {
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ can_write: false, unread: 0 })]);
+    vi.mocked(collab.listMessages).mockResolvedValue({ messages: [message(1)], has_more: false, oldest_unread_seq: null });
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
+    await flush();
+    const thread = r.root.findAll(item => item.type === 'section' && item.props['aria-label'] === 'Conversație')[0];
+    expect(text(thread)).toContain('Mesaj 1');
+    expect(text(thread)).toContain('Persoana este inactivă');
+    expect(thread.findAllByType('textarea')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
+});
+
+describe('T20 long history', () => {
+  const history = (count: number, skip: (seq: number) => boolean = () => false) => Array.from({ length: count }, (_, index) => message(index + 1)).filter(item => !skip(item.seq));
+  const server = (all: collab.Message[], oldest: number | null) => async (_id: string, options: collab.PageOptions = {}) => {
+    const visible = options.before ? all.filter(item => item.seq < options.before!) : all;
+    const size = options.limit ?? 50;
+    return { messages: visible.slice(-size), has_more: visible.length > size, oldest_unread_seq: oldest };
+  };
+  const open = async (r: TestRenderer.ReactTestRenderer) => { await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); }); await flush(); };
+  const older = async (r: TestRenderer.ReactTestRenderer) => { await act(async () => { buttons(r, 'Mesaje mai vechi')[0].props.onClick(); }); await flush(); };
+
+  it('merges pages by sequence without duplicates', () => {
+    expect(mergeMessages([message(3), message(4)], [message(1), message(3)]).map(item => item.seq)).toEqual([1, 3, 4]);
+  });
+  it('knows when every unread message is loaded, also with room sequence gaps', () => {
+    expect(allUnreadLoaded([message(9), message(12)], 7)).toBe(false);
+    expect(allUnreadLoaded([message(5), message(9)], 7)).toBe(true);
+    expect(allUnreadLoaded([message(7)], 7)).toBe(true);
+    expect(allUnreadLoaded([message(9)], null)).toBe(true);
+    expect(allUnreadLoaded([], 3)).toBe(false);
+  });
+  it('fetchNewest walks back until it reaches what is already loaded', async () => {
+    const list = vi.spyOn(collab, 'listMessages').mockImplementation(server(history(220), 1));
+    const result = await fetchNewest('k1', 100);
+    expect(result.messages[0].seq).toBeLessThanOrEqual(100);
+    expect(result.messages[result.messages.length - 1].seq).toBe(220);
+    expect(new Set(result.messages.map(item => item.seq)).size).toBe(result.messages.length);
+    expect(list.mock.calls.length).toBeGreaterThan(1);
+  });
+  it('does not mark as read until all unread messages are loaded, then pages to the beginning', async () => {
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ unread: 510 })]);
+    vi.mocked(collab.listMessages).mockImplementation(server(history(510), 1));
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await open(r);
+    expect(collab.markRead).not.toHaveBeenCalled();
+    expect(text(r.root)).toContain('Ai mesaje necitite mai vechi');
+    for (let page = 0; page < 9; page += 1) await older(r);
+    expect(collab.markRead).not.toHaveBeenCalled();
+    await older(r);
+    expect(collab.markRead).toHaveBeenCalledWith('k1', 510);
+    expect(text(r.root)).toContain('Mesaj 1');
+    expect(text(r.root)).not.toContain('Ai mesaje necitite mai vechi');
+    expect(buttons(r, 'Mesaje mai vechi')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
+  it('marks read right away when the unread messages are in the first page, even with older history', async () => {
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ unread: 2, last_read_seq: 118 })]);
+    vi.mocked(collab.listMessages).mockImplementation(server(history(120), 119));
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await open(r);
+    expect(collab.markRead).toHaveBeenCalledWith('k1', 120);
+    expect(text(r.root)).not.toContain('Ai mesaje necitite mai vechi');
+    expect(buttons(r, 'Mesaje mai vechi')).toHaveLength(1);
+    await act(async () => r.unmount());
+  });
+});
+
+describe('T20 tasks', () => {
+  const select = (r: TestRenderer.ReactTestRenderer, index: number, value: string) => act(async () => { r.root.findAllByType('select')[index].props.onChange({ target: { value } }); });
+  it('requires a reason before blocking and sends the expected version', async () => {
+    const change = vi.spyOn(collab, 'changeTask').mockResolvedValue(task({ status: 'blocked', version: 4 }));
+    const r = await render(<TaskRow task={task()} user={userWith('doctor')} members={[member('me', 'doctor')]} timezone={tz} />);
+    await select(r, 0, 'blocked');
+    expect(buttons(r, 'Aplică')[0].props.disabled).toBe(true);
+    await act(async () => { r.root.findByType('input').props.onChange({ target: { value: 'Lipsește materialul' } }); });
+    expect(buttons(r, 'Aplică')[0].props.disabled).toBe(false);
+    await act(async () => { submit(r); });
+    await flush();
+    expect(change).toHaveBeenCalledWith('t1', { expected_version: 3, status: 'blocked', reason: 'Lipsește materialul' });
+    await act(async () => r.unmount());
+  });
+  it('shows a concurrent change error', async () => {
+    vi.spyOn(collab, 'changeTask').mockRejectedValue(new Error('Sarcina a fost modificată între timp. Reîncarcă și încearcă din nou.'));
+    const r = await render(<TaskRow task={task()} user={userWith('doctor')} members={[member('me', 'doctor')]} timezone={tz} />);
+    await select(r, 0, 'resolved');
+    await act(async () => { submit(r); });
+    await flush();
+    expect(text(r.root)).toContain('modificată între timp');
+    await act(async () => r.unmount());
+  });
+  it('offers reopening of a closed task only to a manager', async () => {
+    const closed = task({ status: 'resolved' });
+    const doctor = await render(<TaskRow task={closed} user={userWith('doctor')} members={[]} timezone={tz} />);
+    expect(doctor.root.findAllByType('form')).toHaveLength(0);
+    await act(async () => doctor.unmount());
+    const manager = await render(<TaskRow task={closed} user={userWith('clinic_manager')} members={[]} timezone={tz} />);
+    expect(text(manager.root.findAllByType('select')[0])).toContain('Redeschide');
+    await act(async () => manager.unmount());
+  });
+  it('marks an overdue task in clinic time', async () => {
+    const r = await render(<TaskRow task={task({ due_at: '2026-11-23T15:00:00Z', overdue: true })} user={userWith('doctor')} members={[]} timezone={tz} />);
+    expect(text(r.root)).toContain('17:00');
+    expect(text(r.root)).toContain('întârziată');
+    await act(async () => r.unmount());
+  });
+});
+
+describe('T20 handovers', () => {
+  const frozen = (extra: Partial<collab.Handover['tasks'][number]> = {}) => ({ task_id: 't1', title: 'Sarcină predată', status: 'open' as const, due_at: null, can_take: true, version: 4, with_me: false, ...extra });
+  it('takes a task from the handover with the expected version, once', async () => {
+    const take = vi.spyOn(collab, 'takeHandoverTask').mockImplementation(() => new Promise(() => {}));
+    const r = await render(<HandoverCard item={handover({ acknowledged_at: '2026-11-23T12:00:00Z', tasks: [frozen()] })} user={userWith('doctor')} timezone={tz} />);
+    const click = buttons(r, 'Preia sarcina')[0].props.onClick;
+    await act(async () => { click(); click(); });
+    await flush();
+    expect(take).toHaveBeenCalledTimes(1);
+    expect(take).toHaveBeenCalledWith('h1', 't1', 4);
+    await act(async () => r.unmount());
+  });
+  it('offers no take action when the server does not allow it and shows a task already taken', async () => {
+    const r = await render(<HandoverCard item={handover({ acknowledged_at: '2026-11-23T12:00:00Z', tasks: [frozen({ can_take: false, version: null, with_me: true })] })} user={userWith('doctor')} timezone={tz} />);
+    expect(buttons(r, 'Preia sarcina')).toHaveLength(0);
+    expect(text(r.root)).toContain('Preluată de tine');
+    await act(async () => r.unmount());
+  });
+  it('shows a read-only task to a handover recipient who is not responsible yet', async () => {
+    const r = await render(<TaskRow task={task({ assignee_id: 'o', assignee: 'Nume o', created_by_id: 'o' })} user={userWith('doctor')} members={[member('me', 'doctor')]} timezone={tz} />);
+    expect(text(r.root)).toContain('Sarcină fictivă');
+    expect(r.root.findAllByType('form')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
+  it('lets only the recipient confirm', async () => {
+    const ack = vi.spyOn(collab, 'acknowledgeHandover').mockResolvedValue(handover({ acknowledged_at: '2026-11-23T12:00:00Z' }));
+    const recipient = await render(<HandoverCard item={handover()} user={userWith('doctor')} timezone={tz} />);
+    await act(async () => { buttons(recipient, 'Confirm primirea')[0].props.onClick(); });
+    await flush();
+    expect(ack).toHaveBeenCalledWith('h1');
+    await act(async () => recipient.unmount());
+    const other = await render(<HandoverCard item={handover({ to_user_id: 'x', to_user: 'Altcineva' })} user={userWith('clinic_manager')} timezone={tz} />);
+    expect(buttons(other, 'Confirm primirea')).toHaveLength(0);
+    expect(text(other.root)).toContain('Așteaptă confirmarea');
+    await act(async () => other.unmount());
+  });
+  it('shows the frozen task list and the confirmation', async () => {
+    const r = await render(<HandoverCard item={handover({ acknowledged_at: '2026-11-23T12:00:00Z', tasks: [{ task_id: 't1', title: 'Sarcină rămasă', status: 'blocked', due_at: null, can_take: false, version: null, with_me: false }] })} user={userWith('doctor')} timezone={tz} />);
+    expect(text(r.root)).toContain('Sarcină rămasă · Blocată');
+    expect(text(r.root)).toContain('Primire confirmată');
+    expect(buttons(r, 'Confirm primirea')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
+});
