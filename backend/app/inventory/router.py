@@ -65,6 +65,13 @@ async def _clinic_today(db, clinic_id):
     try:return utcnow().astimezone(ZoneInfo(timezone or "UTC")).date()
     except ZoneInfoNotFoundError:return utcnow().date()
 
+async def _commit_unique(db, message):
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409,message) from exc
+
 async def _item_location_lot(db, user, p):
     lot=await db.scalar(select(InventoryLot).where(InventoryLot.id==p.lot_id,InventoryLot.clinic_id==user.clinic_id,InventoryLot.item_id==p.item_id).with_for_update())
     item=await db.scalar(select(InventoryItem).where(InventoryItem.id==p.item_id,InventoryItem.clinic_id==user.clinic_id,InventoryItem.is_active.is_(True)))
@@ -111,29 +118,29 @@ async def history(item_id: UUID|None=None,lot_id: UUID|None=None,location_id: UU
 
 @router.post("/items",status_code=201)
 async def create_item(p: ItemIn,user: User=Depends(require_roles(*MANAGE)),db: AsyncSession=Depends(get_db)):
-    x=InventoryItem(clinic_id=user.clinic_id,**p.model_dump());db.add(x);await db.commit();return {"id":str(x.id)}
+    x=InventoryItem(clinic_id=user.clinic_id,**p.model_dump());db.add(x);await _commit_unique(db,"Un articol cu acest nume există deja.");return {"id":str(x.id)}
 
 @router.patch("/items/{item_id}")
 async def update_item(item_id: UUID,p: ItemIn,user: User=Depends(require_roles(*MANAGE)),db: AsyncSession=Depends(get_db)):
     x=await db.scalar(select(InventoryItem).where(InventoryItem.id==item_id,InventoryItem.clinic_id==user.clinic_id).with_for_update())
     if not x:raise HTTPException(404,"Resursă inexistentă")
     for key,value in p.model_dump().items():setattr(x,key,value)
-    await db.commit();return {"id":str(x.id)}
+    await _commit_unique(db,"Un articol cu acest nume există deja.");return {"id":str(x.id)}
 
 @router.post("/locations",status_code=201)
 async def create_location(p: LocationIn,user: User=Depends(require_roles(*MANAGE)),db: AsyncSession=Depends(get_db)):
-    x=InventoryLocation(clinic_id=user.clinic_id,**p.model_dump());db.add(x);await db.commit();return {"id":str(x.id)}
+    x=InventoryLocation(clinic_id=user.clinic_id,**p.model_dump());db.add(x);await _commit_unique(db,"O locație cu acest nume există deja.");return {"id":str(x.id)}
 
 @router.patch("/locations/{location_id}")
 async def update_location(location_id: UUID,p: LocationIn,user: User=Depends(require_roles(*MANAGE)),db: AsyncSession=Depends(get_db)):
     x=await db.scalar(select(InventoryLocation).where(InventoryLocation.id==location_id,InventoryLocation.clinic_id==user.clinic_id).with_for_update())
     if not x:raise HTTPException(404,"Resursă inexistentă")
-    x.name=p.name;x.is_active=p.is_active;await db.commit();return {"id":str(x.id)}
+    x.name=p.name;x.is_active=p.is_active;await _commit_unique(db,"O locație cu acest nume există deja.");return {"id":str(x.id)}
 
 @router.post("/lots",status_code=201)
 async def create_lot(p: LotIn,user: User=Depends(require_roles(*MANAGE)),db: AsyncSession=Depends(get_db)):
     if not await db.scalar(select(InventoryItem.id).where(InventoryItem.id==p.item_id,InventoryItem.clinic_id==user.clinic_id)):raise HTTPException(404,"Resursă inexistentă")
-    x=InventoryLot(clinic_id=user.clinic_id,**p.model_dump());db.add(x);await db.commit();return {"id":str(x.id)}
+    x=InventoryLot(clinic_id=user.clinic_id,**p.model_dump());db.add(x);await _commit_unique(db,"Codul lotului există deja pentru acest articol.");return {"id":str(x.id)}
 
 async def _write(p,kind,user,db):
     sig=_signature(kind,p);req=str(p.client_request_id)

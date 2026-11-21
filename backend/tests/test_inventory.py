@@ -93,3 +93,17 @@ async def test_retry_and_negative_adjustment(ctx):
     assert (await c.post("/api/inventory/movements/adjustment",headers=h,json=dec)).status_code==409
     receipt=movement(item,lot,loc,"2");one=await c.post("/api/inventory/movements/receipt",headers=h,json=receipt);two=await c.post("/api/inventory/movements/receipt",headers=h,json=receipt)
     assert one.status_code==201 and two.json()["id"]==one.json()["id"]
+
+@pytest.mark.asyncio
+async def test_duplicate_item_location_lot_and_rename_return_409(ctx):
+    c,_=ctx;h=await register(c,"inv-duplicates@example.com")
+    item1=await c.post("/api/inventory/items",headers=h,json={"name":"Articol duplicat fictiv","unit":"buc","minimum_quantity":"0"});assert item1.status_code==201
+    item2=await c.post("/api/inventory/items",headers=h,json={"name":"Alt articol fictiv","unit":"buc","minimum_quantity":"0"});assert item2.status_code==201
+    duplicate_item=await c.post("/api/inventory/items",headers=h,json={"name":"Articol duplicat fictiv","unit":"buc","minimum_quantity":"0"});assert duplicate_item.status_code==409 and "articol" in duplicate_item.text.lower()
+    rename_item=await c.patch(f"/api/inventory/items/{item2.json()['id']}",headers=h,json={"name":"Articol duplicat fictiv","unit":"buc","minimum_quantity":"0","is_active":True});assert rename_item.status_code==409
+    loc1=await c.post("/api/inventory/locations",headers=h,json={"name":"Locație duplicată fictivă"});assert loc1.status_code==201
+    loc2=await c.post("/api/inventory/locations",headers=h,json={"name":"Altă locație fictivă"});assert loc2.status_code==201
+    duplicate_location=await c.post("/api/inventory/locations",headers=h,json={"name":"Locație duplicată fictivă"});assert duplicate_location.status_code==409 and "loca" in duplicate_location.text.lower()
+    rename_location=await c.patch(f"/api/inventory/locations/{loc2.json()['id']}",headers=h,json={"name":"Locație duplicată fictivă","is_active":True});assert rename_location.status_code==409
+    lot=await c.post("/api/inventory/lots",headers=h,json={"item_id":item1.json()["id"],"code":"COD-LOT-FICTIV"});assert lot.status_code==201
+    duplicate_lot=await c.post("/api/inventory/lots",headers=h,json={"item_id":item1.json()["id"],"code":"COD-LOT-FICTIV"});assert duplicate_lot.status_code==409 and "lot" in duplicate_lot.text.lower()
