@@ -212,6 +212,61 @@ try {
   await teamAttendance.getByText('A uitat să pontească (fictiv)').waitFor();
   await shot(manager, 'manager-correction');
 
+  // ===== Forgotten clock-in: refused, closed by the person, flagged, cleared by a valid correction =====
+  await manager.reload({ waitUntil: 'domcontentloaded' });
+  const ownAttendance = region(manager, 'Prezența mea');
+  await ownAttendance.getByRole('button', { name: 'Înregistrează intrarea' }).click();
+  await ownAttendance.getByRole('button', { name: 'Înregistrează ieșirea' }).waitFor();
+  const forgotten = (await managerApi.call('GET', '/team/attendance/me')).body.open;
+  const forgottenIn = new Date(Date.now() - 3 * 86400000);
+  const aged = await managerApi.call('POST', `/team/attendance/${forgotten.id}/corrections`, { clock_in_at: forgottenIn.toISOString(), reason: 'Scenariu fictiv de pontaj uitat' });
+  check('the forgotten-session scenario is set up (open for 3 days)', aged.status === 201 && aged.body.open_over_limit === true, { status: aged.status });
+  await manager.reload({ waitUntil: 'domcontentloaded' });
+  await ownAttendance.getByText('deschis de peste 24 de ore').waitFor();
+  check('the person sees "De verificat" instead of hours on a forgotten session', (await ownAttendance.innerText()).includes('De verificat'));
+  const review = region(manager, 'Pontaje de verificat');
+  await review.getByText('De verificat').first().waitFor();
+  check('the manager sees the session open for more than 24 hours', (await review.innerText()).includes('deschis de peste 24 de ore'));
+  const refusedIn = await managerApi.call('POST', '/team/attendance/clock-in');
+  check('clock-in over a forgotten session is refused (409) with the entry moment', refusedIn.status === 409 && refusedIn.body.clock_in_at && refusedIn.body.detail.includes('Închide'), { status: refusedIn.status });
+  const leftLate = respond(manager, 'POST', p => p === '/api/team/attendance/clock-out');
+  await ownAttendance.getByRole('button', { name: 'Înregistrează ieșirea' }).click();
+  const leftBody = await (await leftLate).json();
+  check('clock-out works and the long session needs review', leftBody.is_open === false && leftBody.needs_review === true);
+  await ownAttendance.getByRole('button', { name: 'Înregistrează intrarea' }).waitFor();
+  await ownAttendance.locator('article', { hasText: 'De verificat' }).first().waitFor();
+  const reviewRow = review.locator('article').first();
+  await reviewRow.getByText('De verificat').waitFor();
+  await shot(manager, 'manager-forgotten-attendance');
+  await reviewRow.getByRole('button', { name: 'Corectează' }).click();
+  const reviewForm = teamAttendance.getByRole('form', { name: 'Corecție prezență' });
+  await reviewForm.getByLabel('Ieșire corectă').fill(clinicLocal(new Date(forgottenIn.getTime() + 8 * 3600000)));
+  await reviewForm.getByLabel('Motivul corecției').fill('Ieșire reală (fictiv)');
+  const reviewed = respond(manager, 'POST', p => p.endsWith('/corrections'));
+  await reviewForm.getByRole('button', { name: 'Salvează corecția' }).click();
+  const reviewedResponse = await reviewed;
+  const reviewedBody = await reviewedResponse.json();
+  check('a valid correction removes the review flag', reviewedResponse.status() === 201 && reviewedBody.needs_review === false, { status: reviewedResponse.status() });
+  await review.waitFor({ state: 'detached' });
+  check('the original clock-out is kept after the correction', reviewedBody.clock_out_at === leftBody.clock_out_at);
+
+  // ===== Inactive person: marked, manager warned, nothing cancelled or closed =====
+  await receptionPage.context().close();
+  check('the receptionist has an open session before deactivation', (await receptionApi.call('POST', '/team/attendance/clock-in')).status === 201);
+  const deactivated = await managerApi.call('POST', `/staff/${receptionist.id}/deactivate`);
+  check('the existing deactivation flow is used', deactivated.status === 200 && deactivated.body.staff.is_active === false, { status: deactivated.status });
+  await manager.reload({ waitUntil: 'domcontentloaded' });
+  const inactivePanel = region(manager, 'Persoane inactive');
+  await inactivePanel.getByText(receptionist.full_name).waitFor();
+  const inactiveText = await inactivePanel.innerText();
+  check('the manager is warned about future shifts and open attendance', inactiveText.includes('1 tură viitoare activă') && inactiveText.includes('pontaj deschis'));
+  const inactiveDay = await showDay(manager, monday);
+  await inactiveDay.getByText(`${receptionist.full_name} · inactiv`).waitFor();
+  check('the schedule marks the person as inactive and keeps the shift', (await inactiveDay.innerText()).includes('08:00–16:00'));
+  await region(manager, 'Prezența echipei').locator('article', { hasText: `${receptionist.full_name} · inactiv` }).first().waitFor();
+  check('the attendance list marks the person as inactive', true);
+  await shot(manager, 'manager-inactive-warning');
+
   // ===== DST in the view =====
   const spring = await showDay(manager, '2027-03-28');
   check('the spring change day is labelled 23 hours', (await spring.innerText()).includes('zi de 23 ore'));
