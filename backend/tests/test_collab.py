@@ -559,3 +559,77 @@ async def test_handover_validates_shift_person_and_clinic(env):
     managed = await on_shift(sessions, c, assistant["id"], "assistant", start=-5, end=-2)
     by_manager = await post(c, managed, doctor["id"])
     assert by_manager.status_code == 201 and by_manager.json()["from_user_id"] == assistant["id"] and by_manager.json()["created_by"] == "Manager Fictiv"
+
+
+# ---------------------------------------------------------------------------------------------
+# Taking over tasks from a handover
+# ---------------------------------------------------------------------------------------------
+
+
+async def handed_over(client, sessions, c, sender, receiver, *tasks):
+    shift_id = await on_shift(sessions, c, sender["id"], "doctor")
+    created = await client.post("/api/collab/handovers", headers=sender["auth"], json={"shift_id": shift_id, "to_user_id": receiver["id"], "notes": "Note fictive"})
+    assert created.status_code == 201, created.text
+    return created.json()
+
+
+def take_url(handover, task):
+    return f"/api/collab/handovers/{handover['id']}/tasks/{task['id']}/take"
+
+
+async def acknowledge(client, who, handover):
+    response = await client.post(f"/api/collab/handovers/{handover['id']}/acknowledge", headers=who["auth"])
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.mark.asyncio
+async def test_handover_recipient_reads_takes_and_then_works_on_the_task(env):
+    client, sessions = env
+    c = await clinic(client, sessions)
+    sender, receiver, outsider = [await person(sessions, c["clinic_id"], role, name) for role, name in (("doctor", "Medic Pleacă"), ("doctor", "Medic Vine"), ("reception", "Coleg"))]
+    task = await new_task(client, sender, sender["id"], description="Descriere fictivă")
+    handover = await handed_over(client, sessions, c, sender, receiver)
+    assert [row["id"] for row in (await client.get("/api/collab/tasks", headers=receiver["auth"])).json()] == [task["id"]]
+    assert (await client.get("/api/collab/tasks", headers=receiver["auth"], params={"mine": "true"})).json() == []
+    assert (await client.get("/api/collab/tasks", headers=outsider["auth"])).json() == []
+    assert (await change(client, receiver, task, status="resolved")).status_code == 403
+    assert (await change(client, outsider, task, status="resolved")).status_code == 404
+    assert (await client.post(take_url(handover, task), headers=receiver["auth"], json={"expected_version": 1})).status_code == 409  # receipt comes first
+    confirmed = await acknowledge(client, receiver, handover)
+    assert confirmed["tasks"][0]["can_take"] is True and confirmed["tasks"][0]["version"] == 1
+    assert (await client.post(take_url(handover, task), headers=outsider["auth"], json={"expected_version": 1})).status_code == 404
+    assert (await client.post(take_url(handover, task), headers=sender["auth"], json={"expected_version": 1})).status_code == 403
+    assert (await client.post(take_url(handover, task), headers=c["auth"], json={"expected_version": 1})).status_code == 403
+    assert (await client.post(take_url(handover, task), headers=receiver["auth"], json={"expected_version": 7})).status_code == 409
+    taken = await client.post(take_url(handover, task), headers=receiver["auth"], json={"expected_version": 1})
+    assert taken.status_code == 200, taken.text
+    body = taken.json()
+    assert (body["assignee"], body["version"], body["status"]) == ("Medic Vine", 2, "open")
+    event = body["events"][-1]
+    assert (event["from_assignee"], event["to_assignee"], event["actor"]) == ("Medic Pleacă", "Medic Vine", "Medic Vine") and "predare" in event["reason"].lower()
+    assert (await client.post(take_url(handover, task), headers=receiver["auth"], json={"expected_version": 2})).status_code == 409
+    worked = await change(client, receiver, body, status="resolved")
+    assert worked.status_code == 200 and worked.json()["status"] == "resolved"
+    frozen = (await client.get("/api/collab/handovers", headers=receiver["auth"])).json()[0]["tasks"][0]
+    assert frozen["status"] == "open" and frozen["title"] == "Sarcină fictivă" and frozen["can_take"] is False
+
+
+@pytest.mark.asyncio
+async def test_task_cannot_be_taken_once_resolved_or_moved_to_someone_else(env):
+    client, sessions = env
+    c, other = await clinic(client, sessions), await clinic(client, sessions)
+    sender, receiver, third = [await person(sessions, c["clinic_id"], "doctor") for _ in range(3)]
+    done, moved = await new_task(client, sender, sender["id"]), await new_task(client, sender, sender["id"])
+    handover = await handed_over(client, sessions, c, sender, receiver)
+    unrelated = await new_task(client, sender, sender["id"])  # created after the handover: not in its list
+    await acknowledge(client, receiver, handover)
+    done = (await change(client, sender, done, status="resolved")).json()
+    moved = (await change(client, sender, moved, assignee_id=third["id"])).json()
+    assert (await client.post(take_url(handover, done), headers=receiver["auth"], json={"expected_version": done["version"]})).status_code == 409
+    assert (await client.post(take_url(handover, moved), headers=receiver["auth"], json={"expected_version": moved["version"]})).status_code == 409
+    assert (await client.post(take_url(handover, unrelated), headers=receiver["auth"], json={"expected_version": 1})).status_code == 404
+    assert (await client.post(take_url(handover, moved), headers=other["auth"], json={"expected_version": moved["version"]})).status_code == 404
+    listed = (await client.get("/api/collab/handovers", headers=receiver["auth"])).json()[0]["tasks"]
+    assert all(row["can_take"] is False and row["version"] is None for row in listed)
+    assert unrelated["id"] not in {row["id"] for row in (await client.get("/api/collab/tasks", headers=receiver["auth"])).json()}

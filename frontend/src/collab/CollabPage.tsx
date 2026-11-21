@@ -207,6 +207,7 @@ export function TaskRow({ task, user, members, timezone }: { task: collab.Task; 
   const client = useQueryClient();
   const manager = MANAGERS.includes(user.role);
   const closed = CLOSED.includes(task.status);
+  const canChange = manager || task.assignee_id === user.id || task.created_by_id === user.id; // a handover recipient reads until taking it
   const [form, setForm] = useState({ status: '' as '' | collab.TaskStatus, assignee_id: '', reason: '' });
   const reopening = closed && form.status === 'open';
   const reasonNeeded = form.status === 'blocked' || form.status === 'cancelled' || reopening;
@@ -225,7 +226,7 @@ export function TaskRow({ task, user, members, timezone }: { task: collab.Task; 
     <details><summary className="muted">Istoric ({task.events.length})</summary>
       {task.events.map(event => <p key={event.version} className="muted">{formatDateTime(event.created_at, timezone)} · {event.actor} · {event.from_status === null ? `creată pentru ${event.to_assignee}` : [event.from_status !== event.to_status ? `${STATUS_LABELS[event.from_status]} → ${STATUS_LABELS[event.to_status]}` : '', event.from_assignee !== event.to_assignee ? `${event.from_assignee} → ${event.to_assignee}` : ''].filter(Boolean).join(' · ')}{event.reason ? ` · Motiv: ${event.reason}` : ''}</p>)}
     </details>
-    {(!closed || manager) && <form className="collab-task-actions" onSubmit={e => { e.preventDefault(); changeOnce(); }}>
+    {canChange && (!closed || manager) && <form className="collab-task-actions" onSubmit={e => { e.preventDefault(); changeOnce(); }}>
       {closed ? <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as '' | collab.TaskStatus })}><option value="">Fără schimbare</option><option value="open">Redeschide</option></select></label>
         : <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as '' | collab.TaskStatus })}><option value="">Fără schimbare</option>{options.map(value => <option key={value} value={value}>{STATUS_LABELS[value]}</option>)}</select></label>}
       {!closed && <label>Responsabil nou<select value={form.assignee_id} onChange={e => setForm({ ...form, assignee_id: e.target.value })}><option value="">Fără schimbare</option>{members.filter(m => m.is_active && m.id !== task.assignee_id).map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}</select></label>}
@@ -277,6 +278,17 @@ function Tasks({ user, members, timezone }: { user: User; members: team.TeamMemb
   </>;
 }
 
+function HandoverTask({ handoverId, task, timezone }: { handoverId: string; task: collab.Handover['tasks'][number]; timezone: string }) {
+  const client = useQueryClient();
+  const take = useMutation({ mutationFn: () => collab.takeHandoverTask(handoverId, task.task_id, task.version as number), onSettled: () => { void client.invalidateQueries({ queryKey: ['collab'] }); } });
+  const takeOnce = useLockedMutate<void>(take);
+  return <div>
+    <p>{task.title} · {STATUS_LABELS[task.status]}{task.due_at ? ` · Termen: ${formatDateTime(task.due_at, timezone)}` : ''}{task.with_me ? ' · Preluată de tine' : ''}</p>
+    {task.can_take && <button className="secondary" disabled={take.isPending} onClick={() => takeOnce()}>Preia sarcina</button>}
+    <Failure error={take.error} />
+  </div>;
+}
+
 export function HandoverCard({ item, user, timezone }: { item: collab.Handover; user: User; timezone: string }) {
   const client = useQueryClient();
   const confirm = useMutation({ mutationFn: () => collab.acknowledgeHandover(item.id), onSettled: () => { void client.invalidateQueries({ queryKey: ['collab'] }); } });
@@ -286,7 +298,7 @@ export function HandoverCard({ item, user, timezone }: { item: collab.Handover; 
     <p className="muted">Tura {formatDateTime(item.shift_starts_at, timezone)} – {formatDateTime(item.shift_ends_at, timezone)} · scrisă de {item.created_by}, {formatDateTime(item.created_at, timezone)}</p>
     <p>{item.notes}</p>
     <p className="muted">{item.tasks.length ? 'Sarcini nerezolvate la predare:' : 'Nicio sarcină nerezolvată la predare.'}</p>
-    {item.tasks.map(task => <p key={task.task_id}>{task.title} · {STATUS_LABELS[task.status]}{task.due_at ? ` · Termen: ${formatDateTime(task.due_at, timezone)}` : ''}</p>)}
+    {item.tasks.map(task => <HandoverTask key={task.task_id} handoverId={item.id} task={task} timezone={timezone} />)}
     {item.acknowledged_at ? <p className="notice-text">Primire confirmată: {formatDateTime(item.acknowledged_at, timezone)}</p>
       : item.to_user_id === user.id ? <button className="secondary" disabled={confirm.isPending} onClick={() => confirmOnce()}>Confirm primirea</button>
         : <p className="muted">Așteaptă confirmarea destinatarului.</p>}

@@ -327,6 +327,29 @@ describe('T20 tasks', () => {
 });
 
 describe('T20 handovers', () => {
+  const frozen = (extra: Partial<collab.Handover['tasks'][number]> = {}) => ({ task_id: 't1', title: 'Sarcină predată', status: 'open' as const, due_at: null, can_take: true, version: 4, with_me: false, ...extra });
+  it('takes a task from the handover with the expected version, once', async () => {
+    const take = vi.spyOn(collab, 'takeHandoverTask').mockImplementation(() => new Promise(() => {}));
+    const r = await render(<HandoverCard item={handover({ acknowledged_at: '2026-11-23T12:00:00Z', tasks: [frozen()] })} user={userWith('doctor')} timezone={tz} />);
+    const click = buttons(r, 'Preia sarcina')[0].props.onClick;
+    await act(async () => { click(); click(); });
+    await flush();
+    expect(take).toHaveBeenCalledTimes(1);
+    expect(take).toHaveBeenCalledWith('h1', 't1', 4);
+    await act(async () => r.unmount());
+  });
+  it('offers no take action when the server does not allow it and shows a task already taken', async () => {
+    const r = await render(<HandoverCard item={handover({ acknowledged_at: '2026-11-23T12:00:00Z', tasks: [frozen({ can_take: false, version: null, with_me: true })] })} user={userWith('doctor')} timezone={tz} />);
+    expect(buttons(r, 'Preia sarcina')).toHaveLength(0);
+    expect(text(r.root)).toContain('Preluată de tine');
+    await act(async () => r.unmount());
+  });
+  it('shows a read-only task to a handover recipient who is not responsible yet', async () => {
+    const r = await render(<TaskRow task={task({ assignee_id: 'o', assignee: 'Nume o', created_by_id: 'o' })} user={userWith('doctor')} members={[member('me', 'doctor')]} timezone={tz} />);
+    expect(text(r.root)).toContain('Sarcină fictivă');
+    expect(r.root.findAllByType('form')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
   it('lets only the recipient confirm', async () => {
     const ack = vi.spyOn(collab, 'acknowledgeHandover').mockResolvedValue(handover({ acknowledged_at: '2026-11-23T12:00:00Z' }));
     const recipient = await render(<HandoverCard item={handover()} user={userWith('doctor')} timezone={tz} />);
@@ -340,7 +363,7 @@ describe('T20 handovers', () => {
     await act(async () => other.unmount());
   });
   it('shows the frozen task list and the confirmation', async () => {
-    const r = await render(<HandoverCard item={handover({ acknowledged_at: '2026-11-23T12:00:00Z', tasks: [{ task_id: 't1', title: 'Sarcină rămasă', status: 'blocked', due_at: null }] })} user={userWith('doctor')} timezone={tz} />);
+    const r = await render(<HandoverCard item={handover({ acknowledged_at: '2026-11-23T12:00:00Z', tasks: [{ task_id: 't1', title: 'Sarcină rămasă', status: 'blocked', due_at: null, can_take: false, version: null, with_me: false }] })} user={userWith('doctor')} timezone={tz} />);
     expect(text(r.root)).toContain('Sarcină rămasă · Blocată');
     expect(text(r.root)).toContain('Primire confirmată');
     expect(buttons(r, 'Confirm primirea')).toHaveLength(0);

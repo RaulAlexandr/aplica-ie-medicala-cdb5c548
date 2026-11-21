@@ -159,6 +159,11 @@ class TaskChange(BaseModel):
         return self
 
 
+class TaskTake(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
+
+
 class HandoverCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     shift_id: UUID
@@ -503,6 +508,14 @@ def task_scope(user: User):
     return and_(CollabTask.clinic_id == user.clinic_id, or_(CollabTask.assignee_id == user.id, CollabTask.created_by_id == user.id))
 
 
+def task_read_scope(user: User):
+    """The recipient of a handover also reads the tasks frozen in it, without being able to change them."""
+    if is_manager(user):
+        return CollabTask.clinic_id == user.clinic_id
+    received = exists().where(CollabHandoverTask.task_id == CollabTask.id, CollabHandoverTask.handover_id == CollabHandover.id, CollabHandover.to_user_id == user.id)
+    return and_(CollabTask.clinic_id == user.clinic_id, or_(CollabTask.assignee_id == user.id, CollabTask.created_by_id == user.id, received))
+
+
 async def task_rows(db: AsyncSession, tasks: list[CollabTask]) -> list[dict]:
     ids = [item.id for item in tasks]
     events: dict[UUID, list[CollabTaskEvent]] = {}
@@ -531,7 +544,7 @@ async def list_tasks(
     mine: bool = False, overdue: bool = False, task_status: TaskStatus | None = Query(default=None, alias="status"),
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    query = select(CollabTask).where(task_scope(user))
+    query = select(CollabTask).where(task_read_scope(user))
     if mine:
         query = query.where(CollabTask.assignee_id == user.id)
     if overdue:
@@ -563,8 +576,10 @@ async def create_task(payload: TaskCreate, user: User = Depends(get_current_user
 @router.post("/tasks/{task_id}/changes")
 async def change_task(task_id: UUID, payload: TaskChange, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict:
     clinic_id, user_id, manager = user.clinic_id, user.id, is_manager(user)
-    if not await db.scalar(select(CollabTask.id).where(CollabTask.id == task_id, task_scope(user))):
+    if not await db.scalar(select(CollabTask.id).where(CollabTask.id == task_id, task_read_scope(user))):
         raise HTTPException(404, NO_TASK)
+    if not await db.scalar(select(CollabTask.id).where(CollabTask.id == task_id, task_scope(user))):
+        raise HTTPException(403, "Preia sarcina din predare înainte de a lucra pe ea")
     if payload.assignee_id is not None:
         await active_person(db, clinic_id, payload.assignee_id)
     item = await db.scalar(select(CollabTask).where(CollabTask.id == task_id).with_for_update().execution_options(populate_existing=True))
@@ -608,29 +623,40 @@ def handover_scope(user: User):
         CollabHandover.from_user_id == user.id, CollabHandover.to_user_id == user.id, CollabHandover.created_by_id == user.id))
 
 
-async def handover_rows(db: AsyncSession, items: list[CollabHandover]) -> list[dict]:
+async def handover_rows(db: AsyncSession, items: list[CollabHandover], viewer_id: UUID) -> list[dict]:
     ids = [item.id for item in items]
     tasks: dict[UUID, list[CollabHandoverTask]] = {}
     acks: dict[UUID, CollabHandoverAck] = {}
     shifts: dict[UUID, TeamShift] = {}
+    live: dict[UUID, CollabTask] = {}
     if ids:
         for row in await db.scalars(select(CollabHandoverTask).where(CollabHandoverTask.handover_id.in_(ids)).order_by(CollabHandoverTask.title)):
             tasks.setdefault(row.handover_id, []).append(row)
         acks = {row.handover_id: row for row in await db.scalars(select(CollabHandoverAck).where(CollabHandoverAck.handover_id.in_(ids)))}
         shifts = {row.id: row for row in await db.scalars(select(TeamShift).where(TeamShift.id.in_([item.shift_id for item in items])))}
+        wanted = {row.task_id for rows in tasks.values() for row in rows}
+        if wanted:  # current state only decides the action; the frozen fields below never change
+            live = {row.id: row for row in await db.scalars(select(CollabTask).where(CollabTask.id.in_(wanted)).execution_options(populate_existing=True))}
     people = await names(db, {item.from_user_id for item in items} | {item.to_user_id for item in items} | {item.created_by_id for item in items})
+
+    def frozen(item: CollabHandover, row: CollabHandoverTask) -> dict:
+        current = live.get(row.task_id)
+        can_take = bool(current and item.to_user_id == viewer_id and item.id in acks and current.status in UNRESOLVED and current.assignee_id == item.from_user_id)
+        return {"task_id": str(row.task_id), "title": row.title, "status": row.status, "due_at": iso(row.due_at), "can_take": can_take,
+                "version": current.version if can_take else None, "with_me": bool(current and item.to_user_id == viewer_id and current.assignee_id == viewer_id)}
+
     return [{
         "id": str(item.id), "shift_id": str(item.shift_id), "shift_starts_at": iso(shifts[item.shift_id].starts_at), "shift_ends_at": iso(shifts[item.shift_id].ends_at),
         "from_user_id": str(item.from_user_id), "from_user": people.get(item.from_user_id, "—"), "to_user_id": str(item.to_user_id), "to_user": people.get(item.to_user_id, "—"),
         "created_by": people.get(item.created_by_id, "—"), "notes": item.notes, "created_at": iso(item.created_at),
         "acknowledged_at": iso(acks[item.id].acknowledged_at) if item.id in acks else None,
-        "tasks": [{"task_id": str(row.task_id), "title": row.title, "status": row.status, "due_at": iso(row.due_at)} for row in tasks.get(item.id, [])],
+        "tasks": [frozen(item, row) for row in tasks.get(item.id, [])],
     } for item in items]
 
 
 @router.get("/handovers")
 async def list_handovers(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> list[dict]:
-    return await handover_rows(db, list(await db.scalars(select(CollabHandover).where(handover_scope(user)).order_by(CollabHandover.created_at.desc(), CollabHandover.id).limit(100))))
+    return await handover_rows(db, list(await db.scalars(select(CollabHandover).where(handover_scope(user)).order_by(CollabHandover.created_at.desc(), CollabHandover.id).limit(100))), user.id)
 
 
 @router.post("/handovers", status_code=status.HTTP_201_CREATED)
@@ -662,7 +688,7 @@ async def create_handover(payload: HandoverCreate, user: User = Depends(get_curr
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(409, "Această tură are deja o predare. Predarea nu se rescrie.") from exc
-    return (await handover_rows(db, [item]))[0]
+    return (await handover_rows(db, [item], user_id))[0]
 
 
 @router.post("/handovers/{handover_id}/acknowledge")
@@ -681,4 +707,36 @@ async def acknowledge_handover(handover_id: UUID, user: User = Depends(get_curre
         except IntegrityError:  # a double click: the first confirmation stands
             await db.rollback()
     item = await db.scalar(select(CollabHandover).where(CollabHandover.id == handover_id))
-    return (await handover_rows(db, [item]))[0]
+    return (await handover_rows(db, [item], user_id))[0]
+
+
+@router.post("/handovers/{handover_id}/tasks/{task_id}/take")
+async def take_handover_task(handover_id: UUID, task_id: UUID, payload: TaskTake, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict:
+    """A change of assignee, recorded like any other. The handover and its frozen list stay as written."""
+    clinic_id, user_id = user.clinic_id, user.id
+    item = await db.scalar(select(CollabHandover).where(CollabHandover.id == handover_id, handover_scope(user)))
+    if not item or not await db.get(CollabHandoverTask, (handover_id, task_id)):
+        raise HTTPException(404, NO_TASK)
+    if item.to_user_id != user_id:
+        raise HTTPException(403, "Numai destinatarul predării preia sarcina")
+    if not await db.get(CollabHandoverAck, handover_id):
+        raise HTTPException(409, "Confirmă întâi primirea predării")
+    from_user_id = item.from_user_id
+    await active_sender(db, clinic_id, user_id)
+    task = await db.scalar(select(CollabTask).where(CollabTask.id == task_id, CollabTask.clinic_id == clinic_id).with_for_update().execution_options(populate_existing=True))
+    if task.version != payload.expected_version:
+        raise HTTPException(409, "Sarcina a fost modificată între timp. Reîncarcă și încearcă din nou.")
+    if task.status not in UNRESOLVED:
+        raise HTTPException(409, "Sarcina este deja închisă")
+    if task.assignee_id != from_user_id:
+        raise HTTPException(409, "Sarcina nu mai este la persoana care a predat")
+    task.assignee_id, task.version, task.updated_at = user_id, task.version + 1, utcnow()
+    db.add(CollabTaskEvent(clinic_id=clinic_id, task_id=task.id, version=task.version, from_status=task.status, to_status=task.status,
+                           from_assignee_id=from_user_id, to_assignee_id=user_id, reason="Preluată din predarea de tură", actor_id=user_id))
+    audit(db, clinic_id, user_id, "collab_task", task.id, "taken")
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409, "Sarcina a fost modificată între timp. Reîncarcă și încearcă din nou.") from exc
+    return (await task_rows(db, [task]))[0]

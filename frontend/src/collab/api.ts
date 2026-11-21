@@ -21,7 +21,7 @@ export type TaskChange = { expected_version: number; status?: TaskStatus; assign
 export type Handover = {
   id: string; shift_id: string; shift_starts_at: string; shift_ends_at: string; from_user_id: string; from_user: string; to_user_id: string; to_user: string;
   created_by: string; notes: string; created_at: string; acknowledged_at: string | null;
-  tasks: Array<{ task_id: string; title: string; status: TaskStatus; due_at: string | null }>;
+  tasks: Array<{ task_id: string; title: string; status: TaskStatus; due_at: string | null; can_take: boolean; version: number | null; with_me: boolean }>;
 };
 
 /** crypto.randomUUID exists only in secure contexts; the clinic network may be plain HTTP. */
@@ -47,4 +47,5 @@ export const createTask = async (body: TaskInput) => (await api.post<Task>('/col
 export const changeTask = async (id: string, body: TaskChange) => (await api.post<Task>(`/collab/tasks/${id}/changes`, body)).data;
 export const listHandovers = async () => (await api.get<Handover[]>('/collab/handovers')).data;
 export const createHandover = async (body: { shift_id: string; to_user_id: string; notes: string }) => (await api.post<Handover>('/collab/handovers', body)).data;
+export const takeHandoverTask = async (id: string, taskId: string, version: number) => (await api.post<Task>(`/collab/handovers/${id}/tasks/${taskId}/take`, { expected_version: version })).data;
 export const acknowledgeHandover = async (id: string) => (await api.post<Handover>(`/collab/handovers/${id}/acknowledge`)).data;
