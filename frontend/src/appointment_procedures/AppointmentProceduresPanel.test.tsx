@@ -64,4 +64,29 @@ describe('appointment procedures panel', () => {
     expect(renderer!.root.findAllByType('button').map(label)).toContain('Reîncarcă programarea');
     renderer!.unmount();
   });
+
+  it('keeps a newly added procedure visible and removable when catalog search changes', async () => {
+    const empty = { appointment_id: 'visit', revision: 0, procedures: [] };
+    const catalogProcedure = { id: 'p3', clinic_id: 'clinic', code: 'CONS', name: 'Consultație', description: null,
+      category: null, default_duration_minutes: 20, base_price: '0.00', currency: 'RON', is_active: true,
+      created_at: '', updated_at: '' };
+    vi.spyOn(api, 'getAppointmentProcedures').mockResolvedValue(empty);
+    vi.spyOn(client, 'listProcedures').mockImplementation(async search => search ? [] : [catalogProcedure]);
+    const replace = vi.spyOn(api, 'replaceAppointmentProcedures').mockResolvedValue({ ...empty, revision: 1,
+      procedures: [{ procedure_catalog_id: 'p3', code: 'CONS', name: 'Consultație', quantity: 1, manual_quantity: 1, plan_quantity: null, source: 'manual' }] });
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = render(true); });
+    await waitFor(renderer!, () => renderer!.root.findAllByType('option').some(option => label(option).includes('Consultație')));
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': 'Procedură activă' }).props.onChange({ target: { value: 'p3' } }); });
+    await act(async () => { renderer!.root.findAllByType('button').find(button => label(button) === 'Adaugă')!.props.onClick(); });
+    expect(renderer!.root.findAllByType('li').some(item => label(item).includes('Consultație'))).toBe(true);
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': 'Caută procedura' }).props.onChange({ target: { value: 'inexistent' } }); });
+    await waitFor(renderer!, () => client.listProcedures.mock.calls.some(([search]) => search === 'inexistent'));
+    expect(renderer!.root.findAllByType('li').some(item => label(item).includes('Consultație'))).toBe(true);
+    expect(renderer!.root.findAllByType('button').map(label)).toContain('Elimină');
+    await act(async () => { renderer!.root.findAllByType('button').find(button => label(button) === 'Salvează procedurile')!.props.onClick(); });
+    await waitFor(renderer!, () => replace.mock.calls.length === 1);
+    expect(replace).toHaveBeenCalledWith('visit', 0, [{ procedure_catalog_id: 'p3', quantity: 1 }]);
+    renderer!.unmount();
+  });
 });
