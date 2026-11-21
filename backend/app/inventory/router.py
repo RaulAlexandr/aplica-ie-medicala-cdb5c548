@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,6 +87,14 @@ async def _balance(db, clinic_id, lot_id, location_id):
         InventoryMovement.kind.in_(["consumption","transfer_out","adjustment_out","reversal_out"])))
     return Decimal(incoming or 0)-Decimal(outgoing or 0)
 
+async def _stock_total(db, clinic_id, *, item_id=None, location_id=None):
+    incoming=InventoryMovement.kind.in_(["receipt","transfer_in","adjustment_in","reversal_in"])
+    outgoing=InventoryMovement.kind.in_(["consumption","transfer_out","adjustment_out","reversal_out"])
+    q=select(func.coalesce(func.sum(case((incoming,InventoryMovement.quantity),else_=0)),0)-func.coalesce(func.sum(case((outgoing,InventoryMovement.quantity),else_=0)),0)).where(InventoryMovement.clinic_id==clinic_id)
+    if item_id is not None:q=q.where(InventoryMovement.item_id==item_id)
+    if location_id is not None:q=q.where(InventoryMovement.location_id==location_id)
+    return Decimal(await db.scalar(q) or 0)
+
 async def _clinic_today(db, clinic_id):
     timezone=await db.scalar(select(Clinic.timezone).where(Clinic.id==clinic_id))
     try:return utcnow().astimezone(ZoneInfo(timezone or "UTC")).date()
@@ -101,10 +109,14 @@ async def _commit_unique(db, message):
 
 async def _item_location_lot(db, user, p):
     lot=await db.scalar(select(InventoryLot).where(InventoryLot.id==p.lot_id,InventoryLot.clinic_id==user.clinic_id,InventoryLot.item_id==p.item_id).with_for_update())
-    item=await db.scalar(select(InventoryItem).where(InventoryItem.id==p.item_id,InventoryItem.clinic_id==user.clinic_id,InventoryItem.is_active.is_(True)))
-    location=await db.scalar(select(InventoryLocation).where(InventoryLocation.id==p.location_id,InventoryLocation.clinic_id==user.clinic_id,InventoryLocation.is_active.is_(True)))
-    if not lot or not item or not location: raise HTTPException(404,"Resursă inexistentă")
-    return item,lot,location
+    item=await db.scalar(select(InventoryItem).where(InventoryItem.id==p.item_id,InventoryItem.clinic_id==user.clinic_id).with_for_update(read=True))
+    location_ids={p.location_id}
+    if p.destination_location_id:location_ids.add(p.destination_location_id)
+    locked=(await db.scalars(select(InventoryLocation).where(InventoryLocation.id.in_(location_ids),InventoryLocation.clinic_id==user.clinic_id).order_by(InventoryLocation.id).with_for_update(read=True))).all()
+    locations={x.id:x for x in locked};location=locations.get(p.location_id);destination=locations.get(p.destination_location_id) if p.destination_location_id else None
+    if not lot or not item or not location or not item.is_active or not location.is_active: raise HTTPException(404,"Resursă inexistentă")
+    if p.destination_location_id and (not destination or not destination.is_active):raise HTTPException(404,"Resursă inexistentă")
+    return item,lot,location,destination
 
 def _movement(clinic_id, user, item, lot, location, kind, quantity, req, signature, reason, transfer_id=None, reverses=None):
     return InventoryMovement(clinic_id=clinic_id,item_id=item.id,lot_id=lot.id,location_id=location.id,kind=kind,quantity=quantity,
@@ -151,6 +163,7 @@ async def create_item(p: ItemIn,user: User=Depends(require_roles(*MANAGE)),db: A
 async def update_item(item_id: UUID,p: ItemIn,user: User=Depends(require_roles(*MANAGE)),db: AsyncSession=Depends(get_db)):
     x=await db.scalar(select(InventoryItem).where(InventoryItem.id==item_id,InventoryItem.clinic_id==user.clinic_id).with_for_update())
     if not x:raise HTTPException(404,"Resursă inexistentă")
+    if x.is_active and not p.is_active and await _stock_total(db,user.clinic_id,item_id=x.id)!=0:raise HTTPException(409,"Articolul are stoc disponibil; consumă sau transferă stocul înainte de dezactivare.")
     for key,value in p.model_dump().items():setattr(x,key,value)
     await _commit_unique(db,"Un articol cu acest nume există deja.");return {"id":str(x.id)}
 
@@ -162,6 +175,7 @@ async def create_location(p: LocationIn,user: User=Depends(require_roles(*MANAGE
 async def update_location(location_id: UUID,p: LocationIn,user: User=Depends(require_roles(*MANAGE)),db: AsyncSession=Depends(get_db)):
     x=await db.scalar(select(InventoryLocation).where(InventoryLocation.id==location_id,InventoryLocation.clinic_id==user.clinic_id).with_for_update())
     if not x:raise HTTPException(404,"Resursă inexistentă")
+    if x.is_active and not p.is_active and await _stock_total(db,user.clinic_id,location_id=x.id)!=0:raise HTTPException(409,"Locația are stoc disponibil; consumă sau transferă stocul înainte de dezactivare.")
     x.name=p.name;x.is_active=p.is_active;await _commit_unique(db,"O locație cu acest nume există deja.");return {"id":str(x.id)}
 
 @router.post("/lots",status_code=201)
@@ -176,7 +190,7 @@ async def _write(p,kind,user,db):
         if prior.signature!=sig:raise HTTPException(409,"client_request_id deja folosit cu alt conținut")
         response={"id":str(prior.id),"transfer_id":str(prior.transfer_id) if prior.transfer_id else None,"retry":True}
         await db.rollback();return response
-    item,lot,loc=await _item_location_lot(db,user,p)
+    item,lot,loc,dest=await _item_location_lot(db,user,p)
     # Another request may have completed while this one waited for the lot lock.
     prior=await db.scalar(select(InventoryMovement).where(InventoryMovement.clinic_id==user.clinic_id,InventoryMovement.client_request_id==req))
     if prior:
@@ -187,7 +201,6 @@ async def _write(p,kind,user,db):
     if kind in ("consumption","transfer_out","adjustment_out") and await _balance(db,user.clinic_id,lot.id,loc.id)<p.quantity:raise HTTPException(409,"Stoc insuficient")
     if kind.startswith("adjustment") and not p.reason.strip():raise HTTPException(422,"Motivul ajustării este obligatoriu")
     if kind=="transfer_out":
-        dest=await db.scalar(select(InventoryLocation).where(InventoryLocation.id==p.destination_location_id,InventoryLocation.clinic_id==user.clinic_id,InventoryLocation.is_active.is_(True)))
         if not dest:raise HTTPException(404,"Resursă inexistentă")
         if dest.id==loc.id:raise HTTPException(422,"Locația destinație trebuie să fie diferită")
         transfer_reason=p.reason.strip() or "Transfer"
@@ -240,13 +253,18 @@ async def reverse(movement_id: UUID,p: ReverseIn,user: User=Depends(require_role
         if prior_req.signature!=sig:raise HTTPException(409,"client_request_id deja folosit cu alt conținut")
         response={"id":str(prior_req.id),"transfer_id":str(prior_req.transfer_id) if prior_req.transfer_id else None,"retry":True}
         await db.rollback();return response
+    item=await db.scalar(select(InventoryItem).where(InventoryItem.id==original.item_id,InventoryItem.clinic_id==user.clinic_id).with_for_update(read=True))
     originals=[original]
-    if original.transfer_id: originals=(await db.scalars(select(InventoryMovement).where(InventoryMovement.clinic_id==user.clinic_id,InventoryMovement.transfer_id==original.transfer_id).order_by(InventoryMovement.location_id).with_for_update())).all()
+    if original.transfer_id: originals=(await db.scalars(select(InventoryMovement).where(InventoryMovement.clinic_id==user.clinic_id,InventoryMovement.transfer_id==original.transfer_id).order_by(InventoryMovement.location_id))).all()
+    location_ids={x.location_id for x in originals}
+    locked_locations=(await db.scalars(select(InventoryLocation).where(InventoryLocation.id.in_(location_ids),InventoryLocation.clinic_id==user.clinic_id).order_by(InventoryLocation.id).with_for_update(read=True))).all()
+    locations={x.id:x for x in locked_locations}
+    if not item or len(locations)!=len(location_ids) or not item.is_active or any(not x.is_active for x in locations.values()):
+        raise HTTPException(409,"Reactivează articolul și locațiile înainte de corectare.")
     if any(x.reverses_movement_id for x in originals):raise HTTPException(409,"Mișcarea a fost deja corectată")
-    item=await db.get(InventoryItem,original.item_id)
     reversal_transfer=uuid4() if original.transfer_id else None;rows=[]
     for idx,x in enumerate(originals):
-        loc=await db.scalar(select(InventoryLocation).where(InventoryLocation.id==x.location_id,InventoryLocation.clinic_id==user.clinic_id))
+        loc=locations[x.location_id]
         inbound=x.kind in ("receipt","transfer_in","adjustment_in","reversal_in")
         inverse="reversal_out" if inbound else "reversal_in"
         if inverse=="reversal_out" and await _balance(db,user.clinic_id,lot.id,loc.id)<x.quantity:raise HTTPException(409,"Corecția ar duce stocul sub zero")

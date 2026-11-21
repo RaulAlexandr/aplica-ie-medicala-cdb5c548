@@ -75,3 +75,25 @@ async def test_postgres_serializes_transfer_and_retry_returns_same_transfer(pg_c
         app.dependency_overrides[get_db]=base_override;await engine.dispose()
     retry=await c.post("/api/inventory/movements/transfer",headers=h,json=body)
     assert retry.status_code==201 and retry.json()["transfer_id"]==first.json()["transfer_id"]
+
+@pytest.mark.asyncio
+async def test_postgres_location_deactivation_serializes_against_stock_receipt(pg_client):
+    c=pg_client;h,item,lot,location,_=await stock(c)
+    drained=await c.post("/api/inventory/movements/consumption",headers=h,json={"item_id":item,"lot_id":lot,"location_id":location,"quantity":"10","client_request_id":str(uuid4())});assert drained.status_code==201
+    url=os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL");engine=create_async_engine(url);sessions=async_sessionmaker(engine,expire_on_commit=False)
+    ready=asyncio.Event();lock=asyncio.Lock();count=0
+    async def barrier_override():
+        nonlocal count
+        async with sessions() as s:
+            async with lock:
+                count+=1
+                if count==2:ready.set()
+            await asyncio.wait_for(ready.wait(),10);yield s
+    base_override=app.dependency_overrides[get_db];app.dependency_overrides[get_db]=barrier_override
+    try:
+        async def receive():return await asyncio.wait_for(c.post("/api/inventory/movements/receipt",headers=h,json={"item_id":item,"lot_id":lot,"location_id":location,"quantity":"5","client_request_id":str(uuid4())}),15)
+        async def deactivate():return await asyncio.wait_for(c.patch(f"/api/inventory/locations/{location}",headers=h,json={"name":"Cabinet PG fictiv","is_active":False}),15)
+        receipt,disabled=await asyncio.wait_for(asyncio.gather(receive(),deactivate()),20)
+        assert (receipt.status_code,disabled.status_code) in ((201,409),(404,200)),(receipt.text,disabled.text)
+        assert count==2
+    finally:app.dependency_overrides[get_db]=base_override;await engine.dispose()

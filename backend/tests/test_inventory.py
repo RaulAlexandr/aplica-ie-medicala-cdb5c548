@@ -139,3 +139,17 @@ async def test_movement_and_correction_signatures_are_sha256(ctx):
     async with s() as db:
         rows=(await db.scalars(select(InventoryMovement).order_by(InventoryMovement.created_at))).all()
         assert len(rows)==2 and all(len(row.signature)==64 for row in rows)
+
+@pytest.mark.asyncio
+async def test_cannot_deactivate_item_or_location_with_stock(ctx):
+    c,_=ctx;h=await register(c,"inv-deactivation@example.com");item,lot,loc,_=await setup_stock(c,h,minimum="0")
+    receipt=await c.post("/api/inventory/movements/receipt",headers=h,json=movement(item,lot,loc,"5"));assert receipt.status_code==201
+    item_view=(await c.get("/api/inventory",headers=h)).json()["items"][0]
+    location_view=next(x for x in (await c.get("/api/inventory",headers=h)).json()["locations"] if x["id"]==loc)
+    disable_item=await c.patch(f"/api/inventory/items/{item}",headers=h,json={**item_view,"is_active":False});assert disable_item.status_code==409 and "stoc" in disable_item.text.lower()
+    disable_location=await c.patch(f"/api/inventory/locations/{loc}",headers=h,json={"name":location_view["name"],"is_active":False});assert disable_location.status_code==409 and "stoc" in disable_location.text.lower()
+    consume=await c.post("/api/inventory/movements/consumption",headers=h,json=movement(item,lot,loc,"5"));assert consume.status_code==201
+    balances=(await c.get("/api/inventory",headers=h)).json()["balances"]
+    assert next(x for x in balances if x["location_id"]==loc)["quantity"]=="0.000"
+    assert (await c.patch(f"/api/inventory/items/{item}",headers=h,json={**item_view,"is_active":False})).status_code==200
+    disable_empty_location=await c.patch(f"/api/inventory/locations/{loc}",headers=h,json={"name":location_view["name"],"is_active":False});assert disable_empty_location.status_code==200,disable_empty_location.text
