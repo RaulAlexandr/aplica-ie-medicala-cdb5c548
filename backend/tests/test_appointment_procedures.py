@@ -282,3 +282,32 @@ async def test_locked_appointment_read_requests_no_key_update_and_refresh():
     assert db.statement._for_update_arg is not None
     assert db.statement._for_update_arg.key_share is True
     assert db.statement._execution_options["populate_existing"] is True
+
+
+async def test_interval_query_count_is_constant_for_one_or_ten_appointments(env):
+    client, sessions = env
+    ctx = await clinic(client)
+    for day in range(2, 11):
+        response = await client.post("/api/appointments", headers=ctx["auth"], json={"patient_id": ctx["patient"],
+            "doctor_id": ctx["user"]["id"], "room_id": ctx["room"],
+            "starts_at": f"2026-12-{day:02d}T09:00:00+00:00", "duration_minutes": 30,
+            "appointment_type": "Consultație"})
+        assert response.status_code == 201, response.text
+    engine = sessions.kw["bind"]
+    statements = []
+    def count_sql(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+    event.listen(engine.sync_engine, "before_cursor_execute", count_sql)
+    try:
+        one = await client.get("/api/appointment-procedures", headers=ctx["auth"], params={
+            "start": "2026-12-01T00:00:00Z", "end": "2026-12-02T00:00:00Z"})
+        one_count = len(statements)
+        statements.clear()
+        ten = await client.get("/api/appointment-procedures", headers=ctx["auth"], params={
+            "start": "2026-12-01T00:00:00Z", "end": "2026-12-11T00:00:00Z"})
+        ten_count = len(statements)
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", count_sql)
+    assert one.status_code == ten.status_code == 200
+    assert len(one.json()) == 1 and len(ten.json()) == 10
+    assert one_count == ten_count
