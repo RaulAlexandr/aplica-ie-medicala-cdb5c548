@@ -370,3 +370,30 @@ async def test_fifo_does_not_use_lot_after_its_expiry_for_later_appointment(env)
     assert result.status_code == 200, result.text
     assert result.json()["shortages"][0]["quantity"] == "2.000"
     assert result.json()["shortages"][0]["appointments"][0]["appointment_id"] == second
+
+@pytest.mark.asyncio
+async def test_replenishment_does_not_recount_need_covered_by_reservations(env):
+    client, sessions = env
+    ctx = await register(client)
+    stock = await add_stock(client, ctx["auth"], quantity="5")
+    procedure_id = await add_procedure(client, ctx["auth"])
+    saved = await save_recipe(client, ctx["auth"], procedure_id, 0, [
+        {"item_id": stock["item_id"], "estimated_quantity": "5"},
+    ])
+    assert saved.status_code == 201, saved.text
+    appointment_id = await add_appointment(client, ctx)
+    await add_plan_item(sessions, ctx, procedure_id, appointment_id)
+    reservation = await client.post("/api/materials/reservations", headers=ctx["auth"], json={
+        "appointment_id": appointment_id, "item_id": stock["item_id"], "quantity": "5",
+        "client_request_id": str(uuid4()),
+    })
+    assert reservation.status_code == 201, reservation.text
+    result = await client.get("/api/materials/replenishment", headers=ctx["auth"], params={
+        "from_date": "2026-12-01", "to_date": "2026-12-14",
+    })
+    assert result.status_code == 200, result.text
+    line = next(row for row in result.json()["items"] if row["item_id"] == stock["item_id"])
+    assert line["needed"] == "5.000"
+    assert line["suggested_quantity"] == "2.000"
+    assert line["uncovered_needed"] == "0.000"
+    assert line["available"] == "0.000" and line["reserved"] == "5.000"

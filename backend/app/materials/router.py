@@ -238,6 +238,7 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
     unknown_procedures = []
     shortage_by_item = defaultdict(lambda: {"quantity": Decimal(0), "appointments": []})
     requirements_by_item = defaultdict(Decimal)
+    uncovered_by_item = defaultdict(Decimal)
     demand_by_item = defaultdict(list)
     for appointment, patient in appointment_pairs:
         local_date = appointment.starts_at.astimezone(zone).date()
@@ -339,6 +340,7 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
             available = sum((lot["quantity"] for lot in lots
                              if lot["quantity"] > 0 and (lot["expires_on"] is None or lot["expires_on"] >= on_date)), Decimal(0))
             need_after_reservation = demand["required"] - reserved_coverage
+            uncovered_by_item[item_id] += need_after_reservation
             free_coverage = take_from_lots(lots, need_after_reservation, on_date)
             shortage = need_after_reservation - free_coverage
             remaining = shortage
@@ -368,6 +370,7 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
         "unknown": {"appointments_without_procedure": {"count": len(unknown_appointments), "appointments": unknown_appointments},
                     "procedures_without_recipe": {"count": len(unknown_procedures), "procedures": unknown_procedures}},
         "shortages": shortages, "needed_by_item": {str(key): format(value, ".3f") for key, value in requirements_by_item.items()},
+        "uncovered_by_item": {str(key): format(value, ".3f") for key, value in uncovered_by_item.items()},
         "performed_procedures": performed_rows,
     }
 
@@ -519,15 +522,18 @@ async def replenishment(from_date: date | None = Query(default=None), to_date: d
         InventoryItem.clinic_id == user.clinic_id, InventoryItem.is_active.is_(True),
     ).order_by(InventoryItem.name))).all()
     needed = {UUID(key): _decimal(value) for key, value in requirement["needed_by_item"].items()}
+    uncovered = {UUID(key): _decimal(value) for key, value in requirement["uncovered_by_item"].items()}
     result = []
     for item in items:
         gross = _available_on(stock, item.id, clinic_today)
         net_available = max(Decimal(0), gross - reserved[item.id])
         amount_needed = needed.get(item.id, Decimal(0))
-        suggestion = max(Decimal(0), _decimal(item.minimum_quantity) + amount_needed - net_available)
+        amount_uncovered = uncovered.get(item.id, Decimal(0))
+        suggestion = max(Decimal(0), _decimal(item.minimum_quantity) + amount_uncovered - net_available)
         result.append({"item_id": str(item.id), "item_name": item.name, "unit": item.unit,
             "available": format(net_available, ".3f"), "reserved": format(reserved[item.id], ".3f"),
-            "needed": format(amount_needed, ".3f"), "minimum_quantity": format(_decimal(item.minimum_quantity), ".3f"),
+            "needed": format(amount_needed, ".3f"), "uncovered_needed": format(amount_uncovered, ".3f"),
+            "minimum_quantity": format(_decimal(item.minimum_quantity), ".3f"),
             "suggested_quantity": format(suggestion, ".3f")})
     return {"from_date": requirement["from_date"], "to_date": requirement["to_date"],
             "timezone": requirement["timezone"], "items": result}
