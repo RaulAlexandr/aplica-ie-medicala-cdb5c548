@@ -1,6 +1,7 @@
 """T18 PostgreSQL locking, idempotency and atomicity checks."""
 import asyncio
 import os
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -45,8 +46,12 @@ async def setup(c, quantity="5"):
     assert receipt.status_code == 201, receipt.text
     proc = await c.post("/api/procedures", headers=h, json={"code":f"T18-{uuid4().hex[:6]}","name":"Procedură PG","base_price":"10","default_duration_minutes":30})
     assert proc.status_code == 201, proc.text
+    appointment_index = 0
     def appointment():
-        return c.post("/api/appointments", headers=h, json={"patient_id":patient["id"],"doctor_id":me["id"],"room_id":room["id"],"starts_at":"2026-12-02T09:00:00+00:00","duration_minutes":30,"status":"scheduled","appointment_type":"Control"})
+        nonlocal appointment_index
+        starts_at = datetime(2026, 12, 2, 9, tzinfo=UTC) + timedelta(hours=appointment_index)
+        appointment_index += 1
+        return c.post("/api/appointments", headers=h, json={"patient_id":patient["id"],"doctor_id":me["id"],"room_id":room["id"],"starts_at":starts_at.isoformat(),"duration_minutes":30,"status":"scheduled","appointment_type":"Control"})
     async def performed():
         appt = await appointment()
         assert appt.status_code == 201, appt.text

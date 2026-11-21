@@ -455,7 +455,7 @@ async def save_recipe(procedure_id: UUID, payload: RecipeSaveIn, user: User = De
         raise HTTPException(422, "Rețeta nu poate conține articolul de două ori.")
     catalog = await db.scalar(select(ProcedureCatalog).where(
         ProcedureCatalog.id == procedure_id, ProcedureCatalog.clinic_id == user.clinic_id,
-    ).with_for_update())
+    ).with_for_update(key_share=True))
     if not catalog:
         raise HTTPException(404, "Procedura nu există.")
     signature = _signature({"procedure_catalog_id": procedure_id, "expected_version": payload.expected_version,
@@ -566,10 +566,10 @@ async def reserve(payload: ReservationIn, user: User = Depends(require_roles(*RE
         return response
     appointment = await db.scalar(select(Appointment).where(
         Appointment.id == payload.appointment_id, Appointment.clinic_id == user.clinic_id,
-    ).with_for_update())
+    ).with_for_update(key_share=True))
     item = await db.scalar(select(InventoryItem).where(
         InventoryItem.id == payload.item_id, InventoryItem.clinic_id == user.clinic_id,
-    ).with_for_update())
+    ).with_for_update(key_share=True))
     if not appointment or not item or not item.is_active:
         raise HTTPException(404, "Programare sau articol inexistent.")
     if appointment.status not in ACTIVE_APPOINTMENTS:
@@ -629,10 +629,10 @@ async def release_reservation(appointment_id: UUID, item_id: UUID, payload: Rese
         return response
     appointment = await db.scalar(select(Appointment).where(
         Appointment.id == appointment_id, Appointment.clinic_id == user.clinic_id,
-    ).with_for_update())
+    ).with_for_update(key_share=True))
     item = await db.scalar(select(InventoryItem).where(
         InventoryItem.id == item_id, InventoryItem.clinic_id == user.clinic_id,
-    ).with_for_update())
+    ).with_for_update(key_share=True))
     if not appointment or not item:
         raise HTTPException(404, "Programare sau articol inexistent.")
     prior = await db.scalar(select(MaterialReservationEvent).where(
@@ -690,7 +690,7 @@ async def confirm_consumption(performed_id: UUID, payload: ConsumptionConfirmIn,
         return response
     procedure = await db.scalar(select(PerformedProcedure).where(
         PerformedProcedure.id == performed_id, PerformedProcedure.clinic_id == user.clinic_id,
-    ).with_for_update())
+    ).with_for_update(key_share=True))
     if not procedure:
         raise HTTPException(404, "Manoperă inexistentă.")
     appointment = await db.scalar(select(Appointment).where(
@@ -729,7 +729,7 @@ async def confirm_consumption(performed_id: UUID, payload: ConsumptionConfirmIn,
     lot_ids = sorted({line.lot_id for line in lines_payload}, key=str)
     locked_lots = (await db.scalars(select(InventoryLot).where(
         InventoryLot.clinic_id == user.clinic_id, InventoryLot.id.in_(lot_ids),
-    ).order_by(InventoryLot.id).with_for_update())).all()
+    ).order_by(InventoryLot.id).with_for_update(key_share=True))).all()
     if len(locked_lots) != len(lot_ids):
         raise HTTPException(404, "Lot inexistent.")
     lot_map = {lot.id: lot for lot in locked_lots}
