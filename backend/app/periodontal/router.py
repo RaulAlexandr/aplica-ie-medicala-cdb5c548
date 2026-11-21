@@ -27,8 +27,9 @@ MOBILITY = {"0", "1", "2", "3"}
 FURCATION = {"I", "II", "III"}
 # Product decision (PM, 2026-11-20): deeper than 20 mm is almost certainly a typing error.
 MAX_PROBING_DEPTH_MM = 20
-# CUR-05: recession gets the same range as probing depth (0..20 mm); conservative alignment, rows already
-# saved are only read back through plain dicts and are never re-validated.
+# CUR-05: recession is signed by the T09 convention (negative = margin coronal to the CEJ), so only its
+# magnitude is bounded, by the same 20 mm as probing depth: -20..20. Rows saved earlier are read back
+# through plain dicts and are never re-validated.
 MAX_RECESSION_MM = 20
 
 
@@ -36,7 +37,7 @@ class SiteInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     site: str
     probing_depth_mm: Decimal | None = Field(default=None, max_digits=7, decimal_places=2, ge=0, le=MAX_PROBING_DEPTH_MM)
-    recession_mm: Decimal | None = Field(default=None, max_digits=7, decimal_places=2, ge=0, le=MAX_RECESSION_MM)
+    recession_mm: Decimal | None = Field(default=None, max_digits=7, decimal_places=2, ge=-MAX_RECESSION_MM, le=MAX_RECESSION_MM)
     bop: StrictBool | None = None
     plaque: StrictBool | None = None
     suppuration: StrictBool | None = None

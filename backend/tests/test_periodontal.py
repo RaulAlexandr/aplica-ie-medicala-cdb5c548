@@ -214,7 +214,7 @@ def _with_site_values(**values):
 
 
 @pytest.mark.asyncio
-async def test_recession_limit_matches_probing_depth_and_legacy_values_stay_readable(paro_client):
+async def test_recession_magnitude_limit_keeps_sign_and_legacy_values_stay_readable(paro_client):
     client, sessions = paro_client
     auth = await register(client, "paro-recession@example.com")
     patient = await create_patient(client, auth)
@@ -222,17 +222,21 @@ async def test_recession_limit_matches_probing_depth_and_legacy_values_stay_read
     assessment_id = created.json()["id"]
     url = f"/api/periodontal/assessments/{assessment_id}/measurements"
 
-    for accepted in (0, 20, 20.0, 0.01, 19.99):
+    for accepted in (0, 20, 20.0, 0.01, 19.99, -1.25, -20, -19.99):
         response = await client.put(url, headers=auth, json=_with_site_values(recession_mm=accepted))
         assert response.status_code == 200, (accepted, response.text)
-    # Same boundaries as probing_depth_mm: both reject below 0 and above 20.
-    for field in ("recession_mm", "probing_depth_mm"):
-        for rejected in (-0.01, -1, 20.01, 21, 1000):
-            response = await client.put(url, headers=auth, json=_with_site_values(**{field: rejected}))
-            assert response.status_code == 422, (field, rejected, response.text)
+    # Recession is signed (T09): only its magnitude is bounded. Probing depth stays 0..20.
+    for rejected in (-20.01, -21, 20.01, 21, 1000):
+        response = await client.put(url, headers=auth, json=_with_site_values(recession_mm=rejected))
+        assert response.status_code == 422, ("recession_mm", rejected, response.text)
+    for rejected in (-0.01, -1, 20.01, 21, 1000):
+        response = await client.put(url, headers=auth, json=_with_site_values(probing_depth_mm=rejected))
+        assert response.status_code == 422, ("probing_depth_mm", rejected, response.text)
+    response = await client.put(url, headers=auth, json=_with_site_values(recession_mm=-1.25))
+    assert response.status_code == 200
     # The rejected writes did not replace the last valid draft.
     saved = await client.get(f"/api/periodontal/assessments/{assessment_id}", headers=auth)
-    assert float(saved.json()["teeth"][0]["sites"][0]["recession_mm"]) == 19.99
+    assert float(saved.json()["teeth"][0]["sites"][0]["recession_mm"]) == -1.25
 
     # Rows stored before the limit existed (e.g. 35 mm or negative) are still returned unchanged.
     from sqlalchemy import update

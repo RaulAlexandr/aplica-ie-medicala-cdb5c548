@@ -89,14 +89,17 @@ describe('measurementError (CUR-05)', () => {
     row.sites[0] = { ...row.sites[0], ...values };
     return [row];
   };
-  it('accepts values on the 0..20 mm boundaries and unmeasured sites', () => {
+  it('accepts depth on 0..20 mm, signed recession on -20..20 mm, and unmeasured sites', () => {
     expect(measurementError([periodontalApi.emptyTooth('16')])).toBe('');
     expect(measurementError(withSite({ recession_mm: 0, probing_depth_mm: 0 }))).toBe('');
     expect(measurementError(withSite({ recession_mm: 20, probing_depth_mm: 20 }))).toBe('');
+    expect(measurementError(withSite({ recession_mm: -20 }))).toBe('');
+    expect(measurementError(withSite({ recession_mm: -1.25 }))).toBe('');
   });
   it('explains in Romanian when recession or depth is out of range', () => {
-    expect(measurementError(withSite({ recession_mm: 20.01 }))).toBe('Recesiune la dintele 16 trebuie să fie între 0 și 20 mm.');
-    expect(measurementError(withSite({ recession_mm: -1 }))).toContain('Recesiune');
+    expect(measurementError(withSite({ recession_mm: 20.01 }))).toBe('Recesiune la dintele 16 trebuie să fie între -20 și 20 mm.');
+    expect(measurementError(withSite({ recession_mm: -20.01 }))).toContain('Recesiune');
+    expect(measurementError(withSite({ probing_depth_mm: -1 }))).toContain('Adâncime');
     expect(measurementError(withSite({ probing_depth_mm: 21 }))).toBe('Adâncime la dintele 16 trebuie să fie între 0 și 20 mm.');
   });
 });
