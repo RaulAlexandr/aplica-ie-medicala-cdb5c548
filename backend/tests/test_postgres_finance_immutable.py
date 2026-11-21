@@ -92,9 +92,9 @@ async def test_financial_movements_are_append_only_in_postgresql(temp_database):
 
         refused = (
             "UPDATE patient_financial_entries SET amount = 99.00",
-            "UPDATE patient_financial_entries SET reason = 'rescris' WHERE id = '%s'" % payment_id,
+            f"UPDATE patient_financial_entries SET reason = 'rescris' WHERE id = '{payment_id}'",
             "UPDATE patient_financial_entries SET created_at = now() WHERE kind = 'payment'",
-            "DELETE FROM patient_financial_entries WHERE id = '%s'" % payment_id,
+            f"DELETE FROM patient_financial_entries WHERE id = '{payment_id}'",
             "DELETE FROM patient_financial_entries",
             "TRUNCATE patient_financial_entries",
         )
