@@ -99,8 +99,8 @@ try {
   const draft = { id: await history.inputValue() };
   check('draft created from the patient record', Boolean(draft.id), { draftId: draft.id });
   await page.getByRole('button', { name: 'Salvează și finalizează' }).click();
-  await page.getByRole('alert').waitFor();
-  const retainedError = await page.getByRole('alert').innerText();
+  await page.getByRole('alert').filter({ hasText: /\S/ }).waitFor();
+  const retainedError = await page.getByRole('alert').filter({ hasText: /\S/ }).innerText();
   check('empty finalize error is controlled and draft remains selected', Boolean(retainedError) && await history.inputValue() === draft.id, { draftId: draft.id });
   await page.reload();
   await page.getByRole('heading', { name: 'Evaluare parodontală' }).waitFor();
