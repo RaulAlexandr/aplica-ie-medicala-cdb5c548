@@ -1,0 +1,20 @@
+.collab-badge{display:inline-block;min-width:20px;margin-left:8px;padding:1px 6px;border-radius:999px;background:#d9534f;color:#fff;font-size:12px;font-weight:800;text-align:center}
+.collab-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+.collab-layout{display:grid;grid-template-columns:minmax(240px,320px) minmax(0,1fr);gap:18px;align-items:start}
+.collab-conversation{display:block;width:100%;margin-bottom:6px;padding:10px 12px;background:#f5f7f9;color:#17212b;font-weight:400;text-align:left}
+.collab-conversation[aria-current="true"]{background:#dcece9}
+.collab-conversation small{display:block;color:#68777e;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.collab-thread{display:flex;flex-direction:column;gap:10px;max-height:460px;overflow-y:auto;margin-bottom:14px}
+.collab-message{padding:10px 12px;border-radius:9px;background:#f5f7f9;max-width:85%}
+.collab-message.mine{align-self:flex-end;background:#e4f1ee}
+.collab-message p{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.collab-message small{color:#68777e}
+.collab-members{display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:14px}
+.collab-members label{display:flex;align-items:center;gap:6px;margin:0;font-weight:400}
+.collab-task{padding:14px 0;border-bottom:1px solid #edf0f1}
+.collab-task p{margin:4px 0;overflow-wrap:anywhere;white-space:pre-wrap}
+.collab-task-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-top:8px}
+.collab-task-actions label{margin:0}
+.collab-overdue{color:#ae3939;font-weight:700}
+.collab-tabs button[aria-pressed="true"]{background:#1c716a;color:#fff}
+@media(max-width:800px){.collab-layout{grid-template-columns:minmax(0,1fr);gap:0}.collab-column{display:contents}.collab-first{order:1}.collab-second{order:2}.collab-third{order:3}.collab-fourth{order:4}.collab-message{max-width:100%}}
