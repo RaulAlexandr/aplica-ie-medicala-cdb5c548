@@ -102,6 +102,39 @@ describe('T20 composer', () => {
     await flush();
     await act(async () => r.unmount());
   });
+  it('locks the text while sending, so nothing typed meanwhile is cleared', async () => {
+    let finish!: (value: collab.Message) => void;
+    vi.spyOn(collab, 'sendMessage').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const r = await render(<Composer target={{ kind: 'conversation', id: 'k1' }} onSent={() => {}} />);
+    await type(r, 'Un mesaj');
+    expect(r.root.findByType('textarea').props.readOnly).toBe(false);
+    await act(async () => { submit(r); });
+    await flush();
+    expect(r.root.findByType('textarea').props.readOnly).toBe(true);
+    await act(async () => { finish(message(1)); });
+    await flush();
+    expect(r.root.findByType('textarea').props.readOnly).toBe(false);
+    await act(async () => r.unmount());
+  });
+  it('keeps the text when the room changes after a refusal and uses a new request id', async () => {
+    const room = vi.spyOn(collab, 'sendToRoom').mockRejectedValueOnce(new Error('Nimeni nu este repartizat acum')).mockResolvedValueOnce(message(1));
+    const tree = (id: string) => <QueryClientProvider client={queries}><MemoryRouter><Composer target={{ kind: 'room', id }} onSent={() => {}} /></MemoryRouter></QueryClientProvider>;
+    const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let r!: TestRenderer.ReactTestRenderer;
+    await act(async () => { r = TestRenderer.create(tree('r1')); });
+    await type(r, 'Mesaj important');
+    await act(async () => { submit(r); });
+    await flush();
+    await act(async () => { r.update(tree('r2')); });
+    await flush();
+    expect(r.root.findByType('textarea').props.value).toBe('Mesaj important');
+    expect(text(r.root)).not.toContain('Nimeni nu este repartizat');
+    await act(async () => { submit(r); });
+    await flush();
+    expect(room.mock.calls[1][0]).toBe('r2');
+    expect(room.mock.calls[0][2]).not.toBe(room.mock.calls[1][2]);
+    await act(async () => r.unmount());
+  });
   it('sends a room message to the room route and shows a refusal without losing the text', async () => {
     const room = vi.spyOn(collab, 'sendToRoom').mockRejectedValue(new Error('Nimeni nu este repartizat acum la Cabinet 3. Mesajul nu a fost trimis.'));
     const r = await render(<Composer target={{ kind: 'room', id: 'r1' }} onSent={() => {}} />);
@@ -139,6 +172,30 @@ describe('T20 unread and polling', () => {
     await flush();
     expect(collab.markRead).toHaveBeenCalledWith('k1', 2);
     expect(text(r.root)).toContain('Mesaj 2');
+    await act(async () => r.unmount());
+  });
+  it('lets the group creator add an active member who is not in the group', async () => {
+    vi.mocked(team.listMembers).mockResolvedValue([member('me', 'doctor'), member('o', 'reception'), member('n', 'assistant'), { ...member('x', 'assistant'), is_active: false }]);
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ kind: 'group', title: 'Grup', unread: 0, members: [{ id: 'me', full_name: 'Nume me', is_active: true }, { id: 'o', full_name: 'Nume o', is_active: true }] })]);
+    const add = vi.spyOn(collab, 'addMember').mockResolvedValue(conversation({ kind: 'group' }));
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
+    await flush();
+    const form = r.root.findAll(item => item.type === 'form' && item.props['aria-label'] === 'Adaugă membru')[0];
+    const options = form.findAllByType('option').map(item => item.props.value);
+    expect(options).toEqual(['', 'n']);
+    await act(async () => { form.findByType('select').props.onChange({ target: { value: 'n' } }); });
+    await act(async () => { r.root.findAll(item => item.type === 'form' && item.props['aria-label'] === 'Adaugă membru')[0].props.onSubmit({ preventDefault() {} }); });
+    await flush();
+    expect(add).toHaveBeenCalledWith('k1', 'n');
+    await act(async () => r.unmount());
+  });
+  it('does not offer adding members to someone who may not add them', async () => {
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ kind: 'group', title: 'Grup', unread: 0, created_by_id: 'o' })]);
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
+    await flush();
+    expect(r.root.findAll(item => item.type === 'form' && item.props['aria-label'] === 'Adaugă membru')).toHaveLength(0);
     await act(async () => r.unmount());
   });
   it('keeps history readable but offers no composer for an inactive person', async () => {

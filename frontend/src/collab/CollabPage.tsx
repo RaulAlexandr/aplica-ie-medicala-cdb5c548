@@ -51,6 +51,15 @@ export function Composer({ target, disabled, onSent }: { target: Target; disable
     mutationFn: () => target.kind === 'room' ? collab.sendToRoom(target.id, draft.text, draft.requestId) : collab.sendMessage(target.id, draft.text, draft.requestId),
     onSuccess: message => { setDraft({ text: '', requestId: collab.newRequestId() }); onSent(message); },
   });
+  // Another destination keeps the text, but it is a new send and needs its own request id.
+  const destination = `${target.kind}:${target.id}`;
+  const previous = useRef(destination);
+  useEffect(() => {
+    if (previous.current === destination) return;
+    previous.current = destination;
+    send.reset();
+    setDraft(current => ({ ...current, requestId: collab.newRequestId() }));
+  }, [destination, send]);
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!draft.text.trim() || send.isPending) return;
@@ -58,13 +67,25 @@ export function Composer({ target, disabled, onSent }: { target: Target; disable
   }
   return <form onSubmit={submit} aria-label="Scrie un mesaj">
     <p className="muted">{MEDICAL_NOTICE}</p>
-    <label>Mesaj<textarea maxLength={MAX_MESSAGE} disabled={disabled} value={draft.text} onChange={e => { send.reset(); setDraft({ text: e.target.value, requestId: collab.newRequestId() }); }} /></label>
+    <label>Mesaj<textarea maxLength={MAX_MESSAGE} disabled={disabled} readOnly={send.isPending} value={draft.text} onChange={e => { send.reset(); setDraft({ text: e.target.value, requestId: collab.newRequestId() }); }} /></label>
     <Failure error={send.error} />
     <button disabled={disabled || send.isPending || !draft.text.trim()}>Trimite</button>
   </form>;
 }
 
-function Thread({ conversation, user, timezone }: { conversation: collab.Conversation; user: User; timezone: string }) {
+function AddMember({ conversation, members }: { conversation: collab.Conversation; members: team.TeamMember[] }) {
+  const client = useQueryClient();
+  const [person, setPerson] = useState('');
+  const present = new Set(conversation.members.map(item => item.id));
+  const add = useMutation({ mutationFn: () => collab.addMember(conversation.id, person), onSuccess: () => { setPerson(''); void client.invalidateQueries({ queryKey: ['collab', 'conversations'] }); } });
+  return <form className="collab-task-actions" aria-label="Adaugă membru" onSubmit={e => { e.preventDefault(); add.mutate(); }}>
+    <label>Adaugă membru<select required value={person} onChange={e => setPerson(e.target.value)}><option value="">Alege persoana</option>{members.filter(item => item.is_active && !present.has(item.id)).map(item => <option key={item.id} value={item.id}>{item.full_name}</option>)}</select></label>
+    <button className="secondary" disabled={add.isPending || !person}>Adaugă</button>
+    <Failure error={add.error} />
+  </form>;
+}
+
+function Thread({ conversation, user, members, timezone }: { conversation: collab.Conversation; user: User; members: team.TeamMember[]; timezone: string }) {
   const client = useQueryClient();
   const [limit, setLimit] = useState(50);
   const visible = usePageVisible();
@@ -80,10 +101,13 @@ function Thread({ conversation, user, timezone }: { conversation: collab.Convers
   }, [visible, lastSeq, conversation.id, conversation.last_read_seq, client]);
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => { end.current?.scrollIntoView?.({ block: 'nearest' }); }, [lastSeq]);
+  const manager = MANAGERS.includes(user.role);
+  const canAdd = conversation.kind === 'channel' ? manager : conversation.kind === 'group' && (manager || conversation.created_by_id === user.id);
   const target: Target = conversation.kind === 'room' && conversation.room_id ? { kind: 'room', id: conversation.room_id } : { kind: 'conversation', id: conversation.id };
   return <section className="card" aria-label="Conversație">
     <h2>{conversation.title}</h2>
     <p className="muted">{KIND_LABELS[conversation.kind]}{conversation.kind === 'room' ? ' · Răspunsul ajunge la cine e repartizat acum.' : conversation.kind === 'direct' ? '' : ` · ${conversation.members.map(m => m.is_active ? m.full_name : `${m.full_name} (inactiv)`).join(', ')}`}</p>
+    {canAdd && <AddMember conversation={conversation} members={members} />}
     <Failure error={query.error} />
     {query.data?.has_more && <button className="secondary" onClick={() => setLimit(value => Math.min(value + 50, 500))} disabled={limit >= 500}>Mesaje mai vechi</button>}
     {query.data && messages.length === 0 && <p className="muted">Niciun mesaj încă.</p>}
@@ -137,7 +161,7 @@ function RoomMessage({ onOpen }: { onOpen: (id: string) => void }) {
     <label>Cabinet<select value={room} onChange={e => { setRoom(e.target.value); setNotice(''); }}><option value="">Alege cabinetul</option>{rooms.data?.filter(item => item.is_active).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
     <Failure error={rooms.error} />
     {notice && <p className="notice-text" role="status">{notice}</p>}
-    {room && <Composer key={room} target={{ kind: 'room', id: room }} onSent={message => { setNotice(`Trimis către: ${message.recipients.join(', ')}.`); void client.invalidateQueries({ queryKey: ['collab'] }); onOpen(message.conversation_id); }} />}
+    {room && <Composer target={{ kind: 'room', id: room }} onSent={message => { setNotice(`Trimis către: ${message.recipients.join(', ')}.`); void client.invalidateQueries({ queryKey: ['collab'] }); onOpen(message.conversation_id); }} />}
   </section>;
 }
 
@@ -146,8 +170,8 @@ function Messages({ user, members, timezone }: { user: User; members: team.TeamM
   const [selected, setSelected] = useState('');
   const current = query.data?.find(item => item.id === selected);
   return <div className="collab-layout">
-    <div>
-      <section className="card" aria-label="Conversații">
+    <div className="collab-column">
+      <section className="card collab-first" aria-label="Conversații">
         <h2>Conversații</h2>
         <Failure error={query.error} />
         {query.data?.length === 0 && <p className="muted">Nicio conversație încă.</p>}
@@ -156,11 +180,11 @@ function Messages({ user, members, timezone }: { user: User; members: team.TeamM
           <small>{KIND_LABELS[item.kind]}{item.last_message ? ` · ${item.last_message.sender}: ${item.last_message.preview}` : ''}</small>
         </button>)}
       </section>
-      <NewConversation user={user} members={members} onOpen={setSelected} />
+      <div className="collab-third"><NewConversation user={user} members={members} onOpen={setSelected} /></div>
     </div>
-    <div>
-      {current ? <Thread key={current.id} conversation={current} user={user} timezone={timezone} /> : <section className="card"><p className="muted">Alege o conversație.</p></section>}
-      <RoomMessage onOpen={setSelected} />
+    <div className="collab-column">
+      <div className="collab-second">{current ? <Thread key={current.id} conversation={current} user={user} members={members} timezone={timezone} /> : <section className="card"><p className="muted">Alege o conversație.</p></section>}</div>
+      <div className="collab-fourth"><RoomMessage onOpen={setSelected} /></div>
     </div>
   </div>;
 }

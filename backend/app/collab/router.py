@@ -266,7 +266,7 @@ async def conversation_rows(db: AsyncSession, clinic_id: UUID, user_id: UUID, on
             "last_message": {"seq": message.seq, "sender": senders.get(message.sender_id, "—"), "preview": message.body[:PREVIEW], "created_at": iso(message.created_at)} if message else None,
             "activity_at": iso(message.created_at if message else item.created_at),
         })
-    return sorted(result, key=lambda row: row["activity_at"], reverse=True)
+    return sorted(result, key=lambda row: datetime.fromisoformat(row["activity_at"]), reverse=True)
 
 
 @router.get("/summary")

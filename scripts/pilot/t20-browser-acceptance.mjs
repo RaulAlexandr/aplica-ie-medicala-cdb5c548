@@ -124,6 +124,9 @@ try {
   await toRoom.getByText('Nimeni nu este repartizat acum').waitFor();
   check('the refused text stays in the composer', await composer(toRoom).locator('textarea').inputValue() === 'Mesaj către cabinet gol');
   await shot(receptionPage, 'reception-room-refused');
+  await toRoom.getByLabel('Cabinet').selectOption(room.id);
+  check('choosing another room keeps the written text', await composer(toRoom).locator('textarea').inputValue() === 'Mesaj către cabinet gol');
+  await composer(toRoom).locator('textarea').fill('');
 
   // ===== Doctor and assistant: unread through polling, then read =====
   await badge(doctorPage).waitFor({ timeout: 20000 });
@@ -169,6 +172,18 @@ try {
   }, { apiUrl: api, id: directItem.id });
   check('another person gets the same 404 for a foreign and a missing conversation', refused.real === 404 && refused.missing === 404 && refused.same, refused);
   check('the foreign conversation is not listed', !(await region(assistantPage, 'Conversații').innerText()).includes('Mesaj direct fictiv'));
+
+  // ===== Group: creator adds a member =====
+  await region(doctorPage, 'Conversație nouă').getByLabel('Nume').fill('Tură fictivă');
+  await region(doctorPage, 'Conversație nouă').getByRole('group', { name: 'Membri' }).getByLabel(assistant.full_name).check();
+  await region(doctorPage, 'Conversație nouă').getByRole('button', { name: 'Creează' }).click();
+  const groupThread = region(doctorPage, 'Conversație');
+  await groupThread.getByRole('heading', { name: 'Tură fictivă' }).waitFor();
+  await groupThread.getByLabel('Adaugă membru').selectOption(receptionist.id);
+  const memberAdded = respond(doctorPage, 'POST', p => p.endsWith('/members'));
+  await groupThread.getByRole('button', { name: 'Adaugă', exact: true }).click();
+  check('the group creator adds a member (201)', (await memberAdded).status() === 201);
+  await groupThread.getByText(receptionist.full_name).first().waitFor();
 
   // ===== Task from creation to resolution =====
   await tab(manager, /^Sarcini/);

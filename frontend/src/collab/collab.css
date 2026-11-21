@@ -16,4 +16,5 @@
 .collab-task-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:end;margin-top:8px}
 .collab-task-actions label{margin:0}
 .collab-overdue{color:#ae3939;font-weight:700}
-@media(max-width:800px){.collab-layout{grid-template-columns:minmax(0,1fr)}.collab-message{max-width:100%}}
+.collab-tabs button[aria-pressed="true"]{background:#1c716a;color:#fff}
+@media(max-width:800px){.collab-layout{grid-template-columns:minmax(0,1fr);gap:0}.collab-column{display:contents}.collab-first{order:1}.collab-second{order:2}.collab-third{order:3}.collab-fourth{order:4}.collab-message{max-width:100%}}
