@@ -15,3 +15,4 @@
 .equipment-inline label { display: grid; gap: .3rem; }
 .equipment-warning { border: 1px solid #d68b00; background: #fff4d6; color: #573900; border-radius: .5rem; padding: .8rem; }
 @media (max-width: 760px) { .equipment-layout { grid-template-columns: 1fr; } }
+.equipment-form-error { grid-column: 1 / -1; margin: 0; }
