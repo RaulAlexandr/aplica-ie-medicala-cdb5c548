@@ -2,7 +2,7 @@
 // It adds data (an invited assistant, shifts, messages, tasks, a handover): run it on its own demo database.
 // Credentials come only from the local 600 file named by PILOT_CREDENTIALS and never reach the summary.
 // Every HTTP >= 400 seen by a page must be listed as expected; anything else fails the run.
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -249,7 +249,52 @@ try {
   await received.getByRole('button', { name: 'Confirm primirea' }).click();
   check('the recipient confirms the handover (200)', (await acknowledged).status() === 200);
   await received.getByText('Primire confirmată').waitFor();
+  const inList = (await doctorApi.call('GET', '/collab/tasks')).body.find(t => t.title === 'Comandă mănuși (fictiv)');
+  check('the recipient can read the handed task before taking it', Boolean(inList) && inList.assignee_id === assistant.id);
+  check('the recipient cannot work on it before taking it (403)', (await doctorApi.call('POST', `/collab/tasks/${inList.id}/changes`, { expected_version: inList.version, status: 'resolved' })).status === 403);
+  check('a colleague outside the handover still gets 404', (await receptionApi.call('POST', `/collab/tasks/${inList.id}/changes`, { expected_version: inList.version, status: 'resolved' })).status === 404);
+  const takeButton = received.getByRole('button', { name: 'Preia sarcina' });
+  await takeButton.waitFor();
+  const taken = respond(doctorPage, 'POST', p => p.endsWith('/take'));
+  await takeButton.dblclick();
+  const takenResponse = await taken;
+  const takenBody = await takenResponse.json();
+  check('the recipient takes over the task (200)', takenResponse.status() === 200 && takenBody.assignee_id === doctor.id, { status: takenResponse.status() });
+  check('taking over is a history record', takenBody.events.at(-1).from_assignee === assistant.full_name && takenBody.events.at(-1).to_assignee === doctor.full_name && takenBody.events.length === 2);
+  await received.getByText('Preluată de tine').waitFor();
+  check('the frozen list keeps the original status', (await doctorApi.call('GET', '/collab/handovers')).body[0].tasks[0].status === 'open');
+  await tab(doctorPage, /^Sarcini/);
+  const takenRow = taskRow(doctorPage, 'Comandă mănuși (fictiv)');
+  await takenRow.waitFor();
+  check('the new responsible resolves the taken task', await applyTask(doctorPage, 'Comandă mănuși (fictiv)', 'resolved') === 200);
+  await taskStatus(takenRow, 'Rezolvată');
+  await tab(doctorPage, /^Predări/);
   await shot(doctorPage, 'doctor-handover-confirmed');
+
+  // ===== Long history: unread older pages, then polling keeps them =====
+  const longGroup = (await receptionApi.call('POST', '/collab/conversations', { kind: 'group', title: 'Istoric lung', member_ids: [doctor.id] })).body;
+  for (let index = 1; index <= 60; index += 1) {
+    const sent = await receptionApi.call('POST', `/collab/conversations/${longGroup.id}/messages`, { body: `Istoric ${index}.`, client_request_id: randomUUID() });
+    if (sent.status !== 201) throw new Error(`History message failed: ${sent.status}`);
+  }
+  await tab(doctorPage, /^Mesaje/);
+  await region(doctorPage, 'Conversații').getByRole('button', { name: 'Istoric lung' }).waitFor({ timeout: 20000 });
+  const longThread = await openConversation(doctorPage, 'Istoric lung');
+  await longThread.getByText('Istoric 60.').waitFor();
+  await longThread.getByText('Ai mesaje necitite mai vechi').waitFor();
+  await pause(800);
+  const beforeLoad = (await doctorApi.call('GET', '/collab/summary')).body.unread;
+  check('the unread count stays until the older messages are loaded', beforeLoad === 60, { beforeLoad });
+  await longThread.getByRole('button', { name: 'Mesaje mai vechi' }).click();
+  await longThread.getByText('Istoric 1.', { exact: true }).waitFor();
+  await longThread.getByText('Ai mesaje necitite mai vechi').waitFor({ state: 'detached' });
+  await badge(doctorPage).waitFor({ state: 'detached', timeout: 10000 });
+  check('after loading everything the conversation is read', (await doctorApi.call('GET', '/collab/summary')).body.unread === 0);
+  check('the first message is reachable and the button is gone', await longThread.getByRole('button', { name: 'Mesaje mai vechi' }).count() === 0);
+  await receptionApi.call('POST', `/collab/conversations/${longGroup.id}/messages`, { body: 'Istoric nou prin polling.', client_request_id: randomUUID() });
+  await longThread.getByText('Istoric nou prin polling.').waitFor({ timeout: 20000 });
+  check('polling adds new messages without losing the loaded pages', await longThread.getByText('Istoric 1.', { exact: true }).count() === 1);
+  await shot(doctorPage, 'doctor-long-history');
 
   // ===== Polling stops while the page is hidden and resumes after =====
   await tab(doctorPage, /^Mesaje/);
