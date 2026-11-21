@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,14 +25,38 @@ class ItemIn(BaseModel):
     minimum_quantity: Decimal = Field(ge=0, max_digits=14, decimal_places=3)
     is_active: bool = True
 
+    @field_validator("name", "unit", mode="before")
+    @classmethod
+    def trim_required_text(cls, value):
+        if not isinstance(value,str): return value
+        value=value.strip()
+        if not value: raise ValueError("Câmpul nu poate fi gol.")
+        return value
+
 class LocationIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     is_active: bool = True
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def trim_name(cls, value):
+        if not isinstance(value,str): return value
+        value=value.strip()
+        if not value: raise ValueError("Denumirea locației este obligatorie.")
+        return value
 
 class LotIn(BaseModel):
     item_id: UUID
     code: str = Field(min_length=1, max_length=120)
     expires_on: date | None = None
+
+    @field_validator("code", mode="before")
+    @classmethod
+    def trim_code(cls, value):
+        if not isinstance(value,str): return value
+        value=value.strip()
+        if not value: raise ValueError("Codul lotului este obligatoriu.")
+        return value
 
 class MovementIn(BaseModel):
     item_id: UUID

@@ -107,3 +107,18 @@ async def test_duplicate_item_location_lot_and_rename_return_409(ctx):
     rename_location=await c.patch(f"/api/inventory/locations/{loc2.json()['id']}",headers=h,json={"name":"Locație duplicată fictivă","is_active":True});assert rename_location.status_code==409
     lot=await c.post("/api/inventory/lots",headers=h,json={"item_id":item1.json()["id"],"code":"COD-LOT-FICTIV"});assert lot.status_code==201
     duplicate_lot=await c.post("/api/inventory/lots",headers=h,json={"item_id":item1.json()["id"],"code":"COD-LOT-FICTIV"});assert duplicate_lot.status_code==409 and "lot" in duplicate_lot.text.lower()
+
+@pytest.mark.asyncio
+async def test_inventory_names_units_and_lot_codes_trim_and_reject_blank(ctx):
+    c,_=ctx;h=await register(c,"inv-whitespace@example.com")
+    blank_name=await c.post("/api/inventory/items",headers=h,json={"name":"   ","unit":"buc","minimum_quantity":"0"});assert blank_name.status_code==422
+    blank_unit=await c.post("/api/inventory/items",headers=h,json={"name":"Material fictiv","unit":"   ","minimum_quantity":"0"});assert blank_unit.status_code==422
+    created=await c.post("/api/inventory/items",headers=h,json={"name":"  Material fictiv  ","unit":" buc ","minimum_quantity":"0"});assert created.status_code==201
+    view=(await c.get("/api/inventory",headers=h)).json();assert view["items"][0]["name"]=="Material fictiv" and view["items"][0]["unit"]=="buc"
+    blank_location=await c.post("/api/inventory/locations",headers=h,json={"name":"  "});assert blank_location.status_code==422
+    location=await c.post("/api/inventory/locations",headers=h,json={"name":"  Depozit fictiv  "});assert location.status_code==201
+    assert (await c.patch(f"/api/inventory/locations/{location.json()['id']}",headers=h,json={"name":"   ","is_active":True})).status_code==422
+    blank_lot=await c.post("/api/inventory/lots",headers=h,json={"item_id":created.json()["id"],"code":" "});assert blank_lot.status_code==422
+    lot=await c.post("/api/inventory/lots",headers=h,json={"item_id":created.json()["id"],"code":"  LOT-ALB  "});assert lot.status_code==201
+    assert (await c.get("/api/inventory",headers=h)).json()["balances"][0]["lot"]=="LOT-ALB"
+    assert (await c.patch(f"/api/inventory/items/{created.json()['id']}",headers=h,json={"name":"  ","unit":"buc","minimum_quantity":"0","is_active":True})).status_code==422
