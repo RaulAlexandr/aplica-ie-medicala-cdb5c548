@@ -21,10 +21,11 @@ vi.mock('../api/client', () => ({ apiErrorMessage: (e: unknown) => (e instanceof
 
 const textOf = (node: TestRenderer.ReactTestInstance): string => node.children.map(x => (typeof x === 'string' ? x : textOf(x))).join('');
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+const scrolled = vi.fn();
 async function page(role: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   let renderer!: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(<QueryClientProvider client={client}><InventoryPage role={role} /></QueryClientProvider>); await flush(); });
+  await act(async () => { renderer = TestRenderer.create(<QueryClientProvider client={client}><InventoryPage role={role} /></QueryClientProvider>, { createNodeMock: () => ({ scrollIntoView: scrolled }) }); await flush(); });
   await act(async () => { await flush(); });
   return renderer;
 }
@@ -36,6 +37,7 @@ const submit = (form: TestRenderer.ReactTestInstance) => form.props.onSubmit({ p
 
 beforeEach(() => {
   vi.clearAllMocks();
+  scrolled.mockClear();
   vi.mocked(inventoryOverview).mockResolvedValue(overview as never);
   vi.mocked(inventoryHistory).mockResolvedValue([]);
 });
@@ -111,6 +113,14 @@ describe('inventory: errors next to the form (D1)', () => {
     expect(found).toHaveLength(1);
     const section = (() => { let n: TestRenderer.ReactTestInstance | null = found[0]; while (n && !(n.type === 'section')) n = n.parent; return n; })();
     expect(section && textOf(section.findAllByType('h2')[0])).toBe('Istoricul mișcărilor');
+    await act(async () => renderer.unmount());
+  });
+
+  it('brings a new error into view, because the form may sit at the bottom of the screen', async () => {
+    vi.mocked(addInventoryItem).mockRejectedValue(new Error('Articolul există deja.'));
+    const renderer = await page('clinic_manager');
+    await act(async () => { submit(formWithHeading(renderer, 'Articol nou')); await flush(); });
+    expect(scrolled).toHaveBeenCalledWith({ block: 'nearest' });
     await act(async () => renderer.unmount());
   });
 });

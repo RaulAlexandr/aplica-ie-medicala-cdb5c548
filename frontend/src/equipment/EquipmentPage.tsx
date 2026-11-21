@@ -5,6 +5,8 @@ import { addCheck, addDependency, addDocument, closeOutage, completeCheck, creat
 import { clinicLocalToUtc } from '../timezone';
 import './equipment.css';
 
+// A new error can land below the fold (the form is often at the bottom of the screen), so bring it into view.
+const revealError = (el: HTMLElement | null) => el?.scrollIntoView?.({ block: 'nearest' });
 const managers = ['clinic_manager', 'administrator'];
 const canReport = (role: string) => [...managers, 'doctor', 'assistant'].includes(role);
 const equipmentStateLabel: Record<string, string> = { available: 'Disponibil', maintenance: 'Mentenanță', broken: 'Defect', retired: 'Retras' };
@@ -44,7 +46,7 @@ export function EquipmentPage({ user }: { user: User }) {
   const mutationOptions = { onMutate: () => setMutationError(''), onError: (error: unknown) => setMutationError(apiErrorMessage(error)), onSuccess: () => setMutationError('') };
   // D1: the error is shown next to the form (or row) that was submitted; `scope` says which one.
   const failAt = (scope: string | ((variables: unknown) => string)) => ({ ...mutationOptions, onError: (error: unknown, variables: unknown) => { setErrorScope(typeof scope === 'function' ? scope(variables) : scope); setMutationError(apiErrorMessage(error)); } });
-  const errorAt = (scope: string) => mutationError && errorScope === scope ? <p className="error equipment-form-error" role="alert">{mutationError}</p> : null;
+  const errorAt = (scope: string) => mutationError && errorScope === scope ? <p className="error equipment-form-error" role="alert" ref={revealError}>{mutationError}</p> : null;
   const create = useMutation({ mutationFn: createEquipment, ...failAt('create'), onSuccess: result => { setMutationError(''); setSelected(result.id); refresh(); } });
   const update = useMutation({ mutationFn: updateEquipment, ...failAt('state'), onSuccess: result => {
     setMutationError('');

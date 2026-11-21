@@ -6,6 +6,8 @@ import { addInventoryItem, addInventoryLocation, addInventoryLot, addInventoryMo
 const managers=['clinic_manager','administrator'];
 const staff=['clinic_manager','administrator','doctor','assistant'];
 const newId=()=>crypto.randomUUID();
+// A new error can land below the fold (the form is often at the bottom of the screen), so bring it into view.
+const revealError=(el:HTMLElement|null)=>el?.scrollIntoView?.({block:'nearest'});
 const movementLabels:Record<string,string>={receipt:'Recepție',consumption:'Consum',transfer_in:'Transfer primit',transfer_out:'Transfer expediat',adjustment_in:'Ajustare — adăugare',adjustment_out:'Ajustare — scădere',reversal_in:'Corecție — adăugare',reversal_out:'Corecție — scădere'};
 export function InventoryPage({role}:{role:string}) {
   const client=useQueryClient(), view=useQuery({queryKey:['inventory'],queryFn:inventoryOverview}), clinic=useQuery({queryKey:['clinic'],queryFn:getClinic});
@@ -14,7 +16,7 @@ export function InventoryPage({role}:{role:string}) {
   const movementRequestId=useRef(newId()),movementBusy=useRef(false),reverseRequests=useRef(new Map<string,{requestId:string;reason:string}>()),reverseBusy=useRef(new Set<string>());
   const changed=(success='Mișcarea a fost salvată.')=>{setFormError(null);void client.invalidateQueries({queryKey:['inventory']});void client.invalidateQueries({queryKey:['inventory-history']});setMessage(success);};
   const fail=(scope:string)=>(e:unknown)=>{setMessage('');setFormError({scope,text:apiErrorMessage(e)});};
-  const errorAt=(scope:string)=>formError?.scope===scope?<p role="alert" className="error">{formError.text}</p>:null;
+  const errorAt=(scope:string)=>formError?.scope===scope?<p role="alert" className="error" ref={revealError}>{formError.text}</p>:null;
   const itemMutation=useMutation({mutationFn:()=>addInventoryItem({name:itemName,unit,minimum_quantity:minimum}),onSuccess:()=>{changed('Articolul a fost adăugat.');setItemName('');setUnit('');},onError:fail('item')});
   const locationMutation=useMutation({mutationFn:()=>addInventoryLocation({name:locationName}),onSuccess:()=>{changed('Locația a fost adăugată.');setLocationName('');},onError:fail('location')});
   const lotMutation=useMutation({mutationFn:()=>addInventoryLot({item_id:lotItem,code:lotCode,expires_on:expiry||null}),onSuccess:()=>{changed('Lotul a fost adăugat.');setLotCode('');},onError:fail('lot')});

@@ -14,6 +14,7 @@ const text = (node: TestRenderer.ReactTestInstance): string => node.children.map
 const flush = () => new Promise(resolve => setTimeout(resolve, 10));
 const history = (values: Partial<EquipmentHistory> = {}): EquipmentHistory => ({ checks: [], documents: [], dependencies: [], unavailabilities: [], ...values });
 
+const scrolled = vi.fn();
 async function render(historyValue: EquipmentHistory = history()) {
   vi.spyOn(clientApi, 'getClinic').mockResolvedValue({ timezone: 'Europe/Bucharest' } as never);
   vi.spyOn(clientApi, 'listRooms').mockResolvedValue([]);
@@ -24,7 +25,7 @@ async function render(historyValue: EquipmentHistory = history()) {
   vi.spyOn(equipmentApi, 'equipmentHistory').mockResolvedValue(historyValue);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
   let renderer!: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(<QueryClientProvider client={client}><EquipmentPage user={manager} /></QueryClientProvider>); await flush(); });
+  await act(async () => { renderer = TestRenderer.create(<QueryClientProvider client={client}><EquipmentPage user={manager} /></QueryClientProvider>, { createNodeMock: () => ({ scrollIntoView: scrolled }) }); await flush(); });
   let row = renderer.root.findAllByType('button').find(button => text(button).includes(equipment.name));
   for (let attempt = 0; !row && attempt < 30; attempt += 1) { await act(async () => { await flush(); }); row = renderer.root.findAllByType('button').find(button => text(button).includes(equipment.name)); }
   await act(async () => { row!.props.onClick(); await flush(); });
@@ -34,7 +35,7 @@ const alerts = (renderer: TestRenderer.ReactTestRenderer, needle: string) => ren
 const ancestor = (node: TestRenderer.ReactTestInstance, type: string) => { let current: TestRenderer.ReactTestInstance | null = node; while (current && current.type !== type) current = current.parent; return current; };
 const formWith = (renderer: TestRenderer.ReactTestRenderer, heading: string) => renderer.root.findAllByType('form').find(form => text(form).includes(heading))!;
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); scrolled.mockClear(); });
 
 describe('equipment: errors next to the form (D1)', () => {
   const server = 'Rezultatul se completează numai pentru o verificare efectuată';
@@ -100,6 +101,16 @@ describe('equipment: errors next to the form (D1)', () => {
     const found = alerts(renderer, 'Eroare document');
     expect(found).toHaveLength(1);
     expect(ancestor(found[0], 'form')).not.toBeNull();
+    await act(async () => renderer.unmount());
+  });
+
+  it('brings a new error into view, because the form may sit at the bottom of the screen', async () => {
+    vi.spyOn(equipmentApi, 'addDocument').mockRejectedValue(new Error('Eroare document'));
+    vi.stubGlobal('FormData', class { get(name: string) { return ({ title: 'T', document_type: 'm', reference: 'r' } as Record<string, string>)[name] ?? ''; } });
+    const renderer = await render();
+    scrolled.mockClear();
+    await act(async () => { formWith(renderer, 'Document (referință)').props.onSubmit({ preventDefault() {}, currentTarget: { reset: vi.fn() } }); await flush(); });
+    expect(scrolled).toHaveBeenCalledWith({ block: 'nearest' });
     await act(async () => renderer.unmount());
   });
 });
