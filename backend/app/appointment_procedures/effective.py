@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appointment_procedures.models import AppointmentProcedure
-from app.database import ProcedureCatalog, TreatmentPlanItem
+from app.database import ProcedureCatalog, TreatmentPlan, TreatmentPlanItem
 
 
 async def effective_procedures(db: AsyncSession, clinic_id: UUID, appointment_ids: list[UUID]) -> dict[UUID, list[dict]]:
@@ -25,7 +25,9 @@ async def effective_procedures(db: AsyncSession, clinic_id: UUID, appointment_id
         select(TreatmentPlanItem.appointment_id, TreatmentPlanItem.procedure_catalog_id,
                func.count(TreatmentPlanItem.id), func.min(TreatmentPlanItem.procedure_code),
                func.min(TreatmentPlanItem.procedure_name))
-        .where(TreatmentPlanItem.clinic_id == clinic_id, TreatmentPlanItem.appointment_id.in_(appointment_ids),
+        .join(TreatmentPlan, TreatmentPlan.id == TreatmentPlanItem.plan_id)
+        .where(TreatmentPlanItem.clinic_id == clinic_id, TreatmentPlan.clinic_id == clinic_id,
+               TreatmentPlanItem.appointment_id.in_(appointment_ids), TreatmentPlan.status.in_(("accepted", "in_progress")),
                TreatmentPlanItem.status == "active", TreatmentPlanItem.performed_procedure_id.is_(None))
         .group_by(TreatmentPlanItem.appointment_id, TreatmentPlanItem.procedure_catalog_id)))
     plans: dict[UUID, dict[UUID, dict]] = defaultdict(dict)

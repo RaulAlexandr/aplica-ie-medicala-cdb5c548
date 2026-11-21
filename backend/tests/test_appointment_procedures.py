@@ -57,7 +57,8 @@ async def clinic(client, name="A1 Fictivă"):
     catalog = await client.post("/api/procedures", headers=auth, json={"code": "obt", "name": "Obturație",
         "base_price": "100.00", "default_duration_minutes": 30})
     assert appointment.status_code == 201 and catalog.status_code == 201
-    return {"auth": auth, "user": me, "patient": patient.json()["id"], "appointment": appointment.json()["id"], "procedure": catalog.json()["id"]}
+    return {"auth": auth, "user": me, "patient": patient.json()["id"], "room": room.json()["id"],
+            "appointment": appointment.json()["id"], "procedure": catalog.json()["id"]}
 
 
 async def staff_token(sessions, ctx, role):
@@ -162,3 +163,76 @@ async def test_interval_endpoint_excludes_cancelled_and_no_show(env):
     too_long = await client.get("/api/appointment-procedures", headers=ctx["auth"], params={
         "start": "2026-01-01T00:00:00Z", "end": "2026-04-05T00:00:00Z"})
     assert too_long.status_code == 422 and "Value error" not in too_long.text
+
+
+async def test_effective_lines_follow_real_treatment_plan_lifecycle(env):
+    client, _ = env
+    ctx = await clinic(client)
+    auth = ctx["auth"]
+
+    async def visit(day):
+        response = await client.post("/api/appointments", headers=auth, json={"patient_id": ctx["patient"],
+            "doctor_id": ctx["user"]["id"], "room_id": ctx["room"], "starts_at": f"2026-12-{day:02d}T09:00:00+00:00",
+            "duration_minutes": 30, "appointment_type": "Consultație"})
+        assert response.status_code == 201, response.text
+        return response.json()["id"]
+
+    async def plan_for(appointment_id, count=1, day=1):
+        created = await client.post(f"/api/treatment-plans/patients/{ctx['patient']}", headers=auth, json={
+            "title": f"Plan {day}", "stages": [{"title": "Etapa 1", "items": [
+                {"procedure_catalog_id": ctx["procedure"]} for _ in range(count)]}]})
+        assert created.status_code == 201, created.text
+        plan = created.json()
+        for item in plan["stages"][0]["items"]:
+            linked = await client.put(f"/api/treatment-plans/items/{item['id']}/appointment", headers=auth,
+                                      json={"appointment_id": appointment_id})
+            assert linked.status_code == 200, linked.text
+        return plan
+
+    def effective_rows(response):
+        assert response.status_code == 200, response.text
+        return response.json()["procedures"]
+
+    draft_visit = await visit(2)
+    await plan_for(draft_visit, day=2)
+    assert effective_rows(await client.get(f"/api/appointment-procedures/{draft_visit}", headers=auth)) == []
+
+    accepted_visit = await visit(3)
+    accepted = await plan_for(accepted_visit, day=3)
+    assert (await client.post(f"/api/treatment-plans/{accepted['id']}/accept", headers=auth, json={"note": "Acord"})).status_code == 200
+    assert effective_rows(await client.get(f"/api/appointment-procedures/{accepted_visit}", headers=auth))[0]["source"] == "plan"
+
+    progress_visit = await visit(4)
+    progressing = await plan_for(progress_visit, count=2, day=4)
+    assert (await client.post(f"/api/treatment-plans/{progressing['id']}/accept", headers=auth, json={"note": "Acord"})).status_code == 200
+    performed = await client.post("/api/performed-procedures", headers=auth, json={"appointment_id": progress_visit,
+        "procedure_catalog_id": ctx["procedure"]})
+    assert performed.status_code == 201, performed.text
+    items = progressing["stages"][0]["items"]
+    linked = await client.put(f"/api/treatment-plans/items/{items[0]['id']}/performed-procedure", headers=auth,
+                              json={"performed_procedure_id": performed.json()["id"]})
+    assert linked.status_code == 200, linked.text
+    progress_lines = effective_rows(await client.get(f"/api/appointment-procedures/{progress_visit}", headers=auth))
+    assert len(progress_lines) == 1 and progress_lines[0]["plan_quantity"] == 1
+
+    cancelled_visit = await visit(5)
+    cancelled = await plan_for(cancelled_visit, day=5)
+    cancelled_result = await client.post(f"/api/treatment-plans/{cancelled['id']}/cancel", headers=auth,
+                                         json={"reason": "Plan retras fictiv"})
+    assert cancelled_result.status_code == 200 and cancelled_result.json()["status"] == "cancelled"
+    assert effective_rows(await client.get(f"/api/appointment-procedures/{cancelled_visit}", headers=auth)) == []
+
+    completed_visit = await visit(6)
+    completed = await plan_for(completed_visit, day=6)
+    assert (await client.post(f"/api/treatment-plans/{completed['id']}/accept", headers=auth, json={"note": "Acord"})).status_code == 200
+    done = await client.post("/api/performed-procedures", headers=auth, json={"appointment_id": completed_visit,
+        "procedure_catalog_id": ctx["procedure"]})
+    item_id = completed["stages"][0]["items"][0]["id"]
+    assert (await client.put(f"/api/treatment-plans/items/{item_id}/performed-procedure", headers=auth,
+        json={"performed_procedure_id": done.json()["id"]})).status_code == 200
+    for action in ("start", "complete"):
+        response = await client.post(f"/api/performed-procedures/{done.json()['id']}/{action}", headers=auth)
+        assert response.status_code == 200, response.text
+    finished = await client.post(f"/api/treatment-plans/{completed['id']}/complete", headers=auth)
+    assert finished.status_code == 200 and finished.json()["status"] == "completed"
+    assert effective_rows(await client.get(f"/api/appointment-procedures/{completed_visit}", headers=auth)) == []
