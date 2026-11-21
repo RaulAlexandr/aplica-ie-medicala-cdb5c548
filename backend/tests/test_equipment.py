@@ -1,11 +1,22 @@
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.database import Appointment, Base, User, get_db
+from app.database import (
+    Appointment,
+    Base,
+    PerformedProcedure,
+    ProcedureCatalog,
+    TreatmentPlan,
+    TreatmentPlanItem,
+    TreatmentPlanStage,
+    User,
+    get_db,
+)
 from app.equipment.models import EquipmentUnavailability
 from app.main import app
 
@@ -160,3 +171,58 @@ async def test_existing_check_can_be_completed_once_and_leaves_due_queue(ctx):
     assert all(row["id"] != check_id for row in (await client.get("/api/equipment/checks/due", headers=manager)).json())
     again = await client.post(f"/api/equipment/{equipment['id']}/checks/{check_id}/complete", headers=manager, json={"result": "Alt rezultat"})
     assert again.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_service_dependency_matches_normalized_text_and_procedure_links(ctx):
+    client, sessions = ctx
+    manager = await register(client, "equipment-service-match@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    room = (await client.post("/api/rooms", headers=manager, json={"name": "Cabinet detartraj"})).json()
+    patient = (await client.post("/api/patients", headers=manager, json={"first_name": "Pacient", "last_name": "Fictiv"})).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit detartraj", "equipment_type": "unit", "responsible_id": identity["id"]})).json()
+    now = datetime.now(UTC).replace(microsecond=0)
+    async with sessions() as session:
+        service = ProcedureCatalog(clinic_id=identity["clinic_id"], code="DET", code_lower="det", name="Detartraj",
+            default_duration_minutes=30, base_price=Decimal("100.00"), currency="RON", is_active=True)
+        session.add(service)
+        await session.flush()
+        appointment_rows = []
+        labels = ("Detartraj", "detartraj", "Detartraj complet", "Detártraj complet", "Intervenție efectuată", "Control planificat")
+        for index, label in enumerate(labels):
+            appointment = Appointment(clinic_id=identity["clinic_id"], patient_id=patient["id"], doctor_id=identity["id"],
+                room_id=room["id"], starts_at=now + timedelta(minutes=10 + index), ends_at=now + timedelta(minutes=40 + index),
+                duration_minutes=30, status="scheduled", appointment_type=label)
+            session.add(appointment)
+            appointment_rows.append(appointment)
+        await session.flush()
+        performed_link = appointment_rows[4]
+        session.add(PerformedProcedure(clinic_id=identity["clinic_id"], appointment_id=performed_link.id, patient_id=patient["id"],
+            procedure_catalog_id=service.id, executed_by_id=identity["id"], procedure_code=service.code,
+            procedure_name=service.name, procedure_base_price=service.base_price, procedure_currency="RON",
+            procedure_default_duration=30, status="pending"))
+        plan = TreatmentPlan(clinic_id=identity["clinic_id"], patient_id=patient["id"], title="Plan fictiv",
+            status="draft", version=1, created_by_id=identity["id"])
+        session.add(plan)
+        await session.flush()
+        stage = TreatmentPlanStage(clinic_id=identity["clinic_id"], plan_id=plan.id, position=0, title="Etapă fictivă")
+        session.add(stage)
+        await session.flush()
+        planned_link = appointment_rows[5]
+        session.add(TreatmentPlanItem(clinic_id=identity["clinic_id"], plan_id=plan.id, stage_id=stage.id,
+            position=0, procedure_catalog_id=service.id, procedure_code=service.code, procedure_name=service.name,
+            currency="RON", estimated_price=Decimal("100.00"), estimated_duration_minutes=30,
+            status="active", appointment_id=planned_link.id))
+        await session.commit()
+        procedure_id = str(service.id)
+        expected_ids = {str(row.id) for row in appointment_rows}
+    dependency = await client.post(f"/api/equipment/{equipment['id']}/dependencies", headers=manager, json={"procedure_id": procedure_id})
+    assert dependency.status_code == 201
+    outage = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities", headers=manager, json={
+        "reason": "Defecțiune detartraj", "starts_at": (now + timedelta(minutes=1)).isoformat(),
+        "ends_at": (now + timedelta(hours=2)).isoformat()})
+    assert outage.status_code == 201
+    affected = {row["appointment_id"]: row["match"] for row in outage.json()["affected_appointments"]}
+    assert set(affected) == expected_ids
+    assert all(affected[str(row.id)] == "posibil" for row in appointment_rows[:4])
+    assert affected[str(appointment_rows[4].id)] == affected[str(appointment_rows[5].id)] == "sigur"

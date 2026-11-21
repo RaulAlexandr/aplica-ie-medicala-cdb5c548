@@ -1,15 +1,27 @@
+import unicodedata
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.service import require_roles
-from app.database import Appointment, Clinic, Patient, ProcedureCatalog, Room, User, get_db, utcnow
+from app.database import (
+    Appointment,
+    Clinic,
+    Patient,
+    PerformedProcedure,
+    ProcedureCatalog,
+    Room,
+    TreatmentPlanItem,
+    User,
+    get_db,
+    utcnow,
+)
 from app.equipment.models import (
     Equipment,
     EquipmentCheck,
@@ -27,6 +39,11 @@ ACTIVE_APPOINTMENT_STATUSES = ("scheduled", "confirmed", "arrived", "in_progress
 
 def effective_end(outage: EquipmentUnavailability) -> datetime:
     return min(outage.ends_at, outage.closed_at) if outage.closed_at else outage.ends_at
+
+
+def normalize_service_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value.casefold().strip())
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
 
 
 class EquipmentInput(BaseModel):
@@ -118,33 +135,48 @@ async def _affected(db: AsyncSession, user: User, equipment: Equipment, outage: 
     deps = list(await db.scalars(select(EquipmentDependency).where(
         EquipmentDependency.clinic_id == user.clinic_id, EquipmentDependency.equipment_id == equipment.id)))
     room_ids = {d.room_id for d in deps if d.room_id}
-    service_ids = {d.procedure_id for d in deps if d.procedure_id}
-    service_names = set()
-    if service_ids:
-        service_names = set((await db.scalars(select(ProcedureCatalog.name).where(
-            ProcedureCatalog.clinic_id == user.clinic_id, ProcedureCatalog.id.in_(service_ids)))).all())
-    conditions = []
     if equipment.room_id:
         room_ids.add(equipment.room_id)
-    if room_ids:
-        conditions.append(Appointment.room_id.in_(room_ids))
-    if service_names:
-        conditions.append(Appointment.appointment_type.in_(service_names))
-    if not conditions:
+    service_ids = {d.procedure_id for d in deps if d.procedure_id}
+    service_terms = set()
+    if service_ids:
+        services = list((await db.execute(select(ProcedureCatalog.name, ProcedureCatalog.code).where(
+            ProcedureCatalog.clinic_id == user.clinic_id, ProcedureCatalog.id.in_(service_ids)))).all())
+        service_terms = {normalize_service_text(value) for row in services for value in row if value.strip()}
+    if not room_ids and not service_ids:
         return []
+    sure_appointment_ids = set()
+    if service_ids:
+        sure_appointment_ids.update((await db.scalars(select(PerformedProcedure.appointment_id).where(
+            PerformedProcedure.clinic_id == user.clinic_id,
+            PerformedProcedure.procedure_catalog_id.in_(service_ids)))).all())
+        sure_appointment_ids.update((await db.scalars(select(TreatmentPlanItem.appointment_id).where(
+            TreatmentPlanItem.clinic_id == user.clinic_id,
+            TreatmentPlanItem.procedure_catalog_id.in_(service_ids),
+            TreatmentPlanItem.status == "active", TreatmentPlanItem.appointment_id.is_not(None)))).all())
     query = (select(Appointment, Patient, User, Room).join(Patient, and_(Patient.id == Appointment.patient_id, Patient.clinic_id == user.clinic_id))
              .join(User, and_(User.id == Appointment.doctor_id, User.clinic_id == user.clinic_id))
              .join(Room, and_(Room.id == Appointment.room_id, Room.clinic_id == user.clinic_id))
              .where(Appointment.clinic_id == user.clinic_id, Appointment.status.in_(ACTIVE_APPOINTMENT_STATUSES),
-                    Appointment.starts_at < outage_end, or_(*conditions))
+                    Appointment.starts_at < outage_end)
              .order_by(Appointment.starts_at))
     rows = (await db.execute(query)).all()
-    rows = [(a, p, d, r) for a, p, d, r in rows
-            if (a.ends_at or a.starts_at + timedelta(minutes=a.duration_minutes)) > outage.starts_at and a.starts_at < outage_end]
-    return [{"appointment_id": str(a.id), "patient": f"{p.first_name} {p.last_name}",
-             "starts_at": a.starts_at.isoformat(), "ends_at": a.ends_at.isoformat() if a.ends_at else None,
-             "doctor": doctor.full_name, "room": room.name, "appointment_type": a.appointment_type,
-             "responsible": (await db.get(User, equipment.responsible_id)).full_name} for a, p, doctor, room in rows]
+    responsible = await db.get(User, equipment.responsible_id)
+    affected = []
+    for appointment, patient, doctor, room in rows:
+        end = appointment.ends_at or appointment.starts_at + timedelta(minutes=appointment.duration_minutes)
+        if end <= outage.starts_at or appointment.starts_at >= outage_end:
+            continue
+        match = "sigur" if room.id in room_ids or appointment.id in sure_appointment_ids else "posibil"
+        if match == "posibil":
+            appointment_text = normalize_service_text(appointment.appointment_type)
+            if not any(term and term in appointment_text for term in service_terms):
+                continue
+        affected.append({"appointment_id": str(appointment.id), "patient": f"{patient.first_name} {patient.last_name}",
+            "starts_at": appointment.starts_at.isoformat(), "ends_at": end.isoformat(),
+            "doctor": doctor.full_name, "room": room.name, "appointment_type": appointment.appointment_type,
+            "responsible": responsible.full_name if responsible else "—", "match": match})
+    return affected
 
 
 @router.get("")

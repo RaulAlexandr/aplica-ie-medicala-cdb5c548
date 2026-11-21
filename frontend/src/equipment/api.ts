@@ -1,7 +1,7 @@
 import { api } from '../api/client';
 
 export type Equipment = { id: string; name: string; equipment_type: string; serial_number: string | null; room_id: string | null; responsible_id: string; state: string; is_active: boolean };
-export type AffectedAppointment = { appointment_id: string; patient: string; starts_at: string; ends_at: string | null; doctor: string; room: string; appointment_type: string; responsible: string };
+export type AffectedAppointment = { appointment_id: string; patient: string; starts_at: string; ends_at: string | null; doctor: string; room: string; appointment_type: string; responsible: string; match: 'sigur' | 'posibil' };
 export type Outage = { id: string; equipment_id: string; reason: string; starts_at: string; ends_at: string; closed_at: string | null; affected_appointments: AffectedAppointment[] };
 export type EquipmentHistory = { checks: Array<Record<string, unknown>>; documents: Array<Record<string, unknown>>; dependencies: Array<Record<string, unknown>>; unavailabilities: Outage[] };
 
