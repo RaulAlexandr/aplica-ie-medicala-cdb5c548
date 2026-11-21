@@ -121,11 +121,14 @@ api.interceptors.response.use(
   },
 );
 
+const NO_SERVER_RESPONSE = 'Nu s-a putut contacta serverul. Verifică conexiunea și încearcă din nou.';
+
 export function apiErrorMessage(error: unknown): string {
   if (error instanceof AxiosError) {
     const detail = error.response?.data?.detail;
     if (typeof detail === 'string') return detail;
     if (Array.isArray(detail)) return detail.map((item) => item.msg).join(', ');
+    if (!error.response && error.code !== AxiosError.ERR_CANCELED) return NO_SERVER_RESPONSE;
   }
   return error instanceof Error ? error.message : 'The server returned an error. Please try again.';
 }
