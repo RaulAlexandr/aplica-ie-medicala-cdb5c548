@@ -127,15 +127,23 @@ def _movement(clinic_id, user, item, lot, location, kind, quantity, req, signatu
 async def overview(user: User=Depends(require_roles(*READ)),db: AsyncSession=Depends(get_db)):
     items=(await db.scalars(select(InventoryItem).where(InventoryItem.clinic_id==user.clinic_id).order_by(InventoryItem.name))).all()
     locations=(await db.scalars(select(InventoryLocation).where(InventoryLocation.clinic_id==user.clinic_id).order_by(InventoryLocation.name))).all()
+    all_lots=(await db.scalars(select(InventoryLot).where(InventoryLot.clinic_id==user.clinic_id).order_by(InventoryLot.code))).all()
+    lots_by_item={}
+    for lot in all_lots:lots_by_item.setdefault(lot.item_id,[]).append(lot)
+    incoming=InventoryMovement.kind.in_(["receipt","transfer_in","adjustment_in","reversal_in"])
+    outgoing=InventoryMovement.kind.in_(["consumption","transfer_out","adjustment_out","reversal_out"])
+    stock_expr=func.coalesce(func.sum(case((incoming,InventoryMovement.quantity),else_=0)),0)-func.coalesce(func.sum(case((outgoing,InventoryMovement.quantity),else_=0)),0)
+    stock_rows=(await db.execute(select(InventoryMovement.lot_id,InventoryMovement.location_id,stock_expr).where(InventoryMovement.clinic_id==user.clinic_id).group_by(InventoryMovement.lot_id,InventoryMovement.location_id))).all()
+    balances={(lot_id,location_id):Decimal(quantity or 0) for lot_id,location_id,quantity in stock_rows}
     result=[]; as_of=await _clinic_today(db,user.clinic_id);summaries=[]
     for item in items:
-        lots=(await db.scalars(select(InventoryLot).where(InventoryLot.clinic_id==user.clinic_id,InventoryLot.item_id==item.id))).all()
+        lots=lots_by_item.get(item.id,[])
         item_total=Decimal(0)
         lot_rows=[]
         for lot in lots:
             total=Decimal(0)
             for loc in locations:
-                qty=await _balance(db,user.clinic_id,lot.id,loc.id); total+=qty
+                qty=balances.get((lot.id,loc.id),Decimal(0)); total+=qty
                 lot_rows.append({"item_id":str(item.id),"item":item.name,"unit":item.unit,"minimum_quantity":str(item.minimum_quantity),"lot_id":str(lot.id),"lot":lot.code,"expires_on":lot.expires_on.isoformat() if lot.expires_on else None,"location_id":str(loc.id),"location":loc.name,"quantity":str(qty),"expired":bool(lot.expires_on and lot.expires_on<as_of),"expiring_soon":bool(lot.expires_on and as_of<=lot.expires_on<=as_of+timedelta(days=30))})
             item_total+=total
         result.extend(lot_rows)

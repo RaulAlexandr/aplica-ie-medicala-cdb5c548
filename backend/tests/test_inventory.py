@@ -3,12 +3,12 @@ from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth.service import create_access_token
 from app.database import Base, User, get_db
-from app.inventory.models import InventoryMovement
+from app.inventory.models import InventoryItem, InventoryLocation, InventoryLot, InventoryMovement
 from app.main import app
 
 PASSWORD="correct horse battery staple"
@@ -162,3 +162,20 @@ async def test_inactive_item_does_not_raise_low_stock_alert(ctx):
     data=(await c.get("/api/inventory",headers=h)).json();record=next(x for x in data["items"] if x["id"]==item)
     assert record["below_minimum"] is False
     assert all(not x["below_minimum"] for x in data["balances"] if x["item_id"]==item)
+
+@pytest.mark.asyncio
+async def test_inventory_overview_query_count_does_not_scale_with_lot_count(ctx):
+    c,s=ctx;h=await register(c,"inv-query-count@example.com");clinic_id=(await c.get("/api/auth/me",headers=h)).json()["clinic_id"]
+    async with s() as db:
+        item=InventoryItem(clinic_id=clinic_id,name="Material query fictiv",unit="buc",minimum_quantity=0,is_active=True);db.add(item);await db.flush()
+        locations=[InventoryLocation(clinic_id=clinic_id,name=f"Locație query {n}",is_active=True) for n in range(5)];db.add_all(locations);await db.flush()
+        db.add_all([InventoryLot(clinic_id=clinic_id,item_id=item.id,code=f"LOT-QUERY-{n:02d}") for n in range(63)]);await db.commit()
+    count=0
+    def count_selects(conn,cursor,statement,parameters,context,executemany):
+        nonlocal count
+        if statement.lstrip().upper().startswith("SELECT"):count+=1
+    event.listen(s.kw["bind"].sync_engine,"before_cursor_execute",count_selects)
+    try:response=await c.get("/api/inventory",headers=h)
+    finally:event.remove(s.kw["bind"].sync_engine,"before_cursor_execute",count_selects)
+    assert response.status_code==200,response.text
+    assert count<=6,f"Interogările GET /inventory trebuie să rămână constante; s-au executat {count}."
