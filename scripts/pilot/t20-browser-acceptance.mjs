@@ -105,7 +105,7 @@ try {
 
   // ===== Reception: message to a room with a shift, and to a room without one =====
   const toRoom = region(receptionPage, 'Mesaj către cabinet');
-  await toRoom.getByLabel('Cabinet').selectOption(room.id);
+  await toRoom.locator('select').selectOption(room.id);
   check('the composer shows the medical data notice', (await toRoom.innerText()).includes('Nu scrie date medicale în chat; folosește dosarul pacientului'));
   await composer(toRoom).locator('textarea').fill('Pacientul fictiv a sosit la cabinet');
   const roomSent = respond(receptionPage, 'POST', p => p.endsWith(`/rooms/${room.id}/messages`));
@@ -115,7 +115,7 @@ try {
   check('the room message reaches the team assigned there (201)', roomResponse.status() === 201 && roomBody.recipients.includes(doctor.full_name) && roomBody.recipients.includes(assistant.full_name) && roomBody.recipients.length === 2, { status: roomResponse.status() });
   await toRoom.getByText('Trimis către:').waitFor();
 
-  await toRoom.getByLabel('Cabinet').selectOption(emptyRoom.id);
+  await toRoom.locator('select').selectOption(emptyRoom.id);
   expectHttp('POST', /^\/api\/collab\/rooms\/:id\/messages$/, 409);
   await composer(toRoom).locator('textarea').fill('Mesaj către cabinet gol');
   const emptySent = respond(receptionPage, 'POST', p => p.endsWith(`/rooms/${emptyRoom.id}/messages`));
@@ -124,7 +124,7 @@ try {
   await toRoom.getByText('Nimeni nu este repartizat acum').waitFor();
   check('the refused text stays in the composer', await composer(toRoom).locator('textarea').inputValue() === 'Mesaj către cabinet gol');
   await shot(receptionPage, 'reception-room-refused');
-  await toRoom.getByLabel('Cabinet').selectOption(room.id);
+  await toRoom.locator('select').selectOption(room.id);
   check('choosing another room keeps the written text', await composer(toRoom).locator('textarea').inputValue() === 'Mesaj către cabinet gol');
   await composer(toRoom).locator('textarea').fill('');
 
@@ -179,11 +179,11 @@ try {
   await region(doctorPage, 'Conversație nouă').getByRole('button', { name: 'Creează' }).click();
   const groupThread = region(doctorPage, 'Conversație');
   await groupThread.getByRole('heading', { name: 'Tură fictivă' }).waitFor();
-  await groupThread.getByLabel('Adaugă membru').selectOption(receptionist.id);
+  await groupThread.getByRole('form', { name: 'Adaugă membru' }).locator('select').selectOption(receptionist.id);
   const memberAdded = respond(doctorPage, 'POST', p => p.endsWith('/members'));
   await groupThread.getByRole('button', { name: 'Adaugă', exact: true }).click();
   check('the group creator adds a member (201)', (await memberAdded).status() === 201);
-  await groupThread.getByText(receptionist.full_name).first().waitFor();
+  await groupThread.locator('p.muted').filter({ hasText: receptionist.full_name }).waitFor();
 
   // ===== Task from creation to resolution =====
   await tab(manager, /^Sarcini/);
