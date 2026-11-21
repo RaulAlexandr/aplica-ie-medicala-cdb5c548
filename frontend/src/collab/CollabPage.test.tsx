@@ -148,6 +148,80 @@ describe('T20 composer', () => {
   });
 });
 
+describe('T20 double submit', () => {
+  const pending = <T,>() => new Promise<T>(() => {});
+  const formIn = (r: TestRenderer.ReactTestRenderer, label: string) => r.root.findAll(item => item.type === 'form' && item.props['aria-label'] === label)[0];
+  const sectionForm = (r: TestRenderer.ReactTestRenderer, label: string) => r.root.findAll(item => item.type === 'section' && item.props['aria-label'] === label)[0].findAllByType('form')[0];
+  const twice = async (handler: (event: { preventDefault(): void }) => void) => { await act(async () => { handler({ preventDefault() {} }); handler({ preventDefault() {} }); }); await flush(); };
+  const openTab = async (r: TestRenderer.ReactTestRenderer, label: string) => { await act(async () => { buttons(r, label)[0].props.onClick(); }); await flush(); };
+
+  it('the composer sends one request for two submits in the same tick', async () => {
+    const send = vi.spyOn(collab, 'sendMessage').mockImplementation(() => pending());
+    const r = await render(<Composer target={{ kind: 'conversation', id: 'k1' }} onSent={() => {}} />);
+    await type(r, 'Un mesaj');
+    await twice(r.root.findByType('form').props.onSubmit);
+    expect(send).toHaveBeenCalledTimes(1);
+    await act(async () => r.unmount());
+  });
+  it('the composer can send again after a failed request', async () => {
+    const send = vi.spyOn(collab, 'sendMessage').mockRejectedValue(new Error('Eroare'));
+    const r = await render(<Composer target={{ kind: 'conversation', id: 'k1' }} onSent={() => {}} />);
+    await type(r, 'Un mesaj');
+    await twice(r.root.findByType('form').props.onSubmit);
+    await act(async () => { submit(r); });
+    await flush();
+    expect(send).toHaveBeenCalledTimes(2);
+    await act(async () => r.unmount());
+  });
+  it('direct and group forms send one request', async () => {
+    const direct = vi.spyOn(collab, 'openDirect').mockImplementation(() => pending());
+    const group = vi.spyOn(collab, 'createConversation').mockImplementation(() => pending());
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await twice(formIn(r, 'Mesaj direct').props.onSubmit);
+    await twice(formIn(r, 'Grup sau canal').props.onSubmit);
+    expect(direct).toHaveBeenCalledTimes(1);
+    expect(group).toHaveBeenCalledTimes(1);
+    await act(async () => r.unmount());
+  });
+  it('the add-member form sends one request', async () => {
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ kind: 'group', title: 'Grup', unread: 0 })]);
+    const add = vi.spyOn(collab, 'addMember').mockImplementation(() => pending());
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
+    await flush();
+    await twice(formIn(r, 'Adaugă membru').props.onSubmit);
+    expect(add).toHaveBeenCalledTimes(1);
+    await act(async () => r.unmount());
+  });
+  it('task and handover forms send one request', async () => {
+    const create = vi.spyOn(collab, 'createTask').mockImplementation(() => pending());
+    const handed = vi.spyOn(collab, 'createHandover').mockImplementation(() => pending());
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await openTab(r, 'Sarcini');
+    await twice(sectionForm(r, 'Sarcină nouă').props.onSubmit);
+    await openTab(r, 'Predări');
+    await twice(sectionForm(r, 'Predare nouă').props.onSubmit);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(handed).toHaveBeenCalledTimes(1);
+    await act(async () => r.unmount());
+  });
+  it('a task change and a handover confirmation send one request', async () => {
+    const change = vi.spyOn(collab, 'changeTask').mockImplementation(() => pending());
+    const row = await render(<TaskRow task={task()} user={userWith('doctor')} members={[member('me', 'doctor')]} timezone={tz} />);
+    await act(async () => { row.root.findAllByType('select')[0].props.onChange({ target: { value: 'resolved' } }); });
+    await twice(row.root.findByType('form').props.onSubmit);
+    expect(change).toHaveBeenCalledTimes(1);
+    await act(async () => row.unmount());
+    const ack = vi.spyOn(collab, 'acknowledgeHandover').mockImplementation(() => pending());
+    const card = await render(<HandoverCard item={handover()} user={userWith('doctor')} timezone={tz} />);
+    const click = buttons(card, 'Confirm primirea')[0].props.onClick;
+    await act(async () => { click(); click(); });
+    await flush();
+    expect(ack).toHaveBeenCalledTimes(1);
+    await act(async () => card.unmount());
+  });
+});
+
 describe('T20 unread and polling', () => {
   it('shows the unread badge in the menu', async () => {
     vi.mocked(collab.getSummary).mockResolvedValue({ unread: 3, pending_handovers: 0 });

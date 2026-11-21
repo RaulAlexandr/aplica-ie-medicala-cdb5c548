@@ -25,6 +25,16 @@ function friendlyError(error: unknown): string {
 }
 const Failure = ({ error }: { error: unknown }) => error ? <p className="error" role="alert">{friendlyError(error)}</p> : null;
 
+/** A ref blocks synchronously: `isPending` changes only after the next render. */
+function useLockedMutate<T>(mutation: { mutateAsync: (variables: T) => Promise<unknown> }) {
+  const busy = useRef(false);
+  return (variables: T) => {
+    if (busy.current) return;
+    busy.current = true;
+    void mutation.mutateAsync(variables).catch(() => undefined).finally(() => { busy.current = false; });
+  };
+}
+
 function usePageVisible(): boolean {
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
   useEffect(() => {
@@ -51,6 +61,7 @@ export function Composer({ target, disabled, onSent }: { target: Target; disable
     mutationFn: () => target.kind === 'room' ? collab.sendToRoom(target.id, draft.text, draft.requestId) : collab.sendMessage(target.id, draft.text, draft.requestId),
     onSuccess: message => { setDraft({ text: '', requestId: collab.newRequestId() }); onSent(message); },
   });
+  const submitOnce = useLockedMutate<void>(send);
   // Another destination keeps the text, but it is a new send and needs its own request id.
   const destination = `${target.kind}:${target.id}`;
   const previous = useRef(destination);
@@ -62,8 +73,8 @@ export function Composer({ target, disabled, onSent }: { target: Target; disable
   }, [destination, send]);
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!draft.text.trim() || send.isPending) return;
-    send.mutate();
+    if (!draft.text.trim()) return;
+    submitOnce();
   }
   return <form onSubmit={submit} aria-label="Scrie un mesaj">
     <p className="muted">{MEDICAL_NOTICE}</p>
@@ -78,7 +89,8 @@ function AddMember({ conversation, members }: { conversation: collab.Conversatio
   const [person, setPerson] = useState('');
   const present = new Set(conversation.members.map(item => item.id));
   const add = useMutation({ mutationFn: () => collab.addMember(conversation.id, person), onSuccess: () => { setPerson(''); void client.invalidateQueries({ queryKey: ['collab', 'conversations'] }); } });
-  return <form className="collab-task-actions" aria-label="Adaugă membru" onSubmit={e => { e.preventDefault(); add.mutate(); }}>
+  const addOnce = useLockedMutate<void>(add);
+  return <form className="collab-task-actions" aria-label="Adaugă membru" onSubmit={e => { e.preventDefault(); addOnce(); }}>
     <label>Adaugă membru<select required value={person} onChange={e => setPerson(e.target.value)}><option value="">Alege persoana</option>{members.filter(item => item.is_active && !present.has(item.id)).map(item => <option key={item.id} value={item.id}>{item.full_name}</option>)}</select></label>
     <button className="secondary" disabled={add.isPending || !person}>Adaugă</button>
     <Failure error={add.error} />
@@ -131,15 +143,17 @@ function NewConversation({ user, members, onOpen }: { user: User; members: team.
   const opened = (item: collab.Conversation) => { void client.invalidateQueries({ queryKey: ['collab', 'conversations'] }); onOpen(item.id); };
   const direct = useMutation({ mutationFn: () => collab.openDirect(person), onSuccess: item => { setPerson(''); opened(item); } });
   const create = useMutation({ mutationFn: () => collab.createConversation(form), onSuccess: item => { setForm({ kind: 'group', title: '', member_ids: [] }); opened(item); } });
+  const directOnce = useLockedMutate<void>(direct);
+  const createOnce = useLockedMutate<void>(create);
   const toggle = (id: string) => setForm(current => ({ ...current, member_ids: current.member_ids.includes(id) ? current.member_ids.filter(value => value !== id) : [...current.member_ids, id] }));
   return <section className="card" aria-label="Conversație nouă">
     <h2>Conversație nouă</h2>
-    <form onSubmit={e => { e.preventDefault(); direct.mutate(); }} aria-label="Mesaj direct">
+    <form onSubmit={e => { e.preventDefault(); directOnce(); }} aria-label="Mesaj direct">
       <label>Mesaj direct către<select required value={person} onChange={e => setPerson(e.target.value)}><option value="">Alege persoana</option>{others.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}</select></label>
       <Failure error={direct.error} />
       <button className="secondary" disabled={direct.isPending}>Deschide</button>
     </form>
-    <form onSubmit={e => { e.preventDefault(); create.mutate(); }} aria-label="Grup sau canal">
+    <form onSubmit={e => { e.preventDefault(); createOnce(); }} aria-label="Grup sau canal">
       <h3>{manager ? 'Grup sau canal' : 'Grup'}</h3>
       {manager && <label>Tip<select value={form.kind} onChange={e => setForm({ ...form, kind: e.target.value as 'group' | 'channel' })}><option value="group">Grup</option><option value="channel">Canal</option></select></label>}
       <label>Nume<input required maxLength={120} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
@@ -201,6 +215,7 @@ export function TaskRow({ task, user, members, timezone }: { task: collab.Task; 
     onSuccess: () => setForm({ status: '', assignee_id: '', reason: '' }),
     onSettled: () => { void client.invalidateQueries({ queryKey: ['collab', 'tasks'] }); },
   });
+  const changeOnce = useLockedMutate<void>(change);
   const options = (Object.keys(STATUS_LABELS) as collab.TaskStatus[]).filter(value => value !== task.status);
   const ready = (form.status || form.assignee_id) && (!reasonNeeded || form.reason.trim());
   return <article className="collab-task" aria-label={`Sarcină: ${task.title}`}>
@@ -210,7 +225,7 @@ export function TaskRow({ task, user, members, timezone }: { task: collab.Task; 
     <details><summary className="muted">Istoric ({task.events.length})</summary>
       {task.events.map(event => <p key={event.version} className="muted">{formatDateTime(event.created_at, timezone)} · {event.actor} · {event.from_status === null ? `creată pentru ${event.to_assignee}` : [event.from_status !== event.to_status ? `${STATUS_LABELS[event.from_status]} → ${STATUS_LABELS[event.to_status]}` : '', event.from_assignee !== event.to_assignee ? `${event.from_assignee} → ${event.to_assignee}` : ''].filter(Boolean).join(' · ')}{event.reason ? ` · Motiv: ${event.reason}` : ''}</p>)}
     </details>
-    {(!closed || manager) && <form className="collab-task-actions" onSubmit={e => { e.preventDefault(); change.mutate(); }}>
+    {(!closed || manager) && <form className="collab-task-actions" onSubmit={e => { e.preventDefault(); changeOnce(); }}>
       {closed ? <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as '' | collab.TaskStatus })}><option value="">Fără schimbare</option><option value="open">Redeschide</option></select></label>
         : <label>Status<select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as '' | collab.TaskStatus })}><option value="">Fără schimbare</option>{options.map(value => <option key={value} value={value}>{STATUS_LABELS[value]}</option>)}</select></label>}
       {!closed && <label>Responsabil nou<select value={form.assignee_id} onChange={e => setForm({ ...form, assignee_id: e.target.value })}><option value="">Fără schimbare</option>{members.filter(m => m.is_active && m.id !== task.assignee_id).map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}</select></label>}
@@ -232,11 +247,12 @@ function Tasks({ user, members, timezone }: { user: User; members: team.TeamMemb
     mutationFn: () => collab.createTask({ title: form.title, assignee_id: form.assignee_id, ...(form.description.trim() ? { description: form.description } : {}), ...(form.local_due ? { local_due: form.local_due } : {}), ...(fold ? { due_fold: Number(fold) as 0 | 1 } : {}) }),
     onSuccess: () => { setForm(blank); setFold(''); void client.invalidateQueries({ queryKey: ['collab', 'tasks'] }); },
   });
+  const createOnce = useLockedMutate<void>(create);
   const ambiguous = create.error ? apiErrorMessage(create.error).includes('ambiguous') : false;
   return <>
     <section className="card" aria-label="Sarcină nouă">
       <h2>Sarcină nouă</h2>
-      <form onSubmit={e => { e.preventDefault(); create.mutate(); }}>
+      <form onSubmit={e => { e.preventDefault(); createOnce(); }}>
         <label>Titlu<input required maxLength={200} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></label>
         <label>Descriere (opțional)<textarea maxLength={MAX_MESSAGE} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></label>
         <p className="muted">{MEDICAL_NOTICE}</p>
@@ -264,6 +280,7 @@ function Tasks({ user, members, timezone }: { user: User; members: team.TeamMemb
 export function HandoverCard({ item, user, timezone }: { item: collab.Handover; user: User; timezone: string }) {
   const client = useQueryClient();
   const confirm = useMutation({ mutationFn: () => collab.acknowledgeHandover(item.id), onSettled: () => { void client.invalidateQueries({ queryKey: ['collab'] }); } });
+  const confirmOnce = useLockedMutate<void>(confirm);
   return <article className="collab-task" aria-label={`Predare de la ${item.from_user}`}>
     <strong>{item.from_user} → {item.to_user}</strong>
     <p className="muted">Tura {formatDateTime(item.shift_starts_at, timezone)} – {formatDateTime(item.shift_ends_at, timezone)} · scrisă de {item.created_by}, {formatDateTime(item.created_at, timezone)}</p>
@@ -271,7 +288,7 @@ export function HandoverCard({ item, user, timezone }: { item: collab.Handover; 
     <p className="muted">{item.tasks.length ? 'Sarcini nerezolvate la predare:' : 'Nicio sarcină nerezolvată la predare.'}</p>
     {item.tasks.map(task => <p key={task.task_id}>{task.title} · {STATUS_LABELS[task.status]}{task.due_at ? ` · Termen: ${formatDateTime(task.due_at, timezone)}` : ''}</p>)}
     {item.acknowledged_at ? <p className="notice-text">Primire confirmată: {formatDateTime(item.acknowledged_at, timezone)}</p>
-      : item.to_user_id === user.id ? <button className="secondary" disabled={confirm.isPending} onClick={() => confirm.mutate()}>Confirm primirea</button>
+      : item.to_user_id === user.id ? <button className="secondary" disabled={confirm.isPending} onClick={() => confirmOnce()}>Confirm primirea</button>
         : <p className="muted">Așteaptă confirmarea destinatarului.</p>}
     <Failure error={confirm.error} />
   </article>;
@@ -285,6 +302,7 @@ function Handovers({ user, members, timezone }: { user: User; members: team.Team
   const schedule = useQuery({ queryKey: ['team', 'schedule', 'day', day], queryFn: () => team.getSchedule('day', day) });
   const [form, setForm] = useState({ shift_id: '', to_user_id: '', notes: '' });
   const create = useMutation({ mutationFn: () => collab.createHandover(form), onSuccess: () => { setForm({ shift_id: '', to_user_id: '', notes: '' }); void client.invalidateQueries({ queryKey: ['collab'] }); } });
+  const createOnce = useLockedMutate<void>(create);
   const done = new Set(query.data?.map(item => item.shift_id));
   const now = Date.now();
   const shifts = schedule.data?.shifts.filter(item => (manager || item.user_id === user.id) && Date.parse(item.starts_at) <= now && !done.has(item.id)) ?? [];
@@ -293,7 +311,7 @@ function Handovers({ user, members, timezone }: { user: User; members: team.Team
     <section className="card" aria-label="Predare nouă">
       <h2>Predare de tură</h2>
       <p className="muted">Lista sarcinilor nerezolvate se salvează în momentul predării. Predarea nu se mai modifică.</p>
-      <form onSubmit={e => { e.preventDefault(); create.mutate(); }}>
+      <form onSubmit={e => { e.preventDefault(); createOnce(); }}>
         <label>Tura<select required value={form.shift_id} onChange={e => setForm({ ...form, shift_id: e.target.value, to_user_id: '' })}><option value="">Alege tura de azi</option>{shifts.map(item => <option key={item.id} value={item.id}>{formatDateTime(item.starts_at, timezone)} – {formatDateTime(item.ends_at, timezone)} · {item.user_name} · {item.room_name ?? 'Recepție'}</option>)}</select></label>
         <label>Predau către<select required value={form.to_user_id} onChange={e => setForm({ ...form, to_user_id: e.target.value })}><option value="">Alege persoana</option>{members.filter(m => m.is_active && m.id !== from).map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}</select></label>
         <label>Note<textarea required maxLength={MAX_MESSAGE} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></label>
