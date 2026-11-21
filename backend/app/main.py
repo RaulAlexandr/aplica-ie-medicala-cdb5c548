@@ -10,6 +10,7 @@ from app.clinic.router import router as clinic_router
 from app.clinical_notes.router import router as clinical_notes_router
 from app.config import settings
 from app.documents.router import router as documents_router
+from app.equipment.router import router as equipment_router
 from app.finance.router import router as finance_router
 from app.forms.router import router as forms_router
 from app.odontogram.router import router as odontogram_router
@@ -44,6 +45,7 @@ app.include_router(periodontal_router, prefix="/api")
 app.include_router(treatment_plans_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(finance_router, prefix="/api")
+app.include_router(equipment_router, prefix="/api")
 app.include_router(waitlist_router, prefix="/api")
 app.include_router(forms_router, prefix="/api")
 app.include_router(availability_router, prefix="/api")
