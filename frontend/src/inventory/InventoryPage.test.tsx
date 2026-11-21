@@ -49,6 +49,18 @@ describe('pagina Stocuri',()=>{
     await act(async()=>{pending.shift()?.resolve({});await new Promise(r=>setTimeout(r,0));});
     await act(async()=>renderer.unmount());
   });
+  it('nu repetă mișcarea după un succes rapid și golește cantitatea',async()=>{
+    vi.mocked(addInventoryMovement).mockResolvedValue({} as never);
+    const renderer=await page('clinic_manager');const forms=renderer.root.findAllByType('form');const movementForm=forms[forms.length-1],selects=movementForm.findAllByType('select');
+    await act(async()=>{selects.find(x=>x.parent?.children[0]==='Operație')?.props.onChange({target:{value:'adjustment'}});selects.find(x=>x.parent?.children[0]==='Articol')?.props.onChange({target:{value:'item-1'}});selects.find(x=>x.parent?.children[0]==='Lot')?.props.onChange({target:{value:'lot-1'}});selects.find(x=>x.parent?.children[0]==='Locație')?.props.onChange({target:{value:'loc-1'}});});
+    const quantity=movementForm.findAllByType('input').find(x=>x.props.type==='number')!,reason=movementForm.findAllByType('input').find(x=>x.parent?.children[0]==='Motiv')!;
+    await act(async()=>{quantity.props.onChange({target:{value:'4'}});reason.props.onChange({target:{value:'Inventar fictiv'}});});
+    const form=movementForm,submit=()=>form.props.onSubmit({preventDefault(){}});
+    await act(async()=>{submit();await new Promise(r=>setTimeout(r,0));});
+    expect(movementForm.findAllByType('input').find(x=>x.props.type==='number')?.props.value).toBe('');expect(movementForm.findAllByType('input').find(x=>x.parent?.children[0]==='Motiv')?.props.value).toBe('');
+    await act(async()=>submit());expect(addInventoryMovement).toHaveBeenCalledTimes(1);
+    await act(async()=>renderer.unmount());
+  });
   it('blochează dublul click la corecție și păstrează cheia după eroare',async()=>{
     vi.stubGlobal('window',{prompt:()=> 'Motiv fictiv'});
     vi.mocked(inventoryHistory).mockResolvedValue([{id:'move-1',item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Manager fictiv',kind:'receipt',quantity:'1',reason:'',transfer_id:null,reverses_movement_id:null,is_correction:false,is_corrected:false,created_at:'2026-11-21T10:00:00Z'}]);
@@ -91,6 +103,28 @@ describe('pagina Stocuri',()=>{
     const type=renderer.root.findAllByType('select').find(x=>x.parent?.children[0]==='Filtru istoric tip')!;
     await act(async()=>type.props.onChange({target:{value:'consumption'}}));text=textOf(renderer.root);
     expect(text).toContain('Consum');expect(renderer.root.findAllByType('article').map(textOf).join(' ')).not.toContain('Recepție');
+    await act(async()=>renderer.unmount());
+  });
+  it('cere istoricul filtrat de la server și separă cache-ul după filtre',async()=>{
+    const client=new QueryClient({defaultOptions:{queries:{retry:false}}});let renderer!:TestRenderer.ReactTestRenderer;
+    await act(async()=>{renderer=TestRenderer.create(<QueryClientProvider client={client}><InventoryPage role="doctor"/></QueryClientProvider>);});
+    for(let n=0;n<4;n++)await act(async()=>{await new Promise(r=>setTimeout(r,0));});
+    const selects=renderer.root.findAllByType('select');
+    await act(async()=>selects.find(x=>x.parent?.children[0]==='Filtru istoric articol')?.props.onChange({target:{value:'item-1'}}));
+    for(let n=0;n<3;n++)await act(async()=>{await new Promise(r=>setTimeout(r,0));});
+    expect(vi.mocked(inventoryHistory)).toHaveBeenLastCalledWith({item_id:'item-1',lot_id:'',location_id:'',kind:''});
+    expect(client.getQueryCache().findAll().some(x=>JSON.stringify(x.queryKey)===JSON.stringify(['inventory-history','item-1','','','']))).toBe(true);
+    await act(async()=>renderer.unmount());
+  });
+  it('nu afișează cifra zero când istoricul este gol',async()=>{
+    const renderer=await page('doctor');expect(textOf(renderer.root)).toContain('Nu există mișcări înregistrate.');expect(textOf(renderer.root)).not.toMatch(/înregistrate\.\s*0/);
+    await act(async()=>renderer.unmount());
+  });
+  it('folosește marcajul de expirare calculat de server chiar la limita zilei',async()=>{
+    vi.mocked(inventoryOverview).mockResolvedValue({items:[{id:'item-1',name:'Material fictiv',unit:'buc',minimum_quantity:'2',quantity_total:'0',below_minimum:false,is_active:true}],locations:[{id:'loc-1',name:'Depozit fictiv',is_active:true}],lots:[{id:'lot-1',item_id:'item-1',item:'Material fictiv',code:'LOT-EXPIRAT',expires_on:'2026-11-21',expired:true}],balances:[]});
+    const renderer=await page('doctor');const labels=renderer.root.findAllByType('label');
+    const itemSelect=renderer.root.findAllByType('select').find(x=>x.parent?.children[0]==='Articol');await act(async()=>itemSelect?.props.onChange({target:{value:'item-1'}}));
+    expect(renderer.root.findAllByType('option').map(textOf)).toContain('LOT-EXPIRAT · expiră 2026-11-21 · EXPIRAT');expect(labels.length).toBeGreaterThan(0);
     await act(async()=>renderer.unmount());
   });
   it('nu oferă corectarea pentru înregistrări corectate sau pentru mișcări de corecție',async()=>{
