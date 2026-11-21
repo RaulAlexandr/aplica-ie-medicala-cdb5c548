@@ -30,12 +30,12 @@ function newClient() {
 }
 const user = (role: string): User => ({ id: `${role}-1`, clinic_id: 'clinic-1', full_name: 'Utilizator Fictiv', email: `${role}@example.test`, role });
 async function flush() { await new Promise(resolve => setTimeout(resolve, 10)); }
-async function render(userValue: User, history: EquipmentHistory = historyWith()) {
+async function render(userValue: User, history: EquipmentHistory = historyWith(), equipmentItems: Equipment[] = [equipment]) {
   vi.spyOn(clientApi, 'getClinic').mockResolvedValue({ timezone: 'Europe/Bucharest' } as never);
   vi.spyOn(clientApi, 'listRooms').mockResolvedValue([]);
   vi.spyOn(clientApi, 'listStaff').mockResolvedValue([]);
   vi.spyOn(clientApi, 'listProcedures').mockResolvedValue([]);
-  vi.spyOn(equipmentApi, 'listEquipment').mockResolvedValue([equipment]);
+  vi.spyOn(equipmentApi, 'listEquipment').mockResolvedValue(equipmentItems);
   vi.spyOn(equipmentApi, 'listDueChecks').mockResolvedValue([]);
   vi.spyOn(equipmentApi, 'equipmentHistory').mockResolvedValue(history);
   let renderer!: TestRenderer.ReactTestRenderer;
@@ -78,6 +78,21 @@ describe('T21 equipment screen', () => {
     const renderer = await render(user('clinic_manager'), history);
     expect(text(renderer.root)).toContain('Potrivire sigur');
     expect(text(renderer.root)).toContain('Potrivire posibil');
+    await act(async () => renderer.unmount());
+  });
+
+  it('shows Romanian equipment states in the registry', async () => {
+    const equipmentItems = (['available', 'maintenance', 'broken', 'retired'] as const).map((state, index) => ({
+      ...equipment, id: `equipment-${index}`, name: index === 0 ? equipment.name : `Unit ${index}`, state,
+    }));
+    const renderer = await render(user('clinic_manager'), historyWith(), equipmentItems);
+    const registry = renderer.root.findAllByType('button').filter(button => button.props.className?.includes('equipment-row'));
+    const labels = registry.map(button => text(button));
+    expect(labels.join(' ')).toContain('Disponibil');
+    expect(labels.join(' ')).toContain('Mentenanță');
+    expect(labels.join(' ')).toContain('Defect');
+    expect(labels.join(' ')).toContain('Retras');
+    expect(labels.join(' ')).not.toMatch(/available|maintenance|broken|retired/);
     await act(async () => renderer.unmount());
   });
 
