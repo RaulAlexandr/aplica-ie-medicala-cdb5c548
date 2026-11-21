@@ -361,3 +361,15 @@ async def test_completed_check_rejects_future_time_and_missing_result(ctx):
         "completed_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat()})
     assert future.status_code == 422
     assert missing_result.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_check_result_requires_completion_time(ctx):
+    client, _sessions = ctx
+    manager = await register(client, "equipment-result-without-completion@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit rezultat fără efectuare", "equipment_type": "unit", "responsible_id": identity["id"]})).json()
+    response = await client.post(f"/api/equipment/{equipment['id']}/checks", headers=manager, json={
+        "check_type": "inspection", "due_at": (datetime.now(UTC) + timedelta(days=2)).isoformat(), "result": "Conform fictiv"})
+    assert response.status_code == 422
+    assert "efectuată" in str(response.json()["detail"])

@@ -69,6 +69,12 @@ class CheckInput(BaseModel):
     completed_at: datetime | None = None
     result: str | None = Field(default=None, max_length=2000)
 
+    @model_validator(mode="after")
+    def result_requires_completion(self):
+        if self.result is not None and self.completed_at is None:
+            raise ValueError("Rezultatul este obligatoriu pentru o verificare efectuată")
+        return self
+
     @field_validator("result", mode="before")
     @classmethod
     def clean_result(cls, value):
