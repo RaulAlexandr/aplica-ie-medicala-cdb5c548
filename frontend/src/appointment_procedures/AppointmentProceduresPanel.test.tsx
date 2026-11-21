@@ -71,7 +71,7 @@ describe('appointment procedures panel', () => {
       category: null, default_duration_minutes: 20, base_price: '0.00', currency: 'RON', is_active: true,
       created_at: '', updated_at: '' };
     vi.spyOn(api, 'getAppointmentProcedures').mockResolvedValue(empty);
-    vi.spyOn(client, 'listProcedures').mockImplementation(async search => search ? [] : [catalogProcedure]);
+    const listCatalog = vi.spyOn(client, 'listProcedures').mockImplementation(async search => search ? [] : [catalogProcedure]);
     const replace = vi.spyOn(api, 'replaceAppointmentProcedures').mockResolvedValue({ ...empty, revision: 1,
       procedures: [{ procedure_catalog_id: 'p3', code: 'CONS', name: 'Consultație', quantity: 1, manual_quantity: 1, plan_quantity: null, source: 'manual' }] });
     let renderer!: TestRenderer.ReactTestRenderer;
@@ -81,7 +81,7 @@ describe('appointment procedures panel', () => {
     await act(async () => { renderer!.root.findAllByType('button').find(button => label(button) === 'Adaugă')!.props.onClick(); });
     expect(renderer!.root.findAllByType('li').some(item => label(item).includes('Consultație'))).toBe(true);
     await act(async () => { renderer!.root.findByProps({ 'aria-label': 'Caută procedura' }).props.onChange({ target: { value: 'inexistent' } }); });
-    await waitFor(renderer!, () => client.listProcedures.mock.calls.some(([search]) => search === 'inexistent'));
+    await waitFor(renderer!, () => listCatalog.mock.calls.some(([search]) => search === 'inexistent'));
     expect(renderer!.root.findAllByType('li').some(item => label(item).includes('Consultație'))).toBe(true);
     expect(renderer!.root.findAllByType('button').map(label)).toContain('Elimină');
     await act(async () => { renderer!.root.findAllByType('button').find(button => label(button) === 'Salvează procedurile')!.props.onClick(); });

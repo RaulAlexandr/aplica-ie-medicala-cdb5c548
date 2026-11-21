@@ -268,6 +268,7 @@ async def test_get_without_revision_row_is_read_only(env):
 
 async def test_locked_appointment_read_requests_no_key_update_and_refresh():
     from uuid import uuid4
+
     from app.appointment_procedures.router import _appointment
 
     class StatementProbe:
