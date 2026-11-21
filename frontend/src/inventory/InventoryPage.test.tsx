@@ -103,4 +103,14 @@ describe('pagina Stocuri',()=>{
     expect(renderer.root.findAllByType('button').filter(x=>textOf(x)==='Corectează')).toHaveLength(1);
     await act(async()=>renderer.unmount());
   });
+  it('resetează lotul la schimbarea articolului și ascunde opțiunile inactive, marcând lotul expirat la consum',async()=>{
+    vi.mocked(inventoryOverview).mockResolvedValue({items:[{id:'item-1',name:'Material fictiv',unit:'buc',minimum_quantity:'2',quantity_total:'5',below_minimum:false,is_active:true},{id:'item-2',name:'Inactiv',unit:'buc',minimum_quantity:'0',quantity_total:'0',below_minimum:false,is_active:false}],locations:[{id:'loc-1',name:'Depozit fictiv',is_active:true},{id:'loc-2',name:'Depozit inactiv',is_active:false}],lots:[{id:'lot-1',item_id:'item-1',item:'Material fictiv',code:'LOT-EXPIRAT',expires_on:'2020-01-01'},{id:'lot-2',item_id:'item-2',item:'Inactiv',code:'LOT-INACTIV',expires_on:null}],balances:[]});
+    const renderer=await page('clinic_manager');const movementForm=renderer.root.findAllByType('form').at(-1)!;const article=movementForm.findAllByType('select').find(x=>x.parent?.children[0]==='Articol')!,lot=movementForm.findAllByType('select').find(x=>x.parent?.children[0]==='Lot')!;
+    await act(async()=>article.props.onChange({target:{value:'item-1'}}));await act(async()=>lot.props.onChange({target:{value:'lot-1'}}));
+    await act(async()=>article.props.onChange({target:{value:'item-2'}}));
+    expect(movementForm.findAllByType('select').find(x=>x.parent?.children[0]==='Lot')?.props.value).toBe('');expect(movementForm.findAllByType('option').map(textOf)).not.toContain('Inactiv');expect(movementForm.findAllByType('option').map(textOf)).not.toContain('Depozit inactiv');
+    await act(async()=>article.props.onChange({target:{value:'item-1'}}));
+    expect(renderer.root.findAllByType('option').map(textOf)).toContain('LOT-EXPIRAT · expiră 2020-01-01 · EXPIRAT');
+    await act(async()=>renderer.unmount());
+  });
 });
