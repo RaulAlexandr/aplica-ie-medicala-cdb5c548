@@ -3,7 +3,7 @@
 backup  DB DOCUMENTS_DIR DEST_DIR  -> DEST_DIR/{fictional-clinic.sqlite3, documents/, MANIFEST.json}
 restore BACKUP DEST_DIR            -> verified isolated copy; BACKUP may be a legacy single .sqlite3
 
-Both directions check SQLite integrity and that every clinical_documents row has a file whose
+Both directions check SQLite integrity and that every clinical_documents and team_documents row has a file whose
 SHA-256 matches the recorded value. Contains no credentials; files keep 0600/0700 permissions.
 """
 
@@ -55,38 +55,49 @@ def copy_documents(src: Path, dest: Path) -> list[Path]:
     return copied
 
 
-def verify_documents(db: Path, docs: Path) -> tuple[int, int]:
-    """Return (rows, orphan_files). Raises on a missing or modified file."""
-    with sqlite3.connect(db) as conn:
-        has_table = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clinical_documents'").fetchone()
-        rows = conn.execute("SELECT clinic_id, storage_key, sha256 FROM clinical_documents").fetchall() if has_table else []
+DOCUMENT_TABLES = (("clinical_documents", "T11"), ("team_documents", "echipă"))
+
+
+def verify_documents(db: Path, docs: Path) -> tuple[int, int, int]:
+    """Return (clinical_rows, team_rows, orphan_files). Raises on a missing or modified file.
+
+    Both clinical_documents (T11) and team_documents (T19) share one storage root and layout. A database
+    that predates a table is tolerated; a row whose file is missing or modified is not.
+    """
+    counts = []
     expected = set()
-    for clinic_id, key, digest in rows:
-        path = docs / str(clinic_id) / key[:2] / key
-        expected.add(path.relative_to(docs))
-        if not path.is_file():
-            raise SystemExit(f"Fișier lipsă pentru documentul cu cheia {key}")
-        if sha256(path) != digest:
-            raise SystemExit(f"Fișier modificat pentru documentul cu cheia {key}")
+    with sqlite3.connect(db) as conn:
+        for table, label in DOCUMENT_TABLES:
+            has_table = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+            rows = conn.execute(f"SELECT clinic_id, storage_key, sha256 FROM {table}").fetchall() if has_table else []
+            counts.append(len(rows))
+            for clinic_id, key, digest in rows:
+                path = docs / str(clinic_id) / key[:2] / key
+                expected.add(path.relative_to(docs))
+                if not path.is_file():
+                    raise SystemExit(f"Fișier lipsă pentru documentul {label} cu cheia {key}")
+                if sha256(path) != digest:
+                    raise SystemExit(f"Fișier modificat pentru documentul {label} cu cheia {key}")
     present = {p.relative_to(docs) for p in docs.rglob("*") if p.is_file()} if docs.is_dir() else set()
-    return len(rows), len(present - expected)
+    return counts[0], counts[1], len(present - expected)
 
 
 def backup(db: Path, docs: Path, dest: Path) -> None:
     dest.mkdir(mode=0o700)
     copy_db(db, dest / DB_NAME)
     files = copy_documents(docs, dest / DOCS_NAME)
-    rows, orphans = verify_documents(dest / DB_NAME, dest / DOCS_NAME)
+    rows, team_rows, orphans = verify_documents(dest / DB_NAME, dest / DOCS_NAME)
     manifest = {
         "format": "dentacare-pilot-backup/1",
         "db": {"name": DB_NAME, "sha256": sha256(dest / DB_NAME)},
         "documents": {str(rel): sha256(dest / DOCS_NAME / rel) for rel in files},
         "document_rows": rows,
+        "team_document_rows": team_rows,
         "orphan_files": orphans,
     }
     (dest / "MANIFEST.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
     os.chmod(dest / "MANIFEST.json", 0o600)
-    print(f"Backup valid: DB ok, {rows} documente T11 verificate, {len(files)} fișiere, {orphans} fișiere fără rând.")
+    print(f"Backup valid: DB ok, {rows} documente T11 și {team_rows} de echipă verificate, {len(files)} fișiere, {orphans} fișiere fără rând.")
 
 
 def restore(src: Path, dest: Path) -> None:
@@ -105,10 +116,10 @@ def restore(src: Path, dest: Path) -> None:
     dest.mkdir(mode=0o700)
     copy_db(src / DB_NAME, dest / DB_NAME)
     files = copy_documents(src / DOCS_NAME, dest / DOCS_NAME)
-    rows, orphans = verify_documents(dest / DB_NAME, dest / DOCS_NAME)
+    rows, team_rows, orphans = verify_documents(dest / DB_NAME, dest / DOCS_NAME)
     if len(files) != len(manifest["documents"]):
         raise SystemExit("Numărul de fișiere restaurate diferă de manifest")
-    print(f"Restore valid: DB ok, {rows} documente T11 cu fișier și SHA-256 corecte, {orphans} fișiere fără rând.")
+    print(f"Restore valid: DB ok, {rows} documente T11 și {team_rows} de echipă cu fișier și SHA-256 corecte, {orphans} fișiere fără rând.")
 
 
 if __name__ == "__main__":
