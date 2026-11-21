@@ -132,6 +132,8 @@ async def _clinic_datetime(db: AsyncSession, clinic_id: UUID, value: datetime) -
 
 async def _affected(db: AsyncSession, user: User, equipment: Equipment, outage: EquipmentUnavailability):
     outage_end = effective_end(outage)
+    if outage_end <= outage.starts_at:
+        return []
     deps = list(await db.scalars(select(EquipmentDependency).where(
         EquipmentDependency.clinic_id == user.clinic_id, EquipmentDependency.equipment_id == equipment.id)))
     room_ids = {d.room_id for d in deps if d.room_id}

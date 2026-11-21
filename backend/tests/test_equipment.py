@@ -273,7 +273,6 @@ async def test_expired_and_future_open_outages_do_not_satisfy_broken_state(ctx):
     assert changed.json()["open_unavailability_id"] is None
     listed = await client.get("/api/equipment", headers=manager)
     assert next(row for row in listed.json() if row["id"] == equipment["id"])["missing_unavailability"] is True
-
     future = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities", headers=manager, json={
         "reason": "Viitoare fictivă", "starts_at": (now + timedelta(days=20)).isoformat(), "ends_at": (now + timedelta(days=21)).isoformat()})
     assert future.status_code == 201
@@ -282,3 +281,32 @@ async def test_expired_and_future_open_outages_do_not_satisfy_broken_state(ctx):
     assert changed.json()["open_unavailability_id"] is None
     listed = await client.get("/api/equipment", headers=manager)
     assert next(row for row in listed.json() if row["id"] == equipment["id"])["missing_unavailability"] is True
+
+
+@pytest.mark.asyncio
+async def test_outage_closed_before_start_has_no_affected_appointments(ctx):
+    client, sessions = ctx
+    manager = await register(client, "equipment-outage-closed-before-start@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    room = (await client.post("/api/rooms", headers=manager, json={"name": "Cabinet anulare viitoare"})).json()
+    patient = (await client.post("/api/patients", headers=manager, json={"first_name": "Pacient", "last_name": "Fictiv"})).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit oprit înainte", "equipment_type": "unit", "room_id": room["id"], "responsible_id": identity["id"]})).json()
+    now = datetime.now(UTC).replace(microsecond=0)
+    appt_start = now - timedelta(minutes=10)
+    async with sessions() as session:
+        session.add(Appointment(clinic_id=identity["clinic_id"], patient_id=patient["id"], doctor_id=identity["id"],
+            room_id=room["id"], starts_at=appt_start, ends_at=now + timedelta(minutes=50), duration_minutes=60,
+            status="scheduled", appointment_type="Control fictiv"))
+        await session.commit()
+    starts = now + timedelta(minutes=20)
+    ends = now + timedelta(hours=2)
+    created = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities", headers=manager, json={
+        "reason": "Închisă înainte de început", "starts_at": starts.isoformat(), "ends_at": ends.isoformat()})
+    assert created.status_code == 201 and len(created.json()["affected_appointments"]) == 1
+    outage_id = created.json()["id"]
+    closed = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities/{outage_id}/close", headers=manager)
+    assert closed.status_code == 200
+    affected = await client.get(f"/api/equipment/{equipment['id']}/unavailabilities/{outage_id}/affected", headers=manager)
+    history = await client.get(f"/api/equipment/{equipment['id']}/history", headers=manager)
+    assert affected.status_code == 200 and affected.json() == []
+    assert history.status_code == 200 and history.json()["unavailabilities"][0]["affected_appointments"] == []
