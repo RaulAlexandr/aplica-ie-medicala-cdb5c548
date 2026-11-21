@@ -264,3 +264,21 @@ async def test_get_without_revision_row_is_read_only(env):
         after_put = await session.scalar(select(func.count()).select_from(AppointmentProcedureRevision))
     assert after_put == 1 and len(revision_inserts) == 1
     event.remove(engine.sync_engine, "before_cursor_execute", record_revision_insert)
+
+
+async def test_locked_appointment_read_requests_no_key_update_and_refresh():
+    from uuid import uuid4
+    from app.appointment_procedures.router import _appointment
+
+    class StatementProbe:
+        statement = None
+        async def scalar(self, statement):
+            self.statement = statement
+            return "appointment-row"
+
+    db = StatementProbe()
+    result = await _appointment(db, uuid4(), uuid4(), lock=True)
+    assert result == "appointment-row"
+    assert db.statement._for_update_arg is not None
+    assert db.statement._for_update_arg.key_share is True
+    assert db.statement._execution_options["populate_existing"] is True

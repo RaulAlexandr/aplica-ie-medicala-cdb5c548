@@ -32,8 +32,11 @@ class ReplaceInput(BaseModel):
     procedures: list[DesiredLine]
 
 
-async def _appointment(db: AsyncSession, clinic_id: UUID, appointment_id: UUID) -> Appointment:
-    item = await db.scalar(select(Appointment).where(Appointment.id == appointment_id, Appointment.clinic_id == clinic_id))
+async def _appointment(db: AsyncSession, clinic_id: UUID, appointment_id: UUID, *, lock: bool = False) -> Appointment:
+    stmt = select(Appointment).where(Appointment.id == appointment_id, Appointment.clinic_id == clinic_id)
+    if lock:
+        stmt = stmt.with_for_update(key_share=True).execution_options(populate_existing=True)
+    item = await db.scalar(stmt)
     if item is None:
         raise HTTPException(404, "Programarea nu a fost găsită.")
     return item
@@ -84,7 +87,7 @@ async def get_for_appointment(appointment_id: UUID, db: AsyncSession = Depends(g
 
 @router.put("/{appointment_id}")
 async def replace_for_appointment(appointment_id: UUID, payload: ReplaceInput, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGE_APPOINTMENTS))):
-    appointment = await _appointment(db, user.clinic_id, appointment_id)
+    appointment = await _appointment(db, user.clinic_id, appointment_id, lock=True)
     if appointment.status in CLOSED:
         raise HTTPException(409, "Programarea este închisă și procedurile nu mai pot fi modificate.")
     if payload.expected_revision < 0 or len(payload.procedures) > 100:
