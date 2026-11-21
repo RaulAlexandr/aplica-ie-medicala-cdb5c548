@@ -200,6 +200,7 @@ function DocumentsPanel({ user, members }: { user: User; members: team.TeamMembe
   const refresh = () => { void client.invalidateQueries({ queryKey: ['team', 'documents', selected] }); };
   const upload = useMutation({
     mutationFn: () => { if (!file) throw new Error('Alege un fișier.'); return team.uploadDocument(selected, file, category, expiresOn, uploadKey); },
+    // uploadKey also remounts the file input, so it cannot keep showing a file already uploaded.
     onSuccess: () => { setFile(null); setExpiresOn(''); setUploadKey(crypto.randomUUID()); refresh(); },
   });
   const archive = useMutation({ mutationFn: (id: string) => { if (!archiveReason.trim()) throw new Error('Scrie motivul arhivării.'); return team.archiveDocument(id, archiveReason.trim()); }, onSuccess: () => { setArchiveReason(''); refresh(); } });
@@ -223,7 +224,7 @@ function DocumentsPanel({ user, members }: { user: User; members: team.TeamMembe
     {manager && <>
       <label>Motiv arhivare<input value={archiveReason} onChange={e => setArchiveReason(e.target.value)} /></label>
       <form onSubmit={e => { e.preventDefault(); upload.mutate(); }}>
-        <label>Fișier (PDF, JPEG, PNG)<input required type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={e => setFile(e.target.files?.[0] ?? null)} /></label>
+        <label>Fișier (PDF, JPEG, PNG)<input key={uploadKey} required type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={e => setFile(e.target.files?.[0] ?? null)} /></label>
         <label>Categorie<select value={category} onChange={e => setCategory(e.target.value as team.DocumentCategory)}>{Object.entries(DOCUMENT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label>Expiră la (opțional)<input type="date" value={expiresOn} onChange={e => setExpiresOn(e.target.value)} /></label>
         <Failure error={upload.error} />

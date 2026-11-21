@@ -90,6 +90,7 @@ try {
   check('manager uploads a protected document for the doctor (201)', uploadResponse.status() === 201);
   const documentId = (await uploadResponse.json()).id;
   await docs.getByText('contract-fictiv.pdf').waitFor();
+  check('the file field is empty after upload', await docs.getByLabel('Fișier (PDF, JPEG, PNG)').evaluate(el => el.files.length === 0));
 
   const shifts = region(manager, 'Repartizare ture');
   const addShift = async (personId, roomId, start, end) => {
