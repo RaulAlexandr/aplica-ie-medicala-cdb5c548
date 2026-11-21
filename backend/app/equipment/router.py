@@ -1,0 +1,260 @@
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth.service import require_roles
+from app.database import Appointment, Clinic, Patient, ProcedureCatalog, Room, User, get_db, utcnow
+from app.equipment.models import (
+    Equipment,
+    EquipmentCheck,
+    EquipmentDependency,
+    EquipmentDocument,
+    EquipmentUnavailability,
+)
+
+router = APIRouter(prefix="/equipment", tags=["equipment"])
+MANAGERS = ("clinic_manager", "administrator")
+STAFF = (*MANAGERS, "doctor", "assistant")
+READERS = (*STAFF, "reception")
+ACTIVE_APPOINTMENT_STATUSES = ("scheduled", "confirmed", "arrived", "in_progress")
+
+
+class EquipmentInput(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    equipment_type: str = Field(min_length=1, max_length=100)
+    serial_number: str | None = Field(default=None, max_length=120)
+    room_id: UUID | None = None
+    responsible_id: UUID
+    state: str = "available"
+    is_active: bool = True
+
+    @field_validator("name", "equipment_type", mode="before")
+    @classmethod
+    def nonblank(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Valoarea este obligatorie")
+        return value.strip()
+
+
+class CheckInput(BaseModel):
+    check_type: str
+    due_at: datetime
+    completed_at: datetime | None = None
+    result: str | None = Field(default=None, max_length=2000)
+
+
+class OutageInput(BaseModel):
+    reason: str = Field(min_length=1, max_length=500)
+    starts_at: datetime
+    ends_at: datetime
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def reason_not_blank(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Motivul este obligatoriu")
+        return value.strip()
+
+
+class DocumentInput(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    document_type: str = Field(min_length=1, max_length=64)
+    reference: str = Field(min_length=1, max_length=500)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class DependencyInput(BaseModel):
+    room_id: UUID | None = None
+    procedure_id: UUID | None = None
+
+
+def _json(row):
+    return {key: str(value) if isinstance(value, UUID) else value.isoformat() if isinstance(value, datetime) else value
+            for key, value in row.__dict__.items() if not key.startswith("_")}
+
+
+async def _equipment(db: AsyncSession, user: User, equipment_id: UUID, lock: bool = False) -> Equipment:
+    query = select(Equipment).where(Equipment.id == equipment_id, Equipment.clinic_id == user.clinic_id)
+    if lock:
+        query = query.with_for_update()
+    value = await db.scalar(query)
+    if value is None:
+        raise HTTPException(404, "Echipament inexistent")
+    return value
+
+
+async def _clinic_datetime(db: AsyncSession, clinic_id: UUID, value: datetime) -> datetime:
+    if value.tzinfo is None:
+        clinic = await db.get(Clinic, clinic_id)
+        if not clinic:
+            raise HTTPException(404, "Clinică inexistentă")
+        value = value.replace(tzinfo=ZoneInfo(clinic.timezone))
+    return value.astimezone(UTC)
+
+
+async def _affected(db: AsyncSession, user: User, equipment: Equipment, outage: EquipmentUnavailability):
+    deps = list(await db.scalars(select(EquipmentDependency).where(
+        EquipmentDependency.clinic_id == user.clinic_id, EquipmentDependency.equipment_id == equipment.id)))
+    room_ids = {d.room_id for d in deps if d.room_id}
+    service_ids = {d.procedure_id for d in deps if d.procedure_id}
+    service_names = set()
+    if service_ids:
+        service_names = set((await db.scalars(select(ProcedureCatalog.name).where(
+            ProcedureCatalog.clinic_id == user.clinic_id, ProcedureCatalog.id.in_(service_ids)))).all())
+    conditions = []
+    if equipment.room_id:
+        room_ids.add(equipment.room_id)
+    if room_ids:
+        conditions.append(Appointment.room_id.in_(room_ids))
+    if service_names:
+        conditions.append(Appointment.appointment_type.in_(service_names))
+    if not conditions:
+        return []
+    query = (select(Appointment, Patient, User, Room).join(Patient, and_(Patient.id == Appointment.patient_id, Patient.clinic_id == user.clinic_id))
+             .join(User, and_(User.id == Appointment.doctor_id, User.clinic_id == user.clinic_id))
+             .join(Room, and_(Room.id == Appointment.room_id, Room.clinic_id == user.clinic_id))
+             .where(Appointment.clinic_id == user.clinic_id, Appointment.status.in_(ACTIVE_APPOINTMENT_STATUSES),
+                    Appointment.starts_at < outage.ends_at, or_(*conditions))
+             .order_by(Appointment.starts_at))
+    rows = (await db.execute(query)).all()
+    rows = [(a, p, d, r) for a, p, d, r in rows
+            if (a.ends_at or a.starts_at + timedelta(minutes=a.duration_minutes)) > outage.starts_at]
+    return [{"appointment_id": str(a.id), "patient": f"{p.first_name} {p.last_name}",
+             "starts_at": a.starts_at.isoformat(), "ends_at": a.ends_at.isoformat() if a.ends_at else None,
+             "doctor": doctor.full_name, "room": room.name, "appointment_type": a.appointment_type,
+             "responsible": (await db.get(User, equipment.responsible_id)).full_name} for a, p, doctor, room in rows]
+
+
+@router.get("")
+async def list_equipment(db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*READERS))):
+    rows = list(await db.scalars(select(Equipment).where(Equipment.clinic_id == user.clinic_id).order_by(Equipment.name)))
+    return [_json(row) for row in rows]
+
+
+@router.post("", status_code=201)
+async def create_equipment(payload: EquipmentInput, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
+    if payload.state not in {"available", "maintenance", "broken", "retired"}:
+        raise HTTPException(422, "Stare neacceptată")
+    if payload.room_id and not await db.scalar(select(Room.id).where(Room.id == payload.room_id, Room.clinic_id == user.clinic_id)):
+        raise HTTPException(404, "Cabinet inexistent")
+    if not await db.scalar(select(User.id).where(User.id == payload.responsible_id, User.clinic_id == user.clinic_id)):
+        raise HTTPException(404, "Responsabil inexistent")
+    value = Equipment(clinic_id=user.clinic_id, created_by_id=user.id, **payload.model_dump())
+    db.add(value); await db.commit(); await db.refresh(value)
+    return _json(value)
+
+
+@router.patch("/{equipment_id}")
+async def update_equipment(equipment_id: UUID, payload: EquipmentInput, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
+    value = await _equipment(db, user, equipment_id)
+    if payload.state not in {"available", "maintenance", "broken", "retired"}:
+        raise HTTPException(422, "Stare neacceptată")
+    if payload.room_id and not await db.scalar(select(Room.id).where(Room.id == payload.room_id, Room.clinic_id == user.clinic_id)):
+        raise HTTPException(404, "Cabinet inexistent")
+    if not await db.scalar(select(User.id).where(User.id == payload.responsible_id, User.clinic_id == user.clinic_id)):
+        raise HTTPException(404, "Responsabil inexistent")
+    for key, item in payload.model_dump().items():
+        setattr(value, key, item)
+    value.updated_at = utcnow(); await db.commit(); await db.refresh(value)
+    return _json(value)
+
+
+@router.get("/{equipment_id}/history")
+async def equipment_history(equipment_id: UUID, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*READERS))):
+    await _equipment(db, user, equipment_id)
+    checks = list(await db.scalars(select(EquipmentCheck).where(EquipmentCheck.clinic_id == user.clinic_id, EquipmentCheck.equipment_id == equipment_id).order_by(EquipmentCheck.due_at)))
+    documents = list(await db.scalars(select(EquipmentDocument).where(EquipmentDocument.clinic_id == user.clinic_id, EquipmentDocument.equipment_id == equipment_id).order_by(EquipmentDocument.added_at)))
+    outages = list(await db.scalars(select(EquipmentUnavailability).where(EquipmentUnavailability.clinic_id == user.clinic_id, EquipmentUnavailability.equipment_id == equipment_id).order_by(EquipmentUnavailability.starts_at)))
+    dependencies = list(await db.scalars(select(EquipmentDependency).where(EquipmentDependency.clinic_id == user.clinic_id, EquipmentDependency.equipment_id == equipment_id)))
+    return {"checks": [_json(x) for x in checks], "documents": [_json(x) for x in documents],
+            "unavailabilities": [{**_json(x), "affected_appointments": await _affected(db, user, await _equipment(db, user, equipment_id), x)} for x in outages],
+            "dependencies": [_json(x) for x in dependencies]}
+
+
+@router.post("/{equipment_id}/checks", status_code=201)
+async def add_check(equipment_id: UUID, payload: CheckInput, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
+    equipment = await _equipment(db, user, equipment_id)
+    if payload.check_type not in {"service", "inspection"}:
+        raise HTTPException(422, "Tipul verificării nu este acceptat")
+    due = await _clinic_datetime(db, user.clinic_id, payload.due_at)
+    completed = await _clinic_datetime(db, user.clinic_id, payload.completed_at) if payload.completed_at else None
+    value = EquipmentCheck(clinic_id=user.clinic_id, equipment_id=equipment.id, author_id=user.id, check_type=payload.check_type, due_at=due, completed_at=completed, result=payload.result)
+    db.add(value); await db.commit(); await db.refresh(value)
+    return _json(value)
+
+
+@router.get("/checks/due")
+async def due_checks(db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*READERS))):
+    now = utcnow()
+    rows = (await db.execute(select(EquipmentCheck, Equipment).join(Equipment, and_(Equipment.id == EquipmentCheck.equipment_id,
+        Equipment.clinic_id == user.clinic_id)).where(EquipmentCheck.clinic_id == user.clinic_id,
+        EquipmentCheck.completed_at.is_(None), EquipmentCheck.due_at <= now + timedelta(days=30)).order_by(EquipmentCheck.due_at))).all()
+    return [{**_json(row), "equipment_name": equipment.name, "overdue": row.due_at < now} for row, equipment in rows]
+
+
+@router.post("/{equipment_id}/documents", status_code=201)
+async def add_document(equipment_id: UUID, payload: DocumentInput, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
+    await _equipment(db, user, equipment_id)
+    row = EquipmentDocument(clinic_id=user.clinic_id, equipment_id=equipment_id, added_by_id=user.id, **payload.model_dump())
+    db.add(row); await db.commit(); await db.refresh(row)
+    return _json(row)
+
+
+@router.post("/{equipment_id}/dependencies", status_code=201)
+async def add_dependency(equipment_id: UUID, payload: DependencyInput, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
+    await _equipment(db, user, equipment_id)
+    if not payload.room_id and not payload.procedure_id:
+        raise HTTPException(422, "Selectează cabinetul sau serviciul")
+    if payload.room_id and not await db.scalar(select(Room.id).where(Room.id == payload.room_id, Room.clinic_id == user.clinic_id)):
+        raise HTTPException(404, "Cabinet inexistent")
+    if payload.procedure_id and not await db.scalar(select(ProcedureCatalog.id).where(ProcedureCatalog.id == payload.procedure_id, ProcedureCatalog.clinic_id == user.clinic_id)):
+        raise HTTPException(404, "Serviciu inexistent")
+    row = EquipmentDependency(clinic_id=user.clinic_id, equipment_id=equipment_id, created_by_id=user.id, **payload.model_dump())
+    db.add(row)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback(); raise HTTPException(409, "Dependența există deja")
+    await db.refresh(row); return _json(row)
+
+
+@router.post("/{equipment_id}/unavailabilities", status_code=201)
+async def report_unavailability(equipment_id: UUID, payload: OutageInput, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*STAFF))):
+    equipment = await _equipment(db, user, equipment_id)
+    starts = await _clinic_datetime(db, user.clinic_id, payload.starts_at)
+    ends = await _clinic_datetime(db, user.clinic_id, payload.ends_at)
+    if ends <= starts:
+        raise HTTPException(422, "Sfârșitul trebuie să fie după început")
+    row = EquipmentUnavailability(clinic_id=user.clinic_id, equipment_id=equipment.id, reported_by_id=user.id,
+        reason=payload.reason.strip(), starts_at=starts, ends_at=ends)
+    db.add(row); await db.commit(); await db.refresh(row)
+    return {**_json(row), "affected_appointments": await _affected(db, user, equipment, row)}
+
+
+@router.post("/{equipment_id}/unavailabilities/{outage_id}/close")
+async def close_unavailability(equipment_id: UUID, outage_id: UUID, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
+    await _equipment(db, user, equipment_id)
+    row = await db.scalar(select(EquipmentUnavailability).where(EquipmentUnavailability.id == outage_id,
+        EquipmentUnavailability.equipment_id == equipment_id, EquipmentUnavailability.clinic_id == user.clinic_id).with_for_update())
+    if row is None:
+        raise HTTPException(404, "Indisponibilitate inexistentă")
+    if row.closed_at:
+        raise HTTPException(409, "Indisponibilitatea este deja închisă")
+    row.closed_at = utcnow(); row.closed_by_id = user.id
+    await db.commit(); return _json(row)
+
+
+@router.get("/{equipment_id}/unavailabilities/{outage_id}/affected")
+async def affected_appointments(equipment_id: UUID, outage_id: UUID, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*READERS))):
+    equipment = await _equipment(db, user, equipment_id)
+    outage = await db.scalar(select(EquipmentUnavailability).where(EquipmentUnavailability.id == outage_id,
+        EquipmentUnavailability.equipment_id == equipment_id, EquipmentUnavailability.clinic_id == user.clinic_id))
+    if not outage:
+        raise HTTPException(404, "Indisponibilitate inexistentă")
+    return await _affected(db, user, equipment, outage)
