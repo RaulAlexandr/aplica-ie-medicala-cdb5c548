@@ -139,3 +139,24 @@ async def test_closed_outage_truncates_affected_appointments_in_history_and_affe
     history = await client.get(f"/api/equipment/{equipment['id']}/history", headers=manager)
     assert affected.status_code == 200 and affected.json() == []
     assert history.status_code == 200 and history.json()["unavailabilities"][0]["affected_appointments"] == []
+
+
+@pytest.mark.asyncio
+async def test_existing_check_can_be_completed_once_and_leaves_due_queue(ctx):
+    client, _sessions = ctx
+    manager = await register(client, "equipment-check-complete@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Autoclav completare", "equipment_type": "autoclav", "responsible_id": identity["id"]})).json()
+    due_at = (datetime.now(UTC) + timedelta(days=2)).replace(microsecond=0)
+    check = await client.post(f"/api/equipment/{equipment['id']}/checks", headers=manager, json={"check_type": "inspection", "due_at": due_at.isoformat()})
+    assert check.status_code == 201
+    check_id = check.json()["id"]
+    assert any(row["id"] == check_id for row in (await client.get("/api/equipment/checks/due", headers=manager)).json())
+    completed = await client.post(f"/api/equipment/{equipment['id']}/checks/{check_id}/complete", headers=manager, json={"result": "Conform fictiv"})
+    assert completed.status_code == 200
+    assert completed.json()["due_at"] == due_at.isoformat()
+    assert completed.json()["completed_by_id"] == identity["id"] and completed.json()["completed_at"]
+    assert completed.json()["result"] == "Conform fictiv"
+    assert all(row["id"] != check_id for row in (await client.get("/api/equipment/checks/due", headers=manager)).json())
+    again = await client.post(f"/api/equipment/{equipment['id']}/checks/{check_id}/complete", headers=manager, json={"result": "Alt rezultat"})
+    assert again.status_code == 409

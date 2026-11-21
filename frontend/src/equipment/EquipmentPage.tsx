@@ -1,13 +1,23 @@
 import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getClinic, listRooms, listStaff, listProcedures, User } from '../api/client';
-import { addCheck, addDependency, addDocument, closeOutage, createEquipment, equipmentHistory, Equipment, listDueChecks, listEquipment, reportOutage, updateEquipment } from './api';
+import { addCheck, addDependency, addDocument, closeOutage, completeCheck, createEquipment, equipmentHistory, Equipment, listDueChecks, listEquipment, reportOutage, updateEquipment } from './api';
 import { clinicLocalToUtc } from '../timezone';
 import './equipment.css';
 
 const managers = ['clinic_manager', 'administrator'];
 const canReport = (role: string) => [...managers, 'doctor', 'assistant'].includes(role);
 const format = (value: string, timezone: string) => new Intl.DateTimeFormat('ro-RO', { dateStyle: 'medium', timeStyle: 'short', timeZone: timezone }).format(new Date(value));
+
+function CheckHistoryItem({ check, timezone, canComplete, pending, onComplete }: {
+  check: Record<string, unknown>; timezone: string; canComplete: boolean; pending: boolean; onComplete: (result: string) => void;
+}) {
+  const [result, setResult] = useState('');
+  return <article className="equipment-check"><p>{check.check_type === 'service' ? 'Service' : 'Verificare'} · scadentă {format(String(check.due_at), timezone)} · {check.completed_at ? `efectuată ${format(String(check.completed_at), timezone)} de ${check.completed_by_id ?? check.author_id}` : 'neefectuată'}</p>
+    {Boolean(check.completed_at && check.result) && <p>Rezultat: {String(check.result)}</p>}
+    {canComplete && !check.completed_at && <form className="equipment-inline" onSubmit={event => { event.preventDefault(); if (result.trim()) onComplete(result.trim()); }}><label>Rezultat<input required value={result} onChange={event => setResult(event.target.value)} /></label><button disabled={pending || !result.trim()}>Marchează efectuată</button></form>}
+  </article>;
+}
 
 export function EquipmentPage({ user }: { user: User }) {
   const manager = managers.includes(user.role);
@@ -26,12 +36,13 @@ export function EquipmentPage({ user }: { user: User }) {
   const update = useMutation({ mutationFn: updateEquipment, onSuccess: refresh });
   const outage = useMutation({ mutationFn: ({ id, data }: { id: string; data: { reason: string; starts_at: string; ends_at: string } }) => reportOutage(id, data), onSuccess: result => { setNotice(result.affected_appointments.length ? `Avertisment: ${result.affected_appointments.length} programări afectate.` : 'Indisponibilitatea a fost înregistrată; nu sunt programări afectate.'); refresh(); } });
   const check = useMutation({ mutationFn: ({ id, data }: { id: string; data: { check_type: string; due_at: string; completed_at?: string; result?: string } }) => addCheck(id, data), onSuccess: refresh });
+  const completion = useMutation({ mutationFn: ({ equipmentId, checkId, result }: { equipmentId: string; checkId: string; result: string }) => completeCheck(equipmentId, checkId, result), onSuccess: refresh });
   const doc = useMutation({ mutationFn: ({ id, data }: { id: string; data: { title: string; document_type: string; reference: string } }) => addDocument(id, data), onSuccess: refresh });
   const dependency = useMutation({ mutationFn: ({ id, data }: { id: string; data: { room_id?: string; procedure_id?: string } }) => addDependency(id, data), onSuccess: refresh });
   const close = useMutation({ mutationFn: ({ equipmentId, outageId }: { equipmentId: string; outageId: string }) => closeOutage(equipmentId, outageId), onSuccess: refresh });
   const current = equipment.data?.find(item => item.id === selected);
   const timezone = clinic.data?.timezone ?? 'Europe/Bucharest';
-  const mutationFailed = [create, update, outage, check, doc, dependency, close].some(mutation => mutation.isError);
+  const mutationFailed = [create, update, outage, check, completion, doc, dependency, close].some(mutation => mutation.isError);
 
   function submitEquipment(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const data = new FormData(event.currentTarget); create.mutate({ name: String(data.get('name')), equipment_type: String(data.get('equipment_type')), serial_number: String(data.get('serial_number')) || null, room_id: String(data.get('room_id')) || null, responsible_id: String(data.get('responsible_id')), state: 'available', is_active: true }); event.currentTarget.reset(); }
   function submitOutage(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!selected) return; const data = new FormData(event.currentTarget); try { outage.mutate({ id: selected, data: { reason: String(data.get('reason')), starts_at: clinicLocalToUtc(String(data.get('starts_at')), timezone), ends_at: clinicLocalToUtc(String(data.get('ends_at')), timezone) } }); event.currentTarget.reset(); } catch (error) { setNotice(error instanceof Error ? error.message : 'Ora introdusă nu este validă.'); } }
@@ -57,7 +68,7 @@ export function EquipmentPage({ user }: { user: User }) {
         {notice && <p className="equipment-warning" role="alert">{notice}</p>}
         {history.isLoading && <p>Se încarcă istoricul…</p>}{history.isError && <p className="error">Istoricul nu s-a putut încărca.</p>}
         {history.data?.unavailabilities.map(item => <article className="equipment-outage" key={item.id}><h3>Indisponibilitate: {item.reason}</h3><p>{format(item.starts_at, timezone)} – {format(item.ends_at, timezone)}{item.closed_at ? ' · închisă' : ''}</p>{!item.closed_at && manager && <button onClick={() => close.mutate({ equipmentId: current.id, outageId: item.id })}>Închide indisponibilitatea</button>}{item.affected_appointments.length > 0 && <div className="equipment-warning"><strong>Atenție: {item.affected_appointments.length} programări afectate</strong>{item.affected_appointments.map(appointment => <p key={appointment.appointment_id}>{appointment.patient} · {format(appointment.starts_at, timezone)} · {appointment.appointment_type} · {appointment.room} · Dr. {appointment.doctor} · Responsabil: {appointment.responsible}</p>)}</div>}</article>)}
-        {history.data?.checks.map(row => <p key={String(row.id)}>Verificare: {String(row.check_type)} · scadentă {format(String(row.due_at), timezone)} · {row.completed_at ? `efectuată ${format(String(row.completed_at), timezone)}` : 'neefectuată'}</p>)}
+        {history.data?.checks.map(row => <CheckHistoryItem key={String(row.id)} check={row} timezone={timezone} canComplete={manager} pending={completion.isPending} onComplete={result => completion.mutate({ equipmentId: current.id, checkId: String(row.id), result })} />)}
         {history.data?.documents.map(row => <p key={String(row.id)}>Document referențiat: {String(row.title)} · {String(row.reference)}</p>)}
       </>}</div></section>
   </main>;

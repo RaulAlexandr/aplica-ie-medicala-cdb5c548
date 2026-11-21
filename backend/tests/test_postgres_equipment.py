@@ -112,3 +112,41 @@ async def test_postgres_half_open_overlap_and_two_simultaneous_closures(postgres
     async with sessions() as session:
         row = await session.scalar(select(EquipmentUnavailability).where(EquipmentUnavailability.id == outage_id))
         assert row.closed_at is not None and row.closed_by_id is not None
+
+
+@pytest.mark.asyncio
+async def test_postgres_two_simultaneous_check_completions_update_once(postgres_ctx):
+    client, sessions = postgres_ctx
+    headers, _identity, _room, _patient, equipment = await setup_equipment(client)
+    check = await client.post(f"/api/equipment/{equipment['id']}/checks", headers=headers, json={
+        "check_type": "inspection", "due_at": "2030-04-01T08:00:00Z"})
+    assert check.status_code == 201
+    check_id = check.json()["id"]
+    ready = asyncio.Event()
+    lock = asyncio.Lock()
+    count = 0
+
+    async def barrier_override():
+        nonlocal count
+        async with sessions() as session:
+            async with lock:
+                count += 1
+                if count == 2:
+                    ready.set()
+            await asyncio.wait_for(ready.wait(), 10)
+            yield session
+
+    app.dependency_overrides[get_db] = barrier_override
+    try:
+        results = await asyncio.wait_for(asyncio.gather(*[
+            client.post(f"/api/equipment/{equipment['id']}/checks/{check_id}/complete", headers=headers,
+                        json={"result": f"Verificare {index}"})
+            for index in range(2)
+        ]), 20)
+        assert sorted(result.status_code for result in results) == [200, 409]
+    finally:
+        app.dependency_overrides.clear()
+    async with sessions() as session:
+        from app.equipment.models import EquipmentCheck
+        rows = list(await session.scalars(select(EquipmentCheck).where(EquipmentCheck.id == check_id)))
+        assert len(rows) == 1 and rows[0].completed_at is not None and rows[0].completed_by_id is not None

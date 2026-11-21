@@ -9,6 +9,7 @@
 .equipment-grid h3 { grid-column: 1 / -1; margin: 0; }
 .equipment-grid label { display: grid; gap: .3rem; }
 .equipment-outage { border-top: 1px solid #e3e7eb; padding-top: .5rem; }
+.equipment-check { border-top: 1px solid #e3e7eb; padding: .4rem 0; }
 .equipment-inline { display: flex; align-items: end; gap: .8rem; }
 .equipment-inline label { display: grid; gap: .3rem; }
 .equipment-warning { border: 1px solid #d68b00; background: #fff4d6; color: #573900; border-radius: .5rem; padding: .8rem; }

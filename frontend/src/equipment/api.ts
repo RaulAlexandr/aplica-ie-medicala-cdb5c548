@@ -13,5 +13,6 @@ export async function equipmentHistory(id: string) { return (await api.get<Equip
 export async function reportOutage(id: string, input: { reason: string; starts_at: string; ends_at: string }) { return (await api.post<Outage>(`/equipment/${id}/unavailabilities`, input)).data; }
 export async function closeOutage(equipmentId: string, outageId: string) { return (await api.post(`/equipment/${equipmentId}/unavailabilities/${outageId}/close`)).data; }
 export async function addCheck(id: string, input: { check_type: string; due_at: string; completed_at?: string; result?: string }) { return (await api.post(`/equipment/${id}/checks`, input)).data; }
+export async function completeCheck(equipmentId: string, checkId: string, result: string) { return (await api.post(`/equipment/${equipmentId}/checks/${checkId}/complete`, { result })).data; }
 export async function addDocument(id: string, input: { title: string; document_type: string; reference: string; notes?: string }) { return (await api.post(`/equipment/${id}/documents`, input)).data; }
 export async function addDependency(id: string, input: { room_id?: string; procedure_id?: string }) { return (await api.post(`/equipment/${id}/dependencies`, input)).data; }

@@ -55,6 +55,7 @@ class EquipmentCheck(Base):
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     result: Mapped[str | None] = mapped_column(Text)
     author_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    completed_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utcnow)
     __table_args__ = (CheckConstraint("check_type IN ('service','inspection')", name="ck_equipment_check_type"),)
 

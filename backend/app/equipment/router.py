@@ -53,6 +53,17 @@ class CheckInput(BaseModel):
     result: str | None = Field(default=None, max_length=2000)
 
 
+class CheckCompletionInput(BaseModel):
+    result: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("result", mode="before")
+    @classmethod
+    def result_not_blank(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Rezultatul este obligatoriu")
+        return value.strip()
+
+
 class OutageInput(BaseModel):
     reason: str = Field(min_length=1, max_length=500)
     starts_at: datetime
@@ -189,9 +200,30 @@ async def add_check(equipment_id: UUID, payload: CheckInput, db: AsyncSession = 
         raise HTTPException(422, "Tipul verificării nu este acceptat")
     due = await _clinic_datetime(db, user.clinic_id, payload.due_at)
     completed = await _clinic_datetime(db, user.clinic_id, payload.completed_at) if payload.completed_at else None
-    value = EquipmentCheck(clinic_id=user.clinic_id, equipment_id=equipment.id, author_id=user.id, check_type=payload.check_type, due_at=due, completed_at=completed, result=payload.result)
+    value = EquipmentCheck(clinic_id=user.clinic_id, equipment_id=equipment.id, author_id=user.id,
+        check_type=payload.check_type, due_at=due, completed_at=completed,
+        completed_by_id=user.id if completed else None, result=payload.result)
     db.add(value); await db.commit(); await db.refresh(value)
     return _json(value)
+
+
+@router.post("/{equipment_id}/checks/{check_id}/complete")
+async def complete_check(equipment_id: UUID, check_id: UUID, payload: CheckCompletionInput,
+                         db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
+    await _equipment(db, user, equipment_id)
+    check = await db.scalar(select(EquipmentCheck).where(
+        EquipmentCheck.id == check_id, EquipmentCheck.equipment_id == equipment_id,
+        EquipmentCheck.clinic_id == user.clinic_id).with_for_update())
+    if check is None:
+        raise HTTPException(404, "Verificarea nu există")
+    if check.completed_at is not None or check.completed_by_id is not None:
+        raise HTTPException(409, "Verificarea este deja efectuată")
+    check.completed_at = utcnow()
+    check.completed_by_id = user.id
+    check.result = payload.result
+    await db.commit()
+    await db.refresh(check)
+    return _json(check)
 
 
 @router.get("/checks/due")

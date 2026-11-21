@@ -36,7 +36,9 @@ def upgrade() -> None:
         sa.Column("equipment_id", UUID, sa.ForeignKey("equipment.id", ondelete="RESTRICT"), nullable=False),
         sa.Column("check_type", sa.String(24), nullable=False), sa.Column("due_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("completed_at", sa.DateTime(timezone=True)), sa.Column("result", sa.Text()),
-        sa.Column("author_id", UUID, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False), sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("author_id", UUID, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+        sa.Column("completed_by_id", UUID, sa.ForeignKey("users.id", ondelete="RESTRICT")),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint("check_type IN ('service','inspection')", name="ck_equipment_check_type"))
     for col in ("clinic_id", "equipment_id"): op.create_index(f"ix_equipment_checks_{col}", "equipment_checks", [col])
     op.create_table("equipment_unavailabilities",
