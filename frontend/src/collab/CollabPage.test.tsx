@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as client from '../api/client';
 import * as team from '../team/api';
 import * as collab from './api';
-import { CollabNavLink, CollabPage, Composer, HandoverCard, MEDICAL_NOTICE, POLL_MS, POLL_OPTIONS, TaskRow } from './CollabPage';
+import { allUnreadLoaded, CollabNavLink, CollabPage, Composer, fetchNewest, HandoverCard, mergeMessages, MEDICAL_NOTICE, POLL_MS, POLL_OPTIONS, TaskRow } from './CollabPage';
 
 const tz = 'Europe/Bucharest';
 const userWith = (role: string) => ({ id: 'me', clinic_id: 'c', full_name: 'Persoană Fictivă', email: 'x@example.com', role }) as client.User;
@@ -36,7 +36,7 @@ beforeEach(() => {
   vi.spyOn(team, 'getSchedule').mockResolvedValue({ timezone: tz, range_start: '', range_end: '', days: [], shifts: [], leaves: [] });
   vi.spyOn(collab, 'getSummary').mockResolvedValue({ unread: 0, pending_handovers: 0 });
   vi.spyOn(collab, 'listConversations').mockResolvedValue([]);
-  vi.spyOn(collab, 'listMessages').mockResolvedValue({ messages: [], has_more: false });
+  vi.spyOn(collab, 'listMessages').mockResolvedValue({ messages: [], has_more: false, oldest_unread_seq: null });
   vi.spyOn(collab, 'markRead').mockResolvedValue({ last_read_seq: 0 });
   vi.spyOn(collab, 'listTasks').mockResolvedValue([]);
   vi.spyOn(collab, 'listHandovers').mockResolvedValue([]);
@@ -240,7 +240,7 @@ describe('T20 unread and polling', () => {
   });
   it('marks a conversation read up to the last displayed message', async () => {
     vi.mocked(collab.listConversations).mockResolvedValue([conversation()]);
-    vi.mocked(collab.listMessages).mockResolvedValue({ messages: [message(1), message(2)], has_more: false });
+    vi.mocked(collab.listMessages).mockResolvedValue({ messages: [message(1), message(2)], has_more: false, oldest_unread_seq: null });
     const r = await render(<CollabPage user={userWith('doctor')} />);
     await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
     await flush();
@@ -274,7 +274,7 @@ describe('T20 unread and polling', () => {
   });
   it('keeps history readable but offers no composer for an inactive person', async () => {
     vi.mocked(collab.listConversations).mockResolvedValue([conversation({ can_write: false, unread: 0 })]);
-    vi.mocked(collab.listMessages).mockResolvedValue({ messages: [message(1)], has_more: false });
+    vi.mocked(collab.listMessages).mockResolvedValue({ messages: [message(1)], has_more: false, oldest_unread_seq: null });
     const r = await render(<CollabPage user={userWith('doctor')} />);
     await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
     await flush();
@@ -282,6 +282,62 @@ describe('T20 unread and polling', () => {
     expect(text(thread)).toContain('Mesaj 1');
     expect(text(thread)).toContain('Persoana este inactivă');
     expect(thread.findAllByType('textarea')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
+});
+
+describe('T20 long history', () => {
+  const history = (count: number, skip: (seq: number) => boolean = () => false) => Array.from({ length: count }, (_, index) => message(index + 1)).filter(item => !skip(item.seq));
+  const server = (all: collab.Message[], oldest: number | null) => async (_id: string, options: collab.PageOptions = {}) => {
+    const visible = options.before ? all.filter(item => item.seq < options.before!) : all;
+    const size = options.limit ?? 50;
+    return { messages: visible.slice(-size), has_more: visible.length > size, oldest_unread_seq: oldest };
+  };
+  const open = async (r: TestRenderer.ReactTestRenderer) => { await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); }); await flush(); };
+  const older = async (r: TestRenderer.ReactTestRenderer) => { await act(async () => { buttons(r, 'Mesaje mai vechi')[0].props.onClick(); }); await flush(); };
+
+  it('merges pages by sequence without duplicates', () => {
+    expect(mergeMessages([message(3), message(4)], [message(1), message(3)]).map(item => item.seq)).toEqual([1, 3, 4]);
+  });
+  it('knows when every unread message is loaded, also with room sequence gaps', () => {
+    expect(allUnreadLoaded([message(9), message(12)], 7)).toBe(false);
+    expect(allUnreadLoaded([message(5), message(9)], 7)).toBe(true);
+    expect(allUnreadLoaded([message(7)], 7)).toBe(true);
+    expect(allUnreadLoaded([message(9)], null)).toBe(true);
+    expect(allUnreadLoaded([], 3)).toBe(false);
+  });
+  it('fetchNewest walks back until it reaches what is already loaded', async () => {
+    const list = vi.spyOn(collab, 'listMessages').mockImplementation(server(history(220), 1));
+    const result = await fetchNewest('k1', 100);
+    expect(result.messages[0].seq).toBeLessThanOrEqual(100);
+    expect(result.messages[result.messages.length - 1].seq).toBe(220);
+    expect(new Set(result.messages.map(item => item.seq)).size).toBe(result.messages.length);
+    expect(list.mock.calls.length).toBeGreaterThan(1);
+  });
+  it('does not mark as read until all unread messages are loaded, then pages to the beginning', async () => {
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ unread: 510 })]);
+    vi.mocked(collab.listMessages).mockImplementation(server(history(510), 1));
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await open(r);
+    expect(collab.markRead).not.toHaveBeenCalled();
+    expect(text(r.root)).toContain('Ai mesaje necitite mai vechi');
+    for (let page = 0; page < 9; page += 1) await older(r);
+    expect(collab.markRead).not.toHaveBeenCalled();
+    await older(r);
+    expect(collab.markRead).toHaveBeenCalledWith('k1', 510);
+    expect(text(r.root)).toContain('Mesaj 1');
+    expect(text(r.root)).not.toContain('Ai mesaje necitite mai vechi');
+    expect(buttons(r, 'Mesaje mai vechi')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
+  it('marks read right away when the unread messages are in the first page, even with older history', async () => {
+    vi.mocked(collab.listConversations).mockResolvedValue([conversation({ unread: 2, last_read_seq: 118 })]);
+    vi.mocked(collab.listMessages).mockImplementation(server(history(120), 119));
+    const r = await render(<CollabPage user={userWith('doctor')} />);
+    await open(r);
+    expect(collab.markRead).toHaveBeenCalledWith('k1', 120);
+    expect(text(r.root)).not.toContain('Ai mesaje necitite mai vechi');
+    expect(buttons(r, 'Mesaje mai vechi')).toHaveLength(1);
     await act(async () => r.unmount());
   });
 });

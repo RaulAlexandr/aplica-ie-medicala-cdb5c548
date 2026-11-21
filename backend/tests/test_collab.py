@@ -633,3 +633,63 @@ async def test_task_cannot_be_taken_once_resolved_or_moved_to_someone_else(env):
     listed = (await client.get("/api/collab/handovers", headers=receiver["auth"])).json()[0]["tasks"]
     assert all(row["can_take"] is False and row["version"] is None for row in listed)
     assert unrelated["id"] not in {row["id"] for row in (await client.get("/api/collab/tasks", headers=receiver["auth"])).json()}
+
+
+# ---------------------------------------------------------------------------------------------
+# Long history
+# ---------------------------------------------------------------------------------------------
+
+
+async def page(client, who, conversation_id, **params):
+    response = await client.get(f"/api/collab/conversations/{conversation_id}/messages", headers=who["auth"], params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.mark.asyncio
+async def test_before_seq_pages_back_to_the_very_first_message(env):
+    client, sessions = env
+    c = await clinic(client, sessions)
+    doctor, assistant = await person(sessions, c["clinic_id"], "doctor"), await person(sessions, c["clinic_id"], "assistant")
+    item = await direct(client, doctor, assistant["id"])
+    async with sessions() as session:
+        now = datetime.now(UTC)
+        session.add_all([CollabMessage(clinic_id=UUID(c["clinic_id"]), conversation_id=UUID(item["id"]), seq=seq, sender_id=UUID(doctor["id"]), body=f"Mesaj {seq}", client_request_id=uuid4(), created_at=now) for seq in range(1, 511)])
+        (await session.get(CollabConversation, UUID(item["id"]))).last_seq = 510
+        await session.commit()
+    first = await page(client, assistant, item["id"])
+    assert [row["seq"] for row in first["messages"]] == list(range(461, 511)) and first["has_more"] is True and first["oldest_unread_seq"] == 1
+    seen = [row["seq"] for row in first["messages"]]
+    current = first
+    while current["has_more"]:
+        current = await page(client, assistant, item["id"], before_seq=current["messages"][0]["seq"], limit=200)
+        seen = [row["seq"] for row in current["messages"]] + seen
+    assert seen == list(range(1, 511))
+    assert (await client.get(f"/api/collab/conversations/{item['id']}/messages", headers=assistant["auth"], params={"before_seq": 0})).status_code == 422
+    assert (await page(client, doctor, item["id"]))["oldest_unread_seq"] is None  # own messages are never unread
+    await client.post(f"/api/collab/conversations/{item['id']}/read", headers=assistant["auth"], json={"seq": 500})
+    assert (await page(client, assistant, item["id"]))["oldest_unread_seq"] == 501
+
+
+@pytest.mark.asyncio
+async def test_before_seq_and_oldest_unread_follow_room_visibility_with_gaps(env):
+    client, sessions = env
+    c = await clinic(client, sessions)
+    reception, first, second = [await person(sessions, c["clinic_id"], role) for role in ("reception", "doctor", "assistant")]
+    first_shift = await on_shift(sessions, c, first["id"], "doctor")
+    to_room = lambda body: client.post(f"/api/collab/rooms/{c['room']}/messages", headers=reception["auth"], json=message(body))
+    conversation = (await to_room("Unu")).json()["conversation_id"]
+    await on_shift(sessions, c, second["id"], "assistant")
+    await to_room("Doi")
+    async with sessions() as session:
+        row = await session.get(TeamShift, UUID(first_shift))
+        row.status, row.cancelled_at, row.cancelled_by_id, row.cancel_reason = "cancelled", datetime.now(UTC), UUID(c["id"]), "Schimb"
+        await session.commit()
+    await to_room("Trei")
+    seqs = lambda body: [row["seq"] for row in body["messages"]]
+    latest = await page(client, second, conversation, limit=1)
+    assert seqs(latest) == [3] and latest["has_more"] is True and latest["oldest_unread_seq"] == 2
+    older = await page(client, second, conversation, before_seq=3)
+    assert seqs(older) == [2] and older["has_more"] is False
+    assert seqs(await page(client, first, conversation, before_seq=3)) == [1, 2]
+    assert (await page(client, first, conversation))["oldest_unread_seq"] == 1

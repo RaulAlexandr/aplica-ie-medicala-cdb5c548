@@ -7,7 +7,8 @@ export type Conversation = {
   last_message: { seq: number; sender: string; preview: string; created_at: string } | null; activity_at: string;
 };
 export type Message = { id: string; conversation_id: string; seq: number; sender_id: string; sender: string; body: string; client_request_id: string; created_at: string; recipients: string[] };
-export type MessagePage = { messages: Message[]; has_more: boolean };
+export type MessagePage = { messages: Message[]; has_more: boolean; oldest_unread_seq: number | null };
+export type PageOptions = { limit?: number; before?: number };
 export type Summary = { unread: number; pending_handovers: number };
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'resolved' | 'cancelled';
 export type TaskEvent = { version: number; from_status: TaskStatus | null; to_status: TaskStatus; from_assignee: string | null; to_assignee: string; reason: string | null; actor: string; created_at: string };
@@ -38,7 +39,7 @@ export const listConversations = async () => (await api.get<Conversation[]>('/co
 export const openDirect = async (userId: string) => (await api.post<Conversation>('/collab/direct', { user_id: userId })).data;
 export const createConversation = async (body: { kind: 'group' | 'channel'; title: string; member_ids: string[] }) => (await api.post<Conversation>('/collab/conversations', body)).data;
 export const addMember = async (id: string, userId: string) => (await api.post<Conversation>(`/collab/conversations/${id}/members`, { user_id: userId })).data;
-export const listMessages = async (id: string, limit: number) => (await api.get<MessagePage>(`/collab/conversations/${id}/messages`, { params: { limit } })).data;
+export const listMessages = async (id: string, options: PageOptions = {}) => (await api.get<MessagePage>(`/collab/conversations/${id}/messages`, { params: { ...(options.limit ? { limit: options.limit } : {}), ...(options.before ? { before_seq: options.before } : {}) } })).data;
 export const sendMessage = async (id: string, body: string, requestId: string) => (await api.post<Message>(`/collab/conversations/${id}/messages`, { body, client_request_id: requestId })).data;
 export const sendToRoom = async (roomId: string, body: string, requestId: string) => (await api.post<Message>(`/collab/rooms/${roomId}/messages`, { body, client_request_id: requestId })).data;
 export const markRead = async (id: string, seq: number) => (await api.post<{ last_read_seq: number }>(`/collab/conversations/${id}/read`, { seq })).data;

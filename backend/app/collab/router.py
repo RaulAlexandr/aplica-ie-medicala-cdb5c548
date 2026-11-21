@@ -475,11 +475,20 @@ async def deliver(db: AsyncSession, response: Response, clinic_id: UUID, sender_
 
 
 @router.get("/conversations/{conversation_id}/messages")
-async def list_messages(conversation_id: UUID, limit: int = Query(default=50, ge=1, le=500), user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)) -> dict:
+async def list_messages(
+    conversation_id: UUID, limit: int = Query(default=50, ge=1, le=500), before_seq: int | None = Query(default=None, ge=1),
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
     await my_conversation(db, user.clinic_id, user.id, conversation_id)
-    rows = list(await db.scalars(select(CollabMessage).join(CollabConversation, CollabConversation.id == CollabMessage.conversation_id).where(
-        CollabMessage.conversation_id == conversation_id, visible_message(user.id)).order_by(CollabMessage.seq.desc()).limit(limit + 1)))
-    return {"messages": await message_rows(db, list(reversed(rows[:limit]))), "has_more": len(rows) > limit}
+    visible = select(CollabMessage).join(CollabConversation, CollabConversation.id == CollabMessage.conversation_id).where(
+        CollabMessage.conversation_id == conversation_id, visible_message(user.id))
+    query = visible if before_seq is None else visible.where(CollabMessage.seq < before_seq)
+    rows = list(await db.scalars(query.order_by(CollabMessage.seq.desc()).limit(limit + 1)))
+    last_read = await db.scalar(select(CollabMember.last_read_seq).where(CollabMember.conversation_id == conversation_id, CollabMember.user_id == user.id))
+    # Room sequences have gaps per person, so the client compares against a real visible message.
+    oldest_unread = await db.scalar(select(func.min(CollabMessage.seq)).join(CollabConversation, CollabConversation.id == CollabMessage.conversation_id).where(
+        CollabMessage.conversation_id == conversation_id, visible_message(user.id), CollabMessage.sender_id != user.id, CollabMessage.seq > last_read))
+    return {"messages": await message_rows(db, list(reversed(rows[:limit]))), "has_more": len(rows) > limit, "oldest_unread_seq": oldest_unread}
 
 
 @router.post("/conversations/{conversation_id}/messages", status_code=status.HTTP_201_CREATED)

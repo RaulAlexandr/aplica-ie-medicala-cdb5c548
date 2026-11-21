@@ -52,6 +52,31 @@ export function CollabNavLink() {
   return <Link to="/messages">Mesaje și sarcini{unread > 0 && <span className="collab-badge" aria-label={`${unread} mesaje necitite`}>{unread > 99 ? '99+' : unread}</span>}</Link>;
 }
 
+export function mergeMessages(current: collab.Message[], incoming: collab.Message[]): collab.Message[] {
+  const bySeq = new Map(current.map(item => [item.seq, item]));
+  for (const item of incoming) bySeq.set(item.seq, item);
+  return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+}
+
+/** Compares against a real message, because room sequences have gaps for each person. */
+export function allUnreadLoaded(messages: collab.Message[], oldestUnread: number | null): boolean {
+  if (oldestUnread === null) return true;
+  return messages.length > 0 && messages[0].seq <= oldestUnread;
+}
+
+/** The newest page, extended backwards until it touches `knownSeq`, so a burst of messages leaves no hole. */
+export async function fetchNewest(id: string, knownSeq: number): Promise<collab.MessagePage> {
+  const first = await collab.listMessages(id);
+  let messages = first.messages;
+  let hasMore = first.has_more;
+  while (knownSeq > 0 && hasMore && messages.length > 0 && messages[0].seq > knownSeq) {
+    const page = await collab.listMessages(id, { before: messages[0].seq });
+    messages = [...page.messages, ...messages];
+    hasMore = page.has_more;
+  }
+  return { messages, has_more: hasMore, oldest_unread_seq: first.oldest_unread_seq };
+}
+
 type Target = { kind: 'conversation' | 'room'; id: string };
 
 /** The draft and its request id survive a failed send: retrying the same text cannot duplicate it. */
@@ -99,18 +124,36 @@ function AddMember({ conversation, members }: { conversation: collab.Conversatio
 
 function Thread({ conversation, user, members, timezone }: { conversation: collab.Conversation; user: User; members: team.TeamMember[]; timezone: string }) {
   const client = useQueryClient();
-  const [limit, setLimit] = useState(50);
   const visible = usePageVisible();
-  const query = useQuery({ queryKey: ['collab', 'messages', conversation.id, limit], queryFn: () => collab.listMessages(conversation.id, limit), ...POLL_OPTIONS });
+  const [store, setStore] = useState<{ messages: collab.Message[]; more: boolean }>({ messages: [], more: false });
+  const newest = useRef(0);
+  const query = useQuery({ queryKey: ['collab', 'messages', conversation.id], queryFn: () => fetchNewest(conversation.id, newest.current), ...POLL_OPTIONS });
+  useEffect(() => {
+    const page = query.data;
+    if (!page?.messages.length) return;
+    newest.current = Math.max(newest.current, page.messages[page.messages.length - 1].seq);
+    // Polling only adds: pages loaded earlier stay, and `more` always describes the oldest loaded message.
+    setStore(current => ({
+      messages: mergeMessages(current.messages, page.messages),
+      more: !current.messages.length || page.messages[0].seq <= current.messages[0].seq ? page.has_more : current.more,
+    }));
+  }, [query.data]);
+  const older = useMutation({
+    mutationFn: () => collab.listMessages(conversation.id, { before: store.messages[0].seq }),
+    onSuccess: page => setStore(current => ({ messages: mergeMessages(current.messages, page.messages), more: page.has_more })),
+  });
+  const olderOnce = useLockedMutate<void>(older);
   const refresh = () => { void client.invalidateQueries({ queryKey: ['collab'] }); };
-  const messages = query.data?.messages ?? [];
+  const messages = store.messages;
   const lastSeq = messages.length ? messages[messages.length - 1].seq : 0;
+  const oldestUnread = query.data?.oldest_unread_seq ?? null;
+  const unreadLoaded = allUnreadLoaded(messages, oldestUnread);
   const marked = useRef(0);
   useEffect(() => {
-    if (!visible || lastSeq === 0 || lastSeq <= conversation.last_read_seq || lastSeq <= marked.current) return;
+    if (!visible || !unreadLoaded || lastSeq === 0 || lastSeq <= conversation.last_read_seq || lastSeq <= marked.current) return;
     marked.current = lastSeq;
     void collab.markRead(conversation.id, lastSeq).then(() => client.invalidateQueries({ queryKey: ['collab', 'summary'] })).then(() => client.invalidateQueries({ queryKey: ['collab', 'conversations'] })).catch(() => { marked.current = 0; });
-  }, [visible, lastSeq, conversation.id, conversation.last_read_seq, client]);
+  }, [visible, unreadLoaded, lastSeq, conversation.id, conversation.last_read_seq, client]);
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => { end.current?.scrollIntoView?.({ block: 'nearest' }); }, [lastSeq]);
   const manager = MANAGERS.includes(user.role);
@@ -121,8 +164,10 @@ function Thread({ conversation, user, members, timezone }: { conversation: colla
     <p className="muted">{KIND_LABELS[conversation.kind]}{conversation.kind === 'room' ? ' · Răspunsul ajunge la cine e repartizat acum.' : conversation.kind === 'direct' ? '' : ` · ${conversation.members.map(m => m.is_active ? m.full_name : `${m.full_name} (inactiv)`).join(', ')}`}</p>
     {canAdd && <AddMember conversation={conversation} members={members} />}
     <Failure error={query.error} />
-    {query.data?.has_more && <button className="secondary" onClick={() => setLimit(value => Math.min(value + 50, 500))} disabled={limit >= 500}>Mesaje mai vechi</button>}
-    {query.data && messages.length === 0 && <p className="muted">Niciun mesaj încă.</p>}
+    <Failure error={older.error} />
+    {messages.length > 0 && !unreadLoaded && <p className="notice-text" role="status">Ai mesaje necitite mai vechi. Încarcă-le cu „Mesaje mai vechi”.</p>}
+    {store.more && <button className="secondary" disabled={older.isPending} onClick={() => olderOnce()}>Mesaje mai vechi</button>}
+    {query.data?.messages.length === 0 && messages.length === 0 && <p className="muted">Niciun mesaj încă.</p>}
     <div className="collab-thread">
       {messages.map(item => <article key={item.id} className={`collab-message${item.sender_id === user.id ? ' mine' : ''}`}>
         <small><strong>{item.sender}</strong> · {formatDateTime(item.created_at, timezone)}{item.recipients.length > 0 ? ` · către: ${item.recipients.join(', ')}` : ''}</small>
