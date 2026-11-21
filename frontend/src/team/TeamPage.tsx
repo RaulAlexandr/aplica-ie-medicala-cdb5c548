@@ -87,8 +87,8 @@ function ScheduleView({ timezone, userId }: { timezone: string; userId: string }
       return <div key={day.date} data-day={day.date}>
         <h3>{formatDay(day.date)}{day.hours !== 24 ? ` · zi de ${day.hours} ore (schimbare de oră)` : ''}</h3>
         {shifts.length === 0 && leaves.length === 0 && <p className="muted">Nicio tură.</p>}
-        {shifts.map(item => <p key={item.id}><strong>{formatTime(item.starts_at, timezone)}–{formatTime(item.ends_at, timezone)}</strong> · {item.user_name}{item.user_id === userId ? ' (tu)' : ''} · {POST_LABELS[item.post]} · {item.room_name ?? 'Fără cabinet'}</p>)}
-        {leaves.map(item => <p key={item.id} className="muted">{item.user_name}{item.user_id === userId ? ' (tu)' : ''} · în concediu</p>)}
+        {shifts.map(item => <p key={item.id}><strong>{formatTime(item.starts_at, timezone)}–{formatTime(item.ends_at, timezone)}</strong> · {item.user_name}{item.user_is_active ? '' : ' · inactiv'}{item.user_id === userId ? ' (tu)' : ''} · {POST_LABELS[item.post]} · {item.room_name ?? 'Fără cabinet'}</p>)}
+        {leaves.map(item => <p key={item.id} className="muted">{item.user_name}{item.user_is_active ? '' : ' · inactiv'}{item.user_id === userId ? ' (tu)' : ''} · în concediu</p>)}
       </div>;
     })}
   </section>;
@@ -261,10 +261,15 @@ function AttendanceManager({ members, timezone }: { members: team.TeamMember[]; 
   return <section className="card" aria-label="Prezența echipei">
     <h2>Prezența echipei</h2>
     <Failure error={alerts.error} />
+    {Boolean(alerts.data?.inactive.length) && <section aria-label="Persoane inactive">
+      <h3>Persoane inactive cu activitate rămasă</h3>
+      <p className="muted">Nimic nu se anulează automat. Verifică turele și pontajele de mai jos.</p>
+      <div className="list">{alerts.data?.inactive.map(item => <article key={item.user_id}><span><strong>{item.user_name}</strong>{item.future_shifts > 0 ? ` · ${item.future_shifts} ${item.future_shifts === 1 ? 'tură viitoare activă' : 'ture viitoare active'}` : ''}{item.open_attendance ? ' · pontaj deschis' : ''}</span></article>)}</div>
+    </section>}
     {Boolean(alerts.data?.review.length) && <section aria-label="Pontaje de verificat">
       <h3>Pontaje de verificat</h3>
       <div className="list">{alerts.data?.review.map(row => <article key={row.id}>
-        <span><strong>{row.user_name}</strong> · {formatDateTime(row.effective_clock_in_at, timezone)} – {row.effective_clock_out_at ? formatDateTime(row.effective_clock_out_at, timezone) : 'deschis de peste 24 de ore'} · {attendanceHours(row)}</span>
+        <span><strong>{row.user_name}</strong>{row.user_is_active ? '' : ' · inactiv'} · {formatDateTime(row.effective_clock_in_at, timezone)} – {row.effective_clock_out_at ? formatDateTime(row.effective_clock_out_at, timezone) : 'deschis de peste 24 de ore'} · {attendanceHours(row)}</span>
         <button className="secondary" onClick={() => setForm({ id: row.id, clock_in: '', clock_out: '', reason: '' })}>Corectează</button>
       </article>)}</div>
     </section>}
@@ -272,7 +277,7 @@ function AttendanceManager({ members, timezone }: { members: team.TeamMember[]; 
     <Failure error={bounds.error ?? query.error} />
     {query.data?.length === 0 && <p className="muted">Nicio prezență în această zi.</p>}
     <div className="list">{query.data?.map(row => <article key={row.id}>
-      <span><strong>{row.user_name}</strong> · {formatDateTime(row.effective_clock_in_at, timezone)} – {row.effective_clock_out_at ? formatDateTime(row.effective_clock_out_at, timezone) : 'în curs'} · {attendanceHours(row)}{row.corrections.map(c => <small key={c.revision}><br />Corecție {c.revision}: {c.reason} ({c.created_by})</small>)}</span>
+      <span><strong>{row.user_name}</strong>{row.user_is_active ? '' : ' · inactiv'} · {formatDateTime(row.effective_clock_in_at, timezone)} – {row.effective_clock_out_at ? formatDateTime(row.effective_clock_out_at, timezone) : 'în curs'} · {attendanceHours(row)}{row.corrections.map(c => <small key={c.revision}><br />Corecție {c.revision}: {c.reason} ({c.created_by})</small>)}</span>
       <button className="secondary" onClick={() => setForm({ id: row.id, clock_in: '', clock_out: '', reason: '' })}>Corectează</button>
     </article>)}</div>
     {form.id && <form onSubmit={e => { e.preventDefault(); correct.mutate(); }} aria-label="Corecție prezență">

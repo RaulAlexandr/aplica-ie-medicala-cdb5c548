@@ -202,6 +202,12 @@ async def names(db: AsyncSession, ids: set[UUID | None]) -> dict[UUID, str]:
     return {row[0]: row[1] for row in (await db.execute(select(User.id, User.full_name).where(User.id.in_(wanted)))).all()}
 
 
+async def inactive_ids(db: AsyncSession, clinic_id: UUID, ids: set[UUID]) -> set[UUID]:
+    if not ids:
+        return set()
+    return set(await db.scalars(select(User.id).where(User.clinic_id == clinic_id, User.id.in_(ids), User.is_active.is_(False))))
+
+
 # ---------------------------------------------------------------------------------------------
 # Profiles
 # ---------------------------------------------------------------------------------------------
@@ -445,13 +451,13 @@ def post_for(person: User, room_id: UUID | None) -> str:
     return post
 
 
-def shift_body(item: TeamShift, people: dict[UUID, str], rooms: dict[UUID, str], zone: ZoneInfo) -> dict:
+def shift_body(item: TeamShift, people: dict[UUID, str], rooms: dict[UUID, str], zone: ZoneInfo, inactive: set[UUID]) -> dict:
     return {
         "id": str(item.id), "user_id": str(item.user_id), "user_name": people.get(item.user_id, "—"),
         "room_id": str(item.room_id) if item.room_id else None, "room_name": rooms.get(item.room_id) if item.room_id else None,
         "post": item.post, "starts_at": iso(item.starts_at), "ends_at": iso(item.ends_at),
         "local_start": utc(item.starts_at).astimezone(zone).isoformat(), "local_end": utc(item.ends_at).astimezone(zone).isoformat(),
-        "status": item.status,
+        "status": item.status, "user_is_active": item.user_id not in inactive,
     }
 
 
@@ -497,7 +503,7 @@ async def create_shift(payload: ShiftCreate, user: User = Depends(require_roles(
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(409, "Tura se suprapune cu o altă tură") from exc
-    return shift_body(item, {person.id: person.full_name}, await room_names(db, user.clinic_id), zone)
+    return shift_body(item, {person.id: person.full_name}, await room_names(db, user.clinic_id), zone, set())
 
 
 @router.post("/shifts/{shift_id}/cancel")
@@ -511,7 +517,7 @@ async def cancel_shift(shift_id: UUID, payload: ReasonBody, user: User = Depends
     item.status, item.cancelled_at, item.cancelled_by_id, item.cancel_reason = "cancelled", utcnow(), user.id, payload.reason
     audit(db, user.clinic_id, user.id, "team_shift", item.id, "cancelled")
     await db.commit()
-    return shift_body(item, await names(db, {item.user_id}), await room_names(db, user.clinic_id), zone)
+    return shift_body(item, await names(db, {item.user_id}), await room_names(db, user.clinic_id), zone, await inactive_ids(db, user.clinic_id, {item.user_id}))
 
 
 # ---------------------------------------------------------------------------------------------
@@ -667,13 +673,14 @@ async def attendance_rows(db: AsyncSession, sessions: list[TeamAttendance]) -> l
         for row in await db.scalars(select(TeamAttendanceCorrection).where(TeamAttendanceCorrection.attendance_id.in_(ids)).order_by(TeamAttendanceCorrection.revision)):
             corrections.setdefault(row.attendance_id, []).append(row)
     people = await names(db, {s.user_id for s in sessions} | {c.created_by_id for rows in corrections.values() for c in rows})
+    inactive = await inactive_ids(db, sessions[0].clinic_id, {s.user_id for s in sessions}) if sessions else set()
     result = []
     now = utcnow()
     for session in sessions:
         history = corrections.get(session.id, [])
         effective_in, effective_out = effective(session, history)
         result.append({
-            "id": str(session.id), "user_id": str(session.user_id), "user_name": people.get(session.user_id, "—"), "source": session.source,
+            "id": str(session.id), "user_id": str(session.user_id), "user_name": people.get(session.user_id, "—"), "user_is_active": session.user_id not in inactive, "source": session.source,
             "clock_in_at": iso(session.clock_in_at), "clock_out_at": iso(session.clock_out_at),
             "effective_clock_in_at": iso(effective_in), "effective_clock_out_at": iso(effective_out), "is_open": session.clock_out_at is None,
             "worked_seconds": int((effective_out - effective_in).total_seconds()) if effective_out else None,
@@ -765,7 +772,18 @@ async def attendance_alerts(user: User = Depends(require_roles(*MANAGERS)), db: 
         TeamAttendance.clinic_id == user.clinic_id, or_(TeamAttendance.clock_out_at.is_(None), TeamAttendance.clock_out_at >= since),
     ).order_by(TeamAttendance.clock_in_at.desc())))
     review = [row for row in await attendance_rows(db, recent) if row["needs_review"] or row["open_over_limit"]]
-    return {"review": review[:REVIEW_LIMIT], "inactive": []}
+    gone = {row[0]: row[1] for row in (await db.execute(select(User.id, User.full_name).where(User.clinic_id == user.clinic_id, User.is_active.is_(False)))).all()}
+    future: dict[UUID, int] = {}
+    open_people: set[UUID] = set()
+    if gone:
+        future = {row[0]: row[1] for row in (await db.execute(select(TeamShift.user_id, func.count()).where(
+            TeamShift.clinic_id == user.clinic_id, TeamShift.status == "active", TeamShift.ends_at > utcnow(), TeamShift.user_id.in_(gone),
+        ).group_by(TeamShift.user_id))).all()}
+        open_people = set(await db.scalars(select(TeamAttendance.user_id).where(
+            TeamAttendance.clinic_id == user.clinic_id, TeamAttendance.clock_out_at.is_(None), TeamAttendance.user_id.in_(gone))))
+    inactive = [{"user_id": str(person), "user_name": name, "future_shifts": future.get(person, 0), "open_attendance": person in open_people}
+                for person, name in sorted(gone.items(), key=lambda pair: pair[1]) if person in future or person in open_people]
+    return {"review": review[:REVIEW_LIMIT], "inactive": inactive}
 
 
 @router.get("/attendance")
@@ -896,9 +914,10 @@ async def schedule(
     ).order_by(TeamLeaveRequest.starts_on, TeamLeaveRequest.id)))
     people = await names(db, {s.user_id for s in shifts} | {l.user_id for l in leaves})
     rooms = await room_names(db, user.clinic_id)
+    inactive = await inactive_ids(db, user.clinic_id, {s.user_id for s in shifts} | {l.user_id for l in leaves})
     return {
         "timezone": clinic.timezone, "range_start": iso(range_start), "range_end": iso(range_end), "days": days,
-        "shifts": [shift_body(item, people, rooms, zone) for item in shifts],
+        "shifts": [shift_body(item, people, rooms, zone, inactive) for item in shifts],
         # Colleagues see only that the person is away; type and reason stay private.
-        "leaves": [{"id": str(l.id), "user_id": str(l.user_id), "user_name": people.get(l.user_id, "—"), "starts_on": l.starts_on.isoformat(), "ends_on": l.ends_on.isoformat()} for l in leaves],
+        "leaves": [{"id": str(l.id), "user_id": str(l.user_id), "user_name": people.get(l.user_id, "—"), "user_is_active": l.user_id not in inactive, "starts_on": l.starts_on.isoformat(), "ends_on": l.ends_on.isoformat()} for l in leaves],
     }

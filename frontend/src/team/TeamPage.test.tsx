@@ -8,7 +8,7 @@ import { addDays, attendanceHours, clinicDate, formatTime, mondayOf, shiftsForDa
 const tz = 'Europe/Bucharest';
 const userWith = (role: string) => ({ id: 'me', clinic_id: 'c', full_name: 'Persoană Fictivă', email: 'x@example.com', role }) as client.User;
 const member = (id: string, role: string): team.TeamMember => ({ id, full_name: `Nume ${id}`, role, is_active: true, specialization: null, job_title: null });
-const shift: team.Shift = { id: 's1', user_id: 'me', user_name: 'Persoană Fictivă', room_id: 'r1', room_name: 'Cabinet 1', post: 'doctor', starts_at: '2026-11-23T07:00:00Z', ends_at: '2026-11-23T11:00:00Z', local_start: '', local_end: '', status: 'active' };
+const shift: team.Shift = { id: 's1', user_id: 'me', user_name: 'Persoană Fictivă', room_id: 'r1', room_name: 'Cabinet 1', post: 'doctor', starts_at: '2026-11-23T07:00:00Z', ends_at: '2026-11-23T11:00:00Z', local_start: '', local_end: '', status: 'active', user_is_active: true };
 const day: team.ScheduleDay = { date: '2026-11-23', start: '2026-11-22T22:00:00Z', end: '2026-11-23T22:00:00Z', hours: 24 };
 const text = (node: TestRenderer.ReactTestInstance): string => node.children.map(child => (typeof child === 'string' ? child : text(child))).join('');
 const flush = async () => { for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); };
@@ -28,7 +28,7 @@ beforeEach(() => {
   vi.spyOn(client, 'listRooms').mockResolvedValue([{ id: 'r1', clinic_id: 'c', name: 'Cabinet 1', is_active: true }]);
   vi.spyOn(team, 'listMembers').mockResolvedValue([member('me', 'doctor'), member('o', 'reception')]);
   vi.spyOn(team, 'myAttendance').mockResolvedValue({ open: null, sessions: [] });
-  vi.spyOn(team, 'getSchedule').mockResolvedValue({ timezone: tz, range_start: day.start, range_end: day.end, days: [day], shifts: [shift], leaves: [{ id: 'l1', user_id: 'o', user_name: 'Nume o', starts_on: day.date, ends_on: day.date }] });
+  vi.spyOn(team, 'getSchedule').mockResolvedValue({ timezone: tz, range_start: day.start, range_end: day.end, days: [day], shifts: [shift], leaves: [{ id: 'l1', user_id: 'o', user_name: 'Nume o', starts_on: day.date, ends_on: day.date, user_is_active: true }] });
   vi.spyOn(team, 'listLeave').mockResolvedValue([]);
   vi.spyOn(team, 'listDocuments').mockResolvedValue([]);
   vi.spyOn(team, 'listAttendance').mockResolvedValue([]);
@@ -93,6 +93,32 @@ describe('T19 forgotten attendance', () => {
     const r = await render('doctor');
     expect(team.attendanceAlerts).not.toHaveBeenCalled();
     expect(section(r, 'Pontaje de verificat')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
+});
+
+describe('T19 inactive people', () => {
+  it('marks an inactive person in the schedule for every role', async () => {
+    vi.mocked(team.getSchedule).mockResolvedValue({ timezone: tz, range_start: day.start, range_end: day.end, days: [day], shifts: [{ ...shift, user_id: 'x', user_name: 'Nume plecat', user_is_active: false }], leaves: [{ id: 'l2', user_id: 'y', user_name: 'Nume absent', starts_on: day.date, ends_on: day.date, user_is_active: false }] });
+    const r = await render('reception');
+    const plan = text(section(r, 'Cine lucrează unde și când')[0]);
+    expect(plan).toContain('Nume plecat · inactiv');
+    expect(plan).toContain('Nume absent · inactiv');
+    await act(async () => r.unmount());
+  });
+  it('marks an inactive person in the team attendance list', async () => {
+    vi.mocked(team.listAttendance).mockResolvedValue([session({ user_name: 'Nume plecat', user_is_active: false })]);
+    const r = await render('clinic_manager');
+    expect(text(section(r, 'Prezența echipei')[0])).toContain('Nume plecat · inactiv');
+    await act(async () => r.unmount());
+  });
+  it('warns the manager about future shifts and open attendance of inactive people', async () => {
+    vi.mocked(team.attendanceAlerts).mockResolvedValue({ review: [], inactive: [{ user_id: 'x', user_name: 'Nume plecat', future_shifts: 2, open_attendance: true }] });
+    const r = await render('clinic_manager');
+    const warning = text(section(r, 'Persoane inactive')[0]);
+    expect(warning).toContain('Nume plecat');
+    expect(warning).toContain('2 ture viitoare active');
+    expect(warning).toContain('pontaj deschis');
     await act(async () => r.unmount());
   });
 });

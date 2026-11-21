@@ -13,10 +13,10 @@ export type TeamDocument = {
 };
 export type Shift = {
   id: string; user_id: string; user_name: string; room_id: string | null; room_name: string | null; post: 'doctor' | 'assistant' | 'front_desk';
-  starts_at: string; ends_at: string; local_start: string; local_end: string; status: string;
+  starts_at: string; ends_at: string; local_start: string; local_end: string; status: string; user_is_active: boolean;
 };
 export type ScheduleDay = { date: string; start: string; end: string; hours: number };
-export type ScheduleLeave = { id: string; user_id: string; user_name: string; starts_on: string; ends_on: string };
+export type ScheduleLeave = { id: string; user_id: string; user_name: string; starts_on: string; ends_on: string; user_is_active: boolean };
 export type Schedule = { timezone: string; range_start: string; range_end: string; days: ScheduleDay[]; shifts: Shift[]; leaves: ScheduleLeave[] };
 export type ShiftInput = { user_id: string; room_id: string | null; local_start: string; local_end: string; start_fold?: 0 | 1; end_fold?: 0 | 1 };
 export type LeaveType = 'annual' | 'medical' | 'unpaid' | 'other';

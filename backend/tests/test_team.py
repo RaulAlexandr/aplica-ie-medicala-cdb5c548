@@ -509,6 +509,61 @@ async def test_manager_alerts_list_sessions_to_review_within_the_clinic(env):
     assert (await client.get("/api/team/attendance/alerts", headers=other["auth"])).json()["review"] == []
 
 
+async def deactivate(sessions, user_id):
+    async with sessions() as session:
+        (await session.get(User, UUID(user_id))).is_active = False
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_inactive_person_is_marked_and_nothing_is_cancelled_or_closed(env):
+    client, sessions = env
+    c, other = await clinic(client, sessions), await clinic(client, sessions)
+    doctor, active = await person(sessions, c["clinic_id"], "doctor"), await person(sessions, c["clinic_id"], "assistant")
+    gone_without_work = await person(sessions, c["clinic_id"], "reception")
+    now = datetime.now(UTC).replace(microsecond=0)
+    future = (now + timedelta(days=10)).date().isoformat()
+    created = await client.post("/api/team/shifts", headers=c["auth"], json=shift(doctor["id"], c["room"], f"{future}T09:00:00", f"{future}T13:00:00"))
+    assert created.status_code == 201 and created.json()["user_is_active"] is True
+    assert (await client.post("/api/team/shifts", headers=c["auth"], json=shift(active["id"], c["room"], f"{future}T09:00:00", f"{future}T13:00:00"))).status_code == 201
+    leave = await client.post("/api/team/leave", headers=c["auth"], json={"user_id": doctor["id"], "leave_type": "annual", "starts_on": (now + timedelta(days=12)).date().isoformat(), "ends_on": (now + timedelta(days=12)).date().isoformat()})
+    assert (await client.post(f"/api/team/leave/{leave.json()['id']}/approve", headers=c["auth"])).status_code == 200
+    opened = await stored_session(sessions, c, doctor["id"], now - timedelta(hours=2), None)
+    await deactivate(sessions, doctor["id"])
+    await deactivate(sessions, gone_without_work["id"])
+
+    plan = (await client.get("/api/team/schedule", params={"week_start": future}, headers=active["auth"])).json()
+    marks = {row["user_id"]: row["user_is_active"] for row in plan["shifts"]}
+    assert marks == {doctor["id"]: False, active["id"]: True}
+    later = (await client.get("/api/team/schedule", params={"day": (now + timedelta(days=12)).date().isoformat()}, headers=c["auth"])).json()
+    assert later["leaves"][0]["user_is_active"] is False
+    listed = await client.get("/api/team/attendance", params={"start": (now - timedelta(hours=3)).isoformat(), "end": now.isoformat()}, headers=c["auth"])
+    assert [(row["id"], row["user_is_active"]) for row in listed.json()] == [(opened, False)]
+
+    alerts = (await client.get("/api/team/attendance/alerts", headers=c["auth"])).json()
+    assert alerts["inactive"] == [{"user_id": doctor["id"], "user_name": "doctor fictiv", "future_shifts": 1, "open_attendance": True}]
+    assert (await client.get("/api/team/attendance/alerts", headers=other["auth"])).json()["inactive"] == []
+    async with sessions() as session:
+        assert (await session.get(TeamShift, UUID(created.json()["id"]))).status == "active"
+        assert (await session.get(TeamAttendance, UUID(opened))).clock_out_at is None
+
+
+@pytest.mark.asyncio
+async def test_inactive_alert_ignores_finished_and_cancelled_shifts(env):
+    client, sessions = env
+    c = await clinic(client, sessions)
+    doctor = await person(sessions, c["clinic_id"], "doctor")
+    future = (datetime.now(UTC) + timedelta(days=10)).date().isoformat()
+    created = await client.post("/api/team/shifts", headers=c["auth"], json=shift(doctor["id"], c["room"], f"{future}T09:00:00", f"{future}T13:00:00"))
+    assert (await client.post(f"/api/team/shifts/{created.json()['id']}/cancel", headers=c["auth"], json={"reason": "Anulată"})).status_code == 200
+    past = datetime.now(UTC) - timedelta(days=5)
+    async with sessions() as session:
+        session.add(TeamShift(clinic_id=UUID(c["clinic_id"]), user_id=UUID(doctor["id"]), room_id=UUID(c["room"]), post="doctor", starts_at=past, ends_at=past + timedelta(hours=4), status="active", created_by_id=UUID(c["id"])))
+        await session.commit()
+    await deactivate(sessions, doctor["id"])
+    assert (await client.get("/api/team/attendance/alerts", headers=c["auth"])).json()["inactive"] == []
+
+
 @pytest.mark.asyncio
 async def test_attendance_is_separate_from_procedure_timers(env):
     client, sessions = env
