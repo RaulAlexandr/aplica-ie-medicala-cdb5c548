@@ -4,7 +4,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,15 +69,6 @@ class CheckInput(BaseModel):
     completed_at: datetime | None = None
     result: str | None = Field(default=None, max_length=2000)
 
-    @field_validator("result", mode="before")
-    @classmethod
-    def clean_result(cls, value):
-        if value is None:
-            return None
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError("Rezultatul nu poate fi gol")
-        return value.strip()
-
 
 class CheckCompletionInput(BaseModel):
     result: str = Field(min_length=1, max_length=2000)
@@ -113,12 +104,6 @@ class DocumentInput(BaseModel):
 class DependencyInput(BaseModel):
     room_id: UUID | None = None
     procedure_id: UUID | None = None
-
-    @model_validator(mode="after")
-    def exactly_one_target(self):
-        if (self.room_id is None) == (self.procedure_id is None):
-            raise ValueError("Alege cabinetul sau serviciul, nu ambele")
-        return self
 
 
 def _json(row):
@@ -263,16 +248,21 @@ async def add_check(equipment_id: UUID, payload: CheckInput, db: AsyncSession = 
     equipment = await _equipment(db, user, equipment_id)
     if payload.check_type not in {"service", "inspection"}:
         raise HTTPException(422, "Tipul verificării nu este acceptat")
+    result = payload.result.strip() if payload.result is not None else None
+    if payload.result is not None and not result:
+        raise HTTPException(422, "Rezultatul nu poate fi gol")
     due = await _clinic_datetime(db, user.clinic_id, payload.due_at)
     completed = await _clinic_datetime(db, user.clinic_id, payload.completed_at) if payload.completed_at else None
     if completed is not None:
         if completed > utcnow():
             raise HTTPException(422, "Momentul efectuării nu poate fi în viitor")
-        if payload.result is None:
+        if result is None:
             raise HTTPException(422, "Rezultatul este obligatoriu pentru o verificare efectuată")
+    elif result is not None:
+        raise HTTPException(422, "Rezultatul se completează numai pentru o verificare efectuată")
     value = EquipmentCheck(clinic_id=user.clinic_id, equipment_id=equipment.id, author_id=user.id,
         check_type=payload.check_type, due_at=due, completed_at=completed,
-        completed_by_id=user.id if completed else None, result=payload.result)
+        completed_by_id=user.id if completed else None, result=result)
     db.add(value); await db.commit(); await db.refresh(value)
     return _json(value)
 
@@ -316,8 +306,8 @@ async def add_document(equipment_id: UUID, payload: DocumentInput, db: AsyncSess
 @router.post("/{equipment_id}/dependencies", status_code=201)
 async def add_dependency(equipment_id: UUID, payload: DependencyInput, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*MANAGERS))):
     await _equipment(db, user, equipment_id)
-    if not payload.room_id and not payload.procedure_id:
-        raise HTTPException(422, "Selectează cabinetul sau serviciul")
+    if (payload.room_id is None) == (payload.procedure_id is None):
+        raise HTTPException(422, "Alege cabinetul sau serviciul, nu ambele")
     if payload.room_id and not await db.scalar(select(Room.id).where(Room.id == payload.room_id, Room.clinic_id == user.clinic_id)):
         raise HTTPException(404, "Cabinet inexistent")
     if payload.procedure_id and not await db.scalar(select(ProcedureCatalog.id).where(ProcedureCatalog.id == payload.procedure_id, ProcedureCatalog.clinic_id == user.clinic_id)):

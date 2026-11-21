@@ -334,8 +334,11 @@ async def test_dependency_requires_exactly_one_target_and_allows_separate_servic
         await session.commit()
         service_ids = [str(service.id) for service in services]
     path = f"/api/equipment/{equipment['id']}/dependencies"
-    assert (await client.post(path, headers=manager, json={"room_id": room["id"], "procedure_id": service_ids[0]})).status_code == 422
-    assert (await client.post(path, headers=manager, json={})).status_code == 422
+    both_targets = await client.post(path, headers=manager, json={"room_id": room["id"], "procedure_id": service_ids[0]})
+    no_target = await client.post(path, headers=manager, json={})
+    assert both_targets.status_code == no_target.status_code == 422
+    assert both_targets.json()["detail"] == "Alege cabinetul sau serviciul, nu ambele"
+    assert no_target.json()["detail"] == "Alege cabinetul sau serviciul, nu ambele"
     assert (await client.post(path, headers=manager, json={"room_id": room["id"]})).status_code == 201
     assert (await client.post(path, headers=manager, json={"procedure_id": service_ids[0]})).status_code == 201
     assert (await client.post(path, headers=manager, json={"procedure_id": service_ids[1]})).status_code == 201
@@ -361,3 +364,29 @@ async def test_completed_check_rejects_future_time_and_missing_result(ctx):
         "completed_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat()})
     assert future.status_code == 422
     assert missing_result.status_code == 422
+    assert missing_result.json()["detail"] == "Rezultatul este obligatoriu pentru o verificare efectuată"
+
+
+@pytest.mark.asyncio
+async def test_check_result_requires_completion_time(ctx):
+    client, _sessions = ctx
+    manager = await register(client, "equipment-result-without-completion@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit rezultat fără efectuare", "equipment_type": "unit", "responsible_id": identity["id"]})).json()
+    response = await client.post(f"/api/equipment/{equipment['id']}/checks", headers=manager, json={
+        "check_type": "inspection", "due_at": (datetime.now(UTC) + timedelta(days=2)).isoformat(), "result": "Conform fictiv"})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Rezultatul se completează numai pentru o verificare efectuată"
+
+
+@pytest.mark.asyncio
+async def test_blank_check_result_returns_plain_romanian_validation_detail(ctx):
+    client, _sessions = ctx
+    manager = await register(client, "equipment-blank-result@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit rezultat gol", "equipment_type": "unit", "responsible_id": identity["id"]})).json()
+    response = await client.post(f"/api/equipment/{equipment['id']}/checks", headers=manager, json={
+        "check_type": "inspection", "due_at": (datetime.now(UTC) + timedelta(days=2)).isoformat(),
+        "completed_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(), "result": "   "})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Rezultatul nu poate fi gol"
