@@ -155,7 +155,7 @@ async def overview(user: User=Depends(require_roles(*READ)),db: AsyncSession=Dep
             row["below_minimum"] = below_minimum
     return {"items":summaries,
         "locations":[{"id":str(x.id),"name":x.name,"is_active":x.is_active} for x in locations],
-        "lots":[{"id":str(lot.id),"item_id":str(lot.item_id),"item":next((x.name for x in items if x.id==lot.item_id),""),"code":lot.code,"expires_on":lot.expires_on.isoformat() if lot.expires_on else None} for lot in all_lots],
+        "lots":[{"id":str(lot.id),"item_id":str(lot.item_id),"item":next((x.name for x in items if x.id==lot.item_id),""),"code":lot.code,"expires_on":lot.expires_on.isoformat() if lot.expires_on else None,"expired":bool(lot.expires_on and lot.expires_on<as_of)} for lot in all_lots],
         "balances":result}
 
 @router.get("/movements")

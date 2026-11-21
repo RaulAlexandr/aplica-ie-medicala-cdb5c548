@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -8,7 +8,7 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth.service import create_access_token
-from app.database import Base, User, get_db
+from app.database import Base, Clinic, User, get_db
 from app.inventory.models import InventoryItem, InventoryLocation, InventoryLot, InventoryMovement
 from app.main import app
 
@@ -205,3 +205,16 @@ async def test_history_contains_author_names_and_correction_status(ctx):
     history=await c.get("/api/inventory/movements",headers=h,params={"item_id":item});assert history.status_code==200
     old=next(x for x in history.json() if x["id"]==row["id"]);new=next(x for x in history.json() if x["id"]==corrected.json()["id"])
     assert old["is_corrected"] is True and new["is_correction"] is True
+
+@pytest.mark.asyncio
+async def test_lot_expired_flag_uses_clinic_date_even_without_stock(ctx,monkeypatch):
+    import app.inventory.router as inventory_router
+    c,s=ctx;h=await register(c,"inv-clinic-expiry@example.com");_item,lot,_loc,_dest=await setup_stock(c,h,minimum="0",expires="2026-11-20")
+    clinic_id=(await c.get("/api/auth/me",headers=h)).json()["clinic_id"]
+    async with s() as db:
+        clinic=await db.get(Clinic,clinic_id);clinic.timezone="Europe/Bucharest";await db.commit()
+    monkeypatch.setattr(inventory_router,"utcnow",lambda:datetime(2026,11,21,0,30,tzinfo=timezone.utc))
+    result=await c.get("/api/inventory",headers=h);assert result.status_code==200
+    lot_view=next(x for x in result.json()["lots"] if x["id"]==lot)
+    assert lot_view["expired"] is True
+    assert all(x["quantity"]=="0.000" for x in result.json()["balances"] if x["lot_id"]==lot)

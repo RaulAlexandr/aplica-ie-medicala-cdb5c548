@@ -2,7 +2,7 @@ import { api } from '../api/client';
 
 export type StockItem = { id:string; name:string; unit:string; minimum_quantity:string; quantity_total:string; below_minimum:boolean; is_active:boolean };
 export type StockLocation = { id:string; name:string; is_active:boolean };
-export type StockLot = { id:string; item_id:string; item:string; code:string; expires_on:string|null };
+export type StockLot = { id:string; item_id:string; item:string; code:string; expires_on:string|null; expired:boolean };
 export type Balance = { item_id:string; item:string; unit:string; minimum_quantity:string; item_total:string; lot_id:string; lot:string; expires_on:string|null; location_id:string; location:string; quantity:string; below_minimum:boolean; expired:boolean; expiring_soon:boolean };
 export type Movement = { id:string; item_id:string; item:string; lot_id:string; lot:string; location_id:string; location:string; author:string; kind:string; quantity:string; reason:string; transfer_id:string|null; reverses_movement_id:string|null; is_correction:boolean; is_corrected:boolean; created_at:string };
 export type MovementFilters = { item_id?:string; lot_id?:string; location_id?:string; kind?:string };
