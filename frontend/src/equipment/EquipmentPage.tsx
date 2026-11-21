@@ -15,7 +15,7 @@ function CheckHistoryItem({ check, timezone, canComplete, pending, onComplete }:
   const [result, setResult] = useState('');
   return <article className="equipment-check"><p>{check.check_type === 'service' ? 'Service' : 'Verificare'} · scadentă {format(String(check.due_at), timezone)} · {check.completed_at ? `efectuată ${format(String(check.completed_at), timezone)} de ${check.completed_by_id ?? check.author_id}` : 'neefectuată'}</p>
     {Boolean(check.completed_at && check.result) && <p>Rezultat: {String(check.result)}</p>}
-    {canComplete && !check.completed_at && <form className="equipment-inline" onSubmit={event => { event.preventDefault(); if (result.trim()) onComplete(result.trim()); }}><label>Rezultat<input required value={result} onChange={event => setResult(event.target.value)} /></label><button disabled={pending || !result.trim()}>Marchează efectuată</button></form>}
+    {canComplete && !check.completed_at && <form className="equipment-inline" aria-label={`Completează verificarea ${String(check.id)}`} onSubmit={event => { event.preventDefault(); if (result.trim()) onComplete(result.trim()); }}><label>Rezultatul verificării<input required value={result} onChange={event => setResult(event.target.value)} /></label><button disabled={pending || !result.trim()}>Marchează efectuată</button></form>}
   </article>;
 }
 

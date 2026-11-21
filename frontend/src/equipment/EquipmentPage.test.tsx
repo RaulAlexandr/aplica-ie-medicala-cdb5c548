@@ -1,0 +1,109 @@
+import TestRenderer, { act } from 'react-test-renderer';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as clientApi from '../api/client';
+import type { User } from '../api/client';
+import * as equipmentApi from './api';
+import type { Equipment, EquipmentHistory } from './api';
+import { EquipmentPage } from './EquipmentPage';
+
+const equipment: Equipment = {
+  id: 'equipment-1', name: 'Unit fictiv', equipment_type: 'unit dentar', serial_number: null,
+  room_id: null, responsible_id: 'manager-1', state: 'available', is_active: true,
+};
+const affected = (match: 'sigur' | 'posibil', appointment_id: string) => ({
+  match, appointment_id, patient: 'Pacient Fictiv', starts_at: '2026-11-25T09:00:00Z', ends_at: '2026-11-25T09:30:00Z',
+  doctor: 'Dr. Fictiv', room: 'Cabinet fictiv', appointment_type: 'Detartraj complet', responsible: 'Manager Fictiv',
+});
+const historyWith = (values: Partial<EquipmentHistory> = {}): EquipmentHistory => ({
+  checks: [], documents: [], dependencies: [], unavailabilities: [], ...values,
+});
+
+function text(node: TestRenderer.ReactTestInstance): string {
+  return node.children.map(child => typeof child === 'string' ? child : text(child)).join('');
+}
+function tree(user: User, queryClient: QueryClient) {
+  return <QueryClientProvider client={queryClient}><EquipmentPage user={user} /></QueryClientProvider>;
+}
+function newClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
+}
+const user = (role: string): User => ({ id: `${role}-1`, clinic_id: 'clinic-1', full_name: 'Utilizator Fictiv', email: `${role}@example.test`, role });
+async function flush() { await new Promise(resolve => setTimeout(resolve, 10)); }
+async function render(userValue: User, history: EquipmentHistory = historyWith()) {
+  vi.spyOn(clientApi, 'getClinic').mockResolvedValue({ timezone: 'Europe/Bucharest' } as never);
+  vi.spyOn(clientApi, 'listRooms').mockResolvedValue([]);
+  vi.spyOn(clientApi, 'listStaff').mockResolvedValue([]);
+  vi.spyOn(clientApi, 'listProcedures').mockResolvedValue([]);
+  vi.spyOn(equipmentApi, 'listEquipment').mockResolvedValue([equipment]);
+  vi.spyOn(equipmentApi, 'listDueChecks').mockResolvedValue([]);
+  vi.spyOn(equipmentApi, 'equipmentHistory').mockResolvedValue(history);
+  let renderer!: TestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = TestRenderer.create(tree(userValue, newClient())); await flush(); });
+  let row = renderer.root.findAllByType('button').find(button => text(button).includes(equipment.name));
+  for (let attempt = 0; !row && attempt < 30; attempt += 1) {
+    await act(async () => { await flush(); });
+    row = renderer.root.findAllByType('button').find(button => text(button).includes(equipment.name));
+  }
+  if (!row) throw new Error(`Equipment row was not rendered: ${text(renderer.root)}`);
+  await act(async () => { row.props.onClick(); await flush(); });
+  return renderer;
+}
+
+afterEach(() => vi.restoreAllMocks());
+
+describe('T21 equipment screen', () => {
+  it('lets reception read affected appointments only, lets doctors report, and lets managers administer', async () => {
+    const affectedHistory = historyWith({ unavailabilities: [{ id: 'outage-1', equipment_id: equipment.id, reason: 'Defecțiune fictivă', starts_at: '2026-11-25T08:00:00Z', ends_at: '2026-11-25T10:00:00Z', closed_at: null, affected_appointments: [affected('sigur', 'appointment-1')] }] });
+    const reception = await render(user('reception'), affectedHistory);
+    expect(text(reception.root)).toContain('Potrivire sigur');
+    expect(reception.root.findAllByType('form')).toHaveLength(0);
+    expect(text(reception.root)).not.toContain('Înregistrează echipament');
+    await act(async () => reception.unmount());
+
+    const doctor = await render(user('doctor'));
+    expect(doctor.root.findAllByType('form').some(form => text(form).includes('Raportează indisponibilitate'))).toBe(true);
+    expect(text(doctor.root)).not.toContain('Înregistrează echipament');
+    expect(doctor.root.findAllByType('form').some(form => text(form).includes('Service / verificare periodică'))).toBe(false);
+    await act(async () => doctor.unmount());
+
+    const manager = await render(user('clinic_manager'));
+    expect(text(manager.root)).toContain('Înregistrează echipament');
+    expect(text(manager.root)).toContain('Service / verificare periodică');
+    await act(async () => manager.unmount());
+  });
+
+  it('shows both certain and possible affected-appointment matches', async () => {
+    const history = historyWith({ unavailabilities: [{ id: 'outage-1', equipment_id: equipment.id, reason: 'Motiv fictiv', starts_at: '2026-11-25T08:00:00Z', ends_at: '2026-11-25T10:00:00Z', closed_at: null, affected_appointments: [affected('sigur', 'appointment-1'), affected('posibil', 'appointment-2')] }] });
+    const renderer = await render(user('clinic_manager'), history);
+    expect(text(renderer.root)).toContain('Potrivire sigur');
+    expect(text(renderer.root)).toContain('Potrivire posibil');
+    await act(async () => renderer.unmount());
+  });
+
+  it('submits a result to complete the existing verification', async () => {
+    const history = historyWith({ checks: [{ id: 'check-1', check_type: 'inspection', due_at: '2026-11-24T08:00:00Z', completed_at: null, completed_by_id: null, author_id: 'manager-1', result: null }] });
+    const complete = vi.spyOn(equipmentApi, 'completeCheck').mockResolvedValue({} as never);
+    const renderer = await render(user('clinic_manager'), history);
+    const form = renderer.root.findByProps({ 'aria-label': 'Completează verificarea check-1' });
+    const input = form.findByType('input');
+    act(() => input.props.onChange({ target: { value: 'Conform fictiv' } }));
+    await act(async () => { form.props.onSubmit({ preventDefault() {} }); await flush(); });
+    expect(complete).toHaveBeenCalledWith(equipment.id, 'check-1', 'Conform fictiv');
+    await act(async () => renderer.unmount());
+  });
+
+  it('warns and scrolls to a prefilled outage report when equipment becomes broken', async () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
+    const update = vi.spyOn(equipmentApi, 'updateEquipment').mockResolvedValue({ ...equipment, state: 'broken', unavailability_required: true, open_unavailability_id: null });
+    const renderer = await render(user('clinic_manager'));
+    const state = renderer.root.findAllByType('select').find(select => select.props.value === 'available');
+    if (!state) throw new Error('Equipment state selector was not rendered');
+    await act(async () => { state.props.onChange({ target: { value: 'broken' } }); await flush(); });
+    expect(update.mock.calls[0]?.[0]).toEqual({ ...equipment, state: 'broken' });
+    expect(text(renderer.root)).toContain('nu are o indisponibilitate deschisă');
+    const reason = renderer.root.findAllByType('input').find(input => input.props.name === 'reason');
+    expect(reason?.props.value).toBe('Defecțiune raportată pentru Unit fictiv');
+    await act(async () => renderer.unmount());
+  });
+});
