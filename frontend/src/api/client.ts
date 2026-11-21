@@ -121,13 +121,47 @@ api.interceptors.response.use(
   },
 );
 
+const GENERIC_INVALID = 'Datele introduse nu sunt valide.';
+const VALUE_ERROR_PREFIX = 'Value error, ';
+type ValidationItem = { type?: string; msg?: unknown; ctx?: Record<string, unknown> };
+
+// "caractere" takes "de" after numbers of 20 and above (160 de caractere, 3 caractere).
+const characters = (n: number) => `${n} ${n === 1 ? 'caracter' : n % 100 === 0 || n % 100 >= 20 ? 'de caractere' : 'caractere'}`;
+const limit = (ctx: ValidationItem['ctx'], key: string): number | string | undefined => {
+  const value = ctx?.[key];
+  return typeof value === 'number' || typeof value === 'string' ? value : undefined;
+};
+
+// Pydantic 422 items: Romanian text written by the server (ValueError) is kept, English built-in texts are translated by `type`.
+function validationMessage(item: ValidationItem): string {
+  if (item.type === 'value_error' || (typeof item.msg === 'string' && item.msg.startsWith(VALUE_ERROR_PREFIX))) {
+    const text = typeof item.msg === 'string' ? item.msg.replace(VALUE_ERROR_PREFIX, '') : '';
+    return text || GENERIC_INVALID;
+  }
+  const max = limit(item.ctx, 'max_length'), min = limit(item.ctx, 'min_length');
+  switch (item.type) {
+    case 'string_too_long': return max === undefined ? 'Textul este prea lung.' : `Textul este prea lung (maximum ${characters(Number(max))}).`;
+    case 'string_too_short':
+      if (min === undefined) return 'Textul este prea scurt.';
+      return Number(min) <= 1 ? 'Câmpul nu poate fi gol.' : `Textul este prea scurt (minimum ${characters(Number(min))}).`;
+    case 'missing': return 'Câmpul este obligatoriu.';
+    case 'greater_than': return limit(item.ctx, 'gt') === undefined ? 'Valoarea este prea mică.' : `Valoarea trebuie să fie mai mare decât ${limit(item.ctx, 'gt')}.`;
+    case 'greater_than_equal': return limit(item.ctx, 'ge') === undefined ? 'Valoarea este prea mică.' : `Valoarea trebuie să fie cel puțin ${limit(item.ctx, 'ge')}.`;
+    case 'less_than_equal': return limit(item.ctx, 'le') === undefined ? 'Valoarea este prea mare.' : `Valoarea trebuie să fie cel mult ${limit(item.ctx, 'le')}.`;
+    case 'decimal_max_digits': return limit(item.ctx, 'max_digits') === undefined ? 'Numărul are prea multe cifre.' : `Numărul are prea multe cifre (maximum ${limit(item.ctx, 'max_digits')}).`;
+    case 'decimal_max_places': return limit(item.ctx, 'decimal_places') === undefined ? 'Numărul are prea multe zecimale.' : `Numărul are prea multe zecimale (maximum ${limit(item.ctx, 'decimal_places')}).`;
+    case 'uuid_parsing': return 'Identificatorul nu este valid.';
+    default: return GENERIC_INVALID;
+  }
+}
+
 const NO_SERVER_RESPONSE = 'Nu s-a putut contacta serverul. Verifică conexiunea și încearcă din nou.';
 
 export function apiErrorMessage(error: unknown): string {
   if (error instanceof AxiosError) {
     const detail = error.response?.data?.detail;
     if (typeof detail === 'string') return detail;
-    if (Array.isArray(detail)) return detail.map((item) => item.msg).join(', ');
+    if (Array.isArray(detail)) return [...new Set(detail.map(validationMessage))].join(' ');
     if (!error.response && error.code !== AxiosError.ERR_CANCELED) return NO_SERVER_RESPONSE;
   }
   return error instanceof Error ? error.message : 'The server returned an error. Please try again.';
