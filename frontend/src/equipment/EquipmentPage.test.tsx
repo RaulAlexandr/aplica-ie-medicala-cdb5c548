@@ -99,6 +99,15 @@ describe('T21 equipment screen', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('labels the doctor without adding a duplicate title', async () => {
+    const appointment = { ...affected('sigur', 'appointment-1'), doctor: 'Dr. Alex Demo' };
+    const history = historyWith({ unavailabilities: [{ id: 'outage-1', equipment_id: equipment.id, reason: 'Defecțiune', starts_at: '2026-11-25T08:00:00Z', ends_at: '2026-11-25T10:00:00Z', closed_at: null, affected_appointments: [appointment] }] });
+    const renderer = await render(user('clinic_manager'), history);
+    expect(text(renderer.root)).toContain('Medic: Dr. Alex Demo');
+    expect(text(renderer.root)).not.toContain('Dr. Dr. Alex Demo');
+    await act(async () => renderer.unmount());
+  });
+
   it('shows Romanian equipment states in the registry', async () => {
     const equipmentItems = (['available', 'maintenance', 'broken', 'retired'] as const).map((state, index) => ({
       ...equipment, id: `equipment-${index}`, name: index === 0 ? equipment.name : `Unit ${index}`, state,
