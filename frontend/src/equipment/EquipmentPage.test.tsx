@@ -145,7 +145,7 @@ describe('T21 equipment screen', () => {
       const target = { kind: item.kind, reset: vi.fn() };
       await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
       expect(target.reset, item.heading).not.toHaveBeenCalled();
-      expect(text(renderer.root)).toContain('Operația nu a reușit.');
+      expect(text(renderer.root)).toContain('Rezultatul este obligatoriu pentru o verificare efectuată');
     }
     create.mockResolvedValue(equipment);
     report.mockResolvedValue({ affected_appointments: [] } as never);
@@ -157,7 +157,7 @@ describe('T21 equipment screen', () => {
       await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
       expect(target.reset, item.heading).toHaveBeenCalledTimes(1);
     }
-    expect(text(renderer.root)).not.toContain('Operația nu a reușit.');
+    expect(text(renderer.root)).not.toContain('Rezultatul este obligatoriu pentru o verificare efectuată');
     await act(async () => renderer.unmount());
   });
 });

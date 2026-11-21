@@ -1,6 +1,6 @@
 import { FormEvent, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getClinic, listRooms, listStaff, listProcedures, User } from '../api/client';
+import { apiErrorMessage, getClinic, listRooms, listStaff, listProcedures, User } from '../api/client';
 import { addCheck, addDependency, addDocument, closeOutage, completeCheck, createEquipment, equipmentHistory, Equipment, listDueChecks, listEquipment, reportOutage, updateEquipment } from './api';
 import { clinicLocalToUtc } from '../timezone';
 import './equipment.css';
@@ -30,13 +30,16 @@ export function EquipmentPage({ user }: { user: User }) {
   const procedures = useQuery({ queryKey: ['procedures'], queryFn: () => listProcedures(undefined, true, 100), enabled: manager });
   const [selected, setSelected] = useState('');
   const [notice, setNotice] = useState('');
+  const [mutationError, setMutationError] = useState('');
   const [outageReason, setOutageReason] = useState('');
   const [dependencyTarget, setDependencyTarget] = useState<'' | 'room' | 'procedure'>('');
   const outageFormRef = useRef<HTMLFormElement>(null);
   const history = useQuery({ queryKey: ['equipment-history', selected], queryFn: () => equipmentHistory(selected), enabled: Boolean(selected) });
   const refresh = () => { void client.invalidateQueries({ queryKey: ['equipment'] }); void client.invalidateQueries({ queryKey: ['equipment-history'] }); };
-  const create = useMutation({ mutationFn: createEquipment, onSuccess: result => { setSelected(result.id); refresh(); } });
-  const update = useMutation({ mutationFn: updateEquipment, onSuccess: result => {
+  const mutationOptions = { onMutate: () => setMutationError(''), onError: (error: unknown) => setMutationError(apiErrorMessage(error)), onSuccess: () => setMutationError('') };
+  const create = useMutation({ mutationFn: createEquipment, ...mutationOptions, onSuccess: result => { setMutationError(''); setSelected(result.id); refresh(); } });
+  const update = useMutation({ mutationFn: updateEquipment, ...mutationOptions, onSuccess: result => {
+    setMutationError('');
     refresh();
     if (result.unavailability_required) {
       setSelected(result.id);
@@ -44,23 +47,21 @@ export function EquipmentPage({ user }: { user: User }) {
       setOutageReason(`${result.state === 'broken' ? 'Defecțiune' : 'Mentenanță'} raportată pentru ${result.name}`);
       requestAnimationFrame(() => outageFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
     }
-  } });
-  const outage = useMutation({ mutationFn: ({ id, data }: { id: string; data: { reason: string; starts_at: string; ends_at: string } }) => reportOutage(id, data), onSuccess: result => { setNotice(result.affected_appointments.length ? `Avertisment: ${result.affected_appointments.length} programări afectate.` : 'Indisponibilitatea a fost înregistrată; nu sunt programări afectate.'); refresh(); } });
-  const check = useMutation({ mutationFn: ({ id, data }: { id: string; data: { check_type: string; due_at: string; completed_at?: string; result?: string } }) => addCheck(id, data), onSuccess: refresh });
-  const completion = useMutation({ mutationFn: ({ equipmentId, checkId, result }: { equipmentId: string; checkId: string; result: string }) => completeCheck(equipmentId, checkId, result), onSuccess: refresh });
-  const doc = useMutation({ mutationFn: ({ id, data }: { id: string; data: { title: string; document_type: string; reference: string } }) => addDocument(id, data), onSuccess: refresh });
-  const dependency = useMutation({ mutationFn: ({ id, data }: { id: string; data: { room_id?: string; procedure_id?: string } }) => addDependency(id, data), onSuccess: refresh });
-  const close = useMutation({ mutationFn: ({ equipmentId, outageId }: { equipmentId: string; outageId: string }) => closeOutage(equipmentId, outageId), onSuccess: refresh });
+  }, onError: mutationOptions.onError });
+  const outage = useMutation({ mutationFn: ({ id, data }: { id: string; data: { reason: string; starts_at: string; ends_at: string } }) => reportOutage(id, data), ...mutationOptions, onSuccess: result => { setMutationError(''); setNotice(result.affected_appointments.length ? `Avertisment: ${result.affected_appointments.length} programări afectate.` : 'Indisponibilitatea a fost înregistrată; nu sunt programări afectate.'); refresh(); } });
+  const check = useMutation({ mutationFn: ({ id, data }: { id: string; data: { check_type: string; due_at: string; completed_at?: string; result?: string } }) => addCheck(id, data), ...mutationOptions, onSuccess: () => { setMutationError(''); refresh(); } });
+  const completion = useMutation({ mutationFn: ({ equipmentId, checkId, result }: { equipmentId: string; checkId: string; result: string }) => completeCheck(equipmentId, checkId, result), ...mutationOptions, onSuccess: () => { setMutationError(''); refresh(); } });
+  const doc = useMutation({ mutationFn: ({ id, data }: { id: string; data: { title: string; document_type: string; reference: string } }) => addDocument(id, data), ...mutationOptions, onSuccess: () => { setMutationError(''); refresh(); } });
+  const dependency = useMutation({ mutationFn: ({ id, data }: { id: string; data: { room_id?: string; procedure_id?: string } }) => addDependency(id, data), ...mutationOptions, onSuccess: () => { setMutationError(''); refresh(); } });
+  const close = useMutation({ mutationFn: ({ equipmentId, outageId }: { equipmentId: string; outageId: string }) => closeOutage(equipmentId, outageId), ...mutationOptions, onSuccess: () => { setMutationError(''); refresh(); } });
   const current = equipment.data?.find(item => item.id === selected);
   const timezone = clinic.data?.timezone ?? 'Europe/Bucharest';
-  const mutationFailed = [create, update, outage, check, completion, doc, dependency, close].some(mutation => mutation.isError);
-
   function submitEquipment(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); create.mutate({ name: String(data.get('name')), equipment_type: String(data.get('equipment_type')), serial_number: String(data.get('serial_number')) || null, room_id: String(data.get('room_id')) || null, responsible_id: String(data.get('responsible_id')), state: 'available', is_active: true }, { onSuccess: () => form.reset() }); }
   function submitOutage(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; if (!selected) return; const data = new FormData(form); try { outage.mutate({ id: selected, data: { reason: String(data.get('reason')), starts_at: clinicLocalToUtc(String(data.get('starts_at')), timezone), ends_at: clinicLocalToUtc(String(data.get('ends_at')), timezone) } }, { onSuccess: () => { form.reset(); setOutageReason(''); } }); } catch (error) { setNotice(error instanceof Error ? error.message : 'Ora introdusă nu este validă.'); } }
 
   return <main className="equipment-page">
     <header><div><p className="eyebrow">ADMINISTRARE CLINICĂ</p><h1>Echipamente</h1><p className="muted">Registru, verificări și indisponibilități. Programările sunt doar citite.</p></div></header>
-    {mutationFailed && <p className="error" role="alert">Operația nu a reușit. Verifică datele și încearcă din nou.</p>}
+    {mutationError && <p className="error" role="alert">{mutationError}</p>}
     {dueChecks.isError && <p className="error" role="alert">Lista scadențelor nu s-a putut încărca.</p>}
     {manager && <details className="card"><summary>Înregistrează echipament</summary><form className="equipment-grid" onSubmit={submitEquipment}>
       <label>Nume<input name="name" required maxLength={160} /></label><label>Tip<input name="equipment_type" required maxLength={100} /></label><label>Serie<input name="serial_number" maxLength={120} /></label>
