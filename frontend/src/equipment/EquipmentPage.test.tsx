@@ -106,4 +106,15 @@ describe('T21 equipment screen', () => {
     expect(reason?.props.value).toBe('Defecțiune raportată pentru Unit fictiv');
     await act(async () => renderer.unmount());
   });
+
+  it('offers exactly one dependency target and explains that cabinet and service are separate entries', async () => {
+    const renderer = await render(user('clinic_manager'));
+    expect(text(renderer.root)).toContain('Alege un singur tip: cabinet sau serviciu. Pentru ambele, adaugă înregistrări separate.');
+    const target = renderer.root.findByProps({ 'aria-label': 'Tipul dependenței' });
+    act(() => target.props.onChange({ target: { value: 'procedure' } }));
+    const dependencyForm = renderer.root.findAllByType('form').find(form => text(form).includes('Dependență'))!;
+    expect(dependencyForm.findAllByProps({ name: 'procedure_id' })).toHaveLength(1);
+    expect(dependencyForm.findAllByProps({ name: 'room_id' })).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
 });

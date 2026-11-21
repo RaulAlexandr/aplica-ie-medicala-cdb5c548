@@ -4,7 +4,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -104,6 +104,12 @@ class DocumentInput(BaseModel):
 class DependencyInput(BaseModel):
     room_id: UUID | None = None
     procedure_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_target(self):
+        if (self.room_id is None) == (self.procedure_id is None):
+            raise ValueError("Alege cabinetul sau serviciul, nu ambele")
+        return self
 
 
 def _json(row):

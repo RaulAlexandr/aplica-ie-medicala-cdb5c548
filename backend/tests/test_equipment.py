@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import (
@@ -17,7 +18,7 @@ from app.database import (
     User,
     get_db,
 )
-from app.equipment.models import EquipmentUnavailability
+from app.equipment.models import EquipmentDependency, EquipmentUnavailability
 from app.main import app
 
 
@@ -315,3 +316,31 @@ async def test_outage_closed_before_start_has_no_affected_appointments(ctx):
     history = await client.get(f"/api/equipment/{equipment['id']}/history", headers=manager)
     assert affected.status_code == 200 and affected.json() == []
     assert history.status_code == 200 and history.json()["unavailabilities"][0]["affected_appointments"] == []
+
+
+@pytest.mark.asyncio
+async def test_dependency_requires_exactly_one_target_and_allows_separate_service_links(ctx):
+    client, sessions = ctx
+    manager = await register(client, "equipment-one-target@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    room = (await client.post("/api/rooms", headers=manager, json={"name": "Cabinet țintă unică"})).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit țintă unică", "equipment_type": "unit", "responsible_id": identity["id"]})).json()
+    async with sessions() as session:
+        services = [ProcedureCatalog(clinic_id=identity["clinic_id"], code=code, code_lower=code.lower(), name=name,
+            default_duration_minutes=30, base_price=Decimal("100.00"), currency="RON", is_active=True)
+            for code, name in (("SVC1", "Serviciu unu"), ("SVC2", "Serviciu doi"))]
+        session.add_all(services)
+        await session.commit()
+        service_ids = [str(service.id) for service in services]
+    path = f"/api/equipment/{equipment['id']}/dependencies"
+    assert (await client.post(path, headers=manager, json={"room_id": room["id"], "procedure_id": service_ids[0]})).status_code == 422
+    assert (await client.post(path, headers=manager, json={})).status_code == 422
+    assert (await client.post(path, headers=manager, json={"room_id": room["id"]})).status_code == 201
+    assert (await client.post(path, headers=manager, json={"procedure_id": service_ids[0]})).status_code == 201
+    assert (await client.post(path, headers=manager, json={"procedure_id": service_ids[1]})).status_code == 201
+    async with sessions() as session:
+        session.add(EquipmentDependency(clinic_id=identity["clinic_id"], equipment_id=equipment["id"],
+            room_id=room["id"], procedure_id=service_ids[0], created_by_id=identity["id"]))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+        await session.rollback()
