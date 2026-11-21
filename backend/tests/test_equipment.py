@@ -114,7 +114,8 @@ async def test_validation_and_append_only_check_document_dependency_history(ctx)
     assert (await client.post(f"/api/equipment/{equipment_id}/unavailabilities", headers=manager, json={
         "reason": "interval invalid", "starts_at": "2030-01-01T10:00:00Z", "ends_at": "2030-01-01T10:00:00Z"})).status_code == 422
     check = await client.post(f"/api/equipment/{equipment_id}/checks", headers=manager, json={
-        "check_type": "inspection", "due_at": "2030-04-01T08:00:00Z", "completed_at": "2030-03-31T08:00:00Z", "result": "Conform fictiv"})
+        "check_type": "inspection", "due_at": "2030-04-01T08:00:00Z",
+        "completed_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(), "result": "Conform fictiv"})
     document = await client.post(f"/api/equipment/{equipment_id}/documents", headers=manager, json={
         "title": "Certificat fictiv", "document_type": "certificate", "reference": "urn:fake:certificate:21"})
     dependency = await client.post(f"/api/equipment/{equipment_id}/dependencies", headers=manager, json={"room_id": room["id"]})
