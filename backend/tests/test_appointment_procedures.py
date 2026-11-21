@@ -4,8 +4,10 @@ from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.appointment_procedures.models import AppointmentProcedureRevision
 from app.auth.service import create_access_token
 from app.database import (
     Appointment,
@@ -236,3 +238,29 @@ async def test_effective_lines_follow_real_treatment_plan_lifecycle(env):
     finished = await client.post(f"/api/treatment-plans/{completed['id']}/complete", headers=auth)
     assert finished.status_code == 200 and finished.json()["status"] == "completed"
     assert effective_rows(await client.get(f"/api/appointment-procedures/{completed_visit}", headers=auth)) == []
+
+
+async def test_get_without_revision_row_is_read_only(env):
+    client, sessions = env
+    ctx = await clinic(client)
+    engine = sessions.kw["bind"]
+    revision_inserts = []
+    def record_revision_insert(conn, cursor, statement, parameters, context, executemany):
+        if "insert into appointment_procedure_revisions" in statement.lower():
+            revision_inserts.append(statement)
+    event.listen(engine.sync_engine, "before_cursor_execute", record_revision_insert)
+    async with sessions() as session:
+        before = await session.scalar(select(func.count()).select_from(AppointmentProcedureRevision))
+    assert before == 0
+    response = await client.get(f"/api/appointment-procedures/{ctx['appointment']}", headers=ctx["auth"])
+    assert response.status_code == 200 and response.json()["revision"] == 0
+    async with sessions() as session:
+        after_get = await session.scalar(select(func.count()).select_from(AppointmentProcedureRevision))
+    assert after_get == 0 and revision_inserts == []
+    put = await client.put(f"/api/appointment-procedures/{ctx['appointment']}", headers=ctx["auth"], json={
+        "expected_revision": 0, "procedures": []})
+    assert put.status_code == 200
+    async with sessions() as session:
+        after_put = await session.scalar(select(func.count()).select_from(AppointmentProcedureRevision))
+    assert after_put == 1 and len(revision_inserts) == 1
+    event.remove(engine.sync_engine, "before_cursor_execute", record_revision_insert)

@@ -74,9 +74,12 @@ async def list_for_interval(start: datetime = Query(), end: datetime = Query(), 
 @router.get("/{appointment_id}")
 async def get_for_appointment(appointment_id: UUID, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*STAFF_ROLES))):
     appointment = await _appointment(db, user.clinic_id, appointment_id)
-    rev = await _revision(db, appointment)
+    rev = await db.scalar(select(AppointmentProcedureRevision).where(
+        AppointmentProcedureRevision.appointment_id == appointment.id,
+        AppointmentProcedureRevision.clinic_id == user.clinic_id))
     effective = await effective_procedures(db, user.clinic_id, [appointment.id])
-    return {"appointment_id": appointment.id, "revision": rev.revision, "procedures": effective[appointment.id]}
+    return {"appointment_id": appointment.id, "revision": rev.revision if rev else 0,
+            "procedures": effective[appointment.id]}
 
 
 @router.put("/{appointment_id}")
@@ -99,6 +102,7 @@ async def replace_for_appointment(appointment_id: UUID, payload: ReplaceInput, d
     current = {row.procedure_catalog_id: row.quantity for row in active}
     desired = {line.procedure_catalog_id: line.quantity for line in payload.procedures}
     if current == desired:
+        await db.commit()
         return {"appointment_id": appointment.id, "revision": rev.revision,
                 "procedures": (await effective_procedures(db, user.clinic_id, [appointment.id]))[appointment.id]}
     catalog = (await db.scalars(select(ProcedureCatalog).where(ProcedureCatalog.clinic_id == user.clinic_id,
