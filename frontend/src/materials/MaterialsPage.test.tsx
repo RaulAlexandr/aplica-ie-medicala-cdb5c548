@@ -1,0 +1,20 @@
+import TestRenderer, { act } from 'react-test-renderer';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getClinic, listProcedures } from '../api/client';
+import { inventoryOverview } from '../inventory/api';
+import { getActuals, getRecipe, getRequirements, getReplenishment, saveRecipe } from './api';
+import { MaterialsPage } from './MaterialsPage';
+
+vi.mock('../api/client',()=>({getClinic:vi.fn(),listProcedures:vi.fn(),apiErrorMessage:(error:unknown)=>String(error)}));
+vi.mock('../inventory/api',()=>({inventoryOverview:vi.fn()}));
+vi.mock('./api',()=>({getActuals:vi.fn(),getRecipe:vi.fn(),getRequirements:vi.fn(),getReplenishment:vi.fn(),releaseReservation:vi.fn(),reserveMaterial:vi.fn(),confirmMaterials:vi.fn(),saveRecipe:vi.fn()}));
+const requirements={from_date:'2026-12-01',to_date:'2026-12-14',timezone:'Europe/Bucharest',appointments:[{id:'appt-1',starts_at:'2026-12-02T09:00:00+02:00',local_date:'2026-12-02',status:'scheduled',patient_name:'Ana Test',procedures:[]}],unknown:{appointments_without_procedure:{count:1,appointments:[]},procedures_without_recipe:{count:0,procedures:[]}},shortages:[],needed_by_item:{},performed_procedures:[]};
+const text=(node:TestRenderer.ReactTestInstance):string=>node.children.map(x=>typeof x==='string'?x:text(x)).join('');
+async function mount(role='reception'){const client=new QueryClient({defaultOptions:{queries:{retry:false}}});let tree!:TestRenderer.ReactTestRenderer;await act(async()=>{tree=TestRenderer.create(<QueryClientProvider client={client}><MaterialsPage role={role}/></QueryClientProvider>);});for(let i=0;i<5;i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,0));});return tree;}
+beforeEach(()=>{vi.clearAllMocks();vi.mocked(getClinic).mockResolvedValue({timezone:'Europe/Bucharest'} as never);vi.mocked(listProcedures).mockResolvedValue([{id:'proc-1',name:'Procedură test'}] as never);vi.mocked(inventoryOverview).mockResolvedValue({items:[],locations:[],lots:[],balances:[]} as never);vi.mocked(getRequirements).mockResolvedValue(requirements as never);vi.mocked(getReplenishment).mockResolvedValue({items:[]} as never);vi.mocked(getActuals).mockResolvedValue({lines:[]} as never);vi.mocked(getRecipe).mockResolvedValue({procedure_catalog_id:'proc-1',procedure_name:'Procedură test',version:0,lines:[]} as never);});
+describe('MaterialsPage',()=>{
+  it('shows demand and unknown counts to reception without consumption actions',async()=>{const tree=await mount();expect(text(tree.root)).toContain('Programări fără procedură legată: 1');expect(text(tree.root)).not.toContain('Confirmă consumul manoperei');expect(text(tree.root)).not.toContain('Rețetă orientativă');});
+  it('offers recipe editing only to managers',async()=>{const tree=await mount('clinic_manager');expect(text(tree.root)).toContain('Rețetă orientativă');expect(tree.root.findAllByType('select').length).toBeGreaterThan(0);});
+  it('keeps the same request key on retry and strips the Value error prefix',async()=>{vi.mocked(saveRecipe).mockRejectedValueOnce(new Error('Value error, Rețeta s-a schimbat simultan.')).mockResolvedValueOnce({} as never);const tree=await mount('administrator');const procedure=tree.root.findAllByType('select')[0];await act(async()=>procedure.props.onChange({target:{value:'proc-1'}}));for(let i=0;i<4;i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,0));});const form=tree.root.findAllByType('form').find(x=>typeof x.props.onSubmit==='function')!;await act(async()=>form.props.onSubmit({preventDefault(){}}));for(let i=0;i<4;i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,0));});expect(text(tree.root)).toContain('Rețeta s-a schimbat simultan.');expect(text(tree.root)).not.toContain('Value error');await act(async()=>form.props.onSubmit({preventDefault(){}}));for(let i=0;i<4;i++)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,0));});expect(vi.mocked(saveRecipe)).toHaveBeenCalledTimes(2);expect(vi.mocked(saveRecipe).mock.calls[0][3]).toBe(vi.mocked(saveRecipe).mock.calls[1][3]);});
+});
