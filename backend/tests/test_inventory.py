@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -213,7 +213,7 @@ async def test_lot_expired_flag_uses_clinic_date_even_without_stock(ctx,monkeypa
     clinic_id=(await c.get("/api/auth/me",headers=h)).json()["clinic_id"]
     async with s() as db:
         clinic=await db.get(Clinic,clinic_id);clinic.timezone="Europe/Bucharest";await db.commit()
-    monkeypatch.setattr(inventory_router,"utcnow",lambda:datetime(2026,11,21,0,30,tzinfo=timezone.utc))
+    monkeypatch.setattr(inventory_router,"utcnow",lambda:datetime(2026,11,21,0,30,tzinfo=UTC))
     result=await c.get("/api/inventory",headers=h);assert result.status_code==200
     lot_view=next(x for x in result.json()["lots"] if x["id"]==lot)
     assert lot_view["expired"] is True

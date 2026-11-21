@@ -93,10 +93,11 @@ describe('pagina Stocuri',()=>{
     await act(async()=>renderer.unmount());
   });
   it('afișează istoricul în română, autorul și filtrele',async()=>{
-    vi.mocked(inventoryHistory).mockResolvedValue([
+    const movements=[
       {id:'move-1',item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Dr. Ana Fictiv',kind:'receipt',quantity:'2',reason:'',transfer_id:null,reverses_movement_id:null,is_correction:false,is_corrected:false,created_at:'2026-11-21T10:00:00Z'},
       {id:'move-2',item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Asistent Fictiv',kind:'consumption',quantity:'1',reason:'',transfer_id:null,reverses_movement_id:null,is_correction:false,is_corrected:false,created_at:'2026-11-21T11:00:00Z'},
-    ]);
+    ];
+    vi.mocked(inventoryHistory).mockImplementation(async filters=>movements.filter(x=>!filters?.kind||x.kind===filters.kind));
     const renderer=await page('reception');let text=textOf(renderer.root);
     expect(text).toContain('Recepție');expect(text).toContain('Consum');expect(text).toContain('Dr. Ana Fictiv');expect(text).toContain('LOT-FICTIV');
     expect(text).toContain('Filtru istoric articol');expect(text).toContain('Filtru istoric lot');expect(text).toContain('Filtru istoric locație');expect(text).toContain('Filtru istoric tip');
