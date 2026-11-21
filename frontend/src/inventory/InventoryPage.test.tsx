@@ -51,7 +51,7 @@ describe('pagina Stocuri',()=>{
   });
   it('blochează dublul click la corecție și păstrează cheia după eroare',async()=>{
     vi.stubGlobal('window',{prompt:()=> 'Motiv fictiv'});
-    vi.mocked(inventoryHistory).mockResolvedValue([{id:'move-1',item_id:'item-1',lot_id:'lot-1',location_id:'loc-1',kind:'receipt',quantity:'1',reason:'',transfer_id:null,reverses_movement_id:null,created_at:'2026-11-21T10:00:00Z'}]);
+    vi.mocked(inventoryHistory).mockResolvedValue([{id:'move-1',item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Manager fictiv',kind:'receipt',quantity:'1',reason:'',transfer_id:null,reverses_movement_id:null,is_correction:false,is_corrected:false,created_at:'2026-11-21T10:00:00Z'}]);
     const pending:Array<{resolve:(v:unknown)=>void;reject:(e:Error)=>void}>=[];
     vi.mocked(reverseInventoryMovement).mockImplementation(()=>new Promise((resolve,reject)=>pending.push({resolve,reject})));
     const renderer=await page('clinic_manager');const button=renderer.root.findAllByType('button').find(x=>textOf(x)==='Corectează')!;
@@ -78,6 +78,29 @@ describe('pagina Stocuri',()=>{
     const renderer=await page('clinic_manager');const form=renderer.root.findAllByType('form')[1];
     await act(async()=>{form.props.onSubmit({preventDefault(){}});await new Promise(r=>setTimeout(r,0));});
     expect(textOf(renderer.root)).toContain('Locația a fost adăugată.');
+    await act(async()=>renderer.unmount());
+  });
+  it('afișează istoricul în română, autorul și filtrele',async()=>{
+    vi.mocked(inventoryHistory).mockResolvedValue([
+      {id:'move-1',item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Dr. Ana Fictiv',kind:'receipt',quantity:'2',reason:'',transfer_id:null,reverses_movement_id:null,is_correction:false,is_corrected:false,created_at:'2026-11-21T10:00:00Z'},
+      {id:'move-2',item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Asistent Fictiv',kind:'consumption',quantity:'1',reason:'',transfer_id:null,reverses_movement_id:null,is_correction:false,is_corrected:false,created_at:'2026-11-21T11:00:00Z'},
+    ]);
+    const renderer=await page('reception');let text=textOf(renderer.root);
+    expect(text).toContain('Recepție');expect(text).toContain('Consum');expect(text).toContain('Dr. Ana Fictiv');expect(text).toContain('LOT-FICTIV');
+    expect(text).toContain('Filtru istoric articol');expect(text).toContain('Filtru istoric lot');expect(text).toContain('Filtru istoric locație');expect(text).toContain('Filtru istoric tip');
+    const type=renderer.root.findAllByType('select').find(x=>x.parent?.children[0]==='Filtru istoric tip')!;
+    await act(async()=>type.props.onChange({target:{value:'consumption'}}));text=textOf(renderer.root);
+    expect(text).toContain('Consum');expect(renderer.root.findAllByType('article').map(textOf).join(' ')).not.toContain('Recepție');
+    await act(async()=>renderer.unmount());
+  });
+  it('nu oferă corectarea pentru înregistrări corectate sau pentru mișcări de corecție',async()=>{
+    vi.mocked(inventoryHistory).mockResolvedValue([
+      {id:'active',item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Manager fictiv',kind:'receipt',quantity:'1',reason:'',transfer_id:null,reverses_movement_id:null,is_correction:false,is_corrected:false,created_at:'2026-11-21T10:00:00Z'},
+      {id:'done',item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Manager fictiv',kind:'receipt',quantity:'1',reason:'',transfer_id:null,reverses_movement_id:null,is_correction:false,is_corrected:true,created_at:'2026-11-21T10:00:00Z'},
+      {id:'correction',item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Manager fictiv',kind:'reversal_out',quantity:'1',reason:'Corecție',transfer_id:null,reverses_movement_id:'done',is_correction:true,is_corrected:false,created_at:'2026-11-21T10:00:00Z'},
+    ]);
+    const renderer=await page('clinic_manager');
+    expect(renderer.root.findAllByType('button').filter(x=>textOf(x)==='Corectează')).toHaveLength(1);
     await act(async()=>renderer.unmount());
   });
 });

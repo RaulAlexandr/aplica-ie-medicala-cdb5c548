@@ -192,3 +192,16 @@ async def test_inventory_expiry_views_hide_zero_rows_and_expose_all_lots(ctx):
     assert all(Decimal(x["quantity"])>0 for x in view["balances"] if x["expired"] or x["expiring_soon"])
     assert any(x["lot_id"]==expired_lot and x["expired"] for x in view["balances"])
     assert not any(x["lot_id"]==soon.json()["id"] and x["expiring_soon"] for x in view["balances"])
+
+@pytest.mark.asyncio
+async def test_history_contains_author_names_and_correction_status(ctx):
+    c,_=ctx;h=await register(c,"inv-history-names@example.com");item,lot,loc,_=await setup_stock(c,h,minimum="0")
+    movement_row=await c.post("/api/inventory/movements/receipt",headers=h,json=movement(item,lot,loc,"2"));assert movement_row.status_code==201
+    history=await c.get("/api/inventory/movements",headers=h,params={"item_id":item,"lot_id":lot,"location_id":loc,"kind":"receipt"});assert history.status_code==200
+    row=history.json()[0]
+    assert row["author"]=="Manager fictiv" and row["item"].startswith("Mănuși fictive") and row["lot"].startswith("LOT-") and row["location"].startswith("Depozit fictiv")
+    assert row["is_correction"] is False and row["is_corrected"] is False
+    corrected=await c.post(f"/api/inventory/movements/{row['id']}/reverse",headers=h,json={"client_request_id":str(uuid4()),"reason":"Corecție fictivă"});assert corrected.status_code==200
+    history=await c.get("/api/inventory/movements",headers=h,params={"item_id":item});assert history.status_code==200
+    old=next(x for x in history.json() if x["id"]==row["id"]);new=next(x for x in history.json() if x["id"]==corrected.json()["id"])
+    assert old["is_corrected"] is True and new["is_correction"] is True

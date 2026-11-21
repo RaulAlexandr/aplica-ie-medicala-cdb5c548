@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.auth.service import require_roles
 from app.database import Clinic, User, get_db, utcnow
@@ -160,11 +161,12 @@ async def overview(user: User=Depends(require_roles(*READ)),db: AsyncSession=Dep
 @router.get("/movements")
 async def history(item_id: UUID|None=None,lot_id: UUID|None=None,location_id: UUID|None=None,kind: str|None=None,
                    limit: int=Query(200,ge=1,le=500),user: User=Depends(require_roles(*READ)),db: AsyncSession=Depends(get_db)):
-    q=select(InventoryMovement).where(InventoryMovement.clinic_id==user.clinic_id)
+    correction=aliased(InventoryMovement)
+    q=select(InventoryMovement,User.full_name,InventoryItem.name,InventoryLot.code,InventoryLocation.name,correction.id).join(User,User.id==InventoryMovement.created_by_id).join(InventoryItem,InventoryItem.id==InventoryMovement.item_id).join(InventoryLot,InventoryLot.id==InventoryMovement.lot_id).join(InventoryLocation,InventoryLocation.id==InventoryMovement.location_id).outerjoin(correction,correction.reverses_movement_id==InventoryMovement.id).where(InventoryMovement.clinic_id==user.clinic_id)
     for col,val in ((InventoryMovement.item_id,item_id),(InventoryMovement.lot_id,lot_id),(InventoryMovement.location_id,location_id),(InventoryMovement.kind,kind)):
         if val is not None:q=q.where(col==val)
-    rows=(await db.scalars(q.order_by(InventoryMovement.created_at.desc(),InventoryMovement.id).limit(limit))).all()
-    return [{"id":str(x.id),"item_id":str(x.item_id),"lot_id":str(x.lot_id),"location_id":str(x.location_id),"kind":x.kind,"quantity":str(x.quantity),"reason":x.reason,"transfer_id":str(x.transfer_id) if x.transfer_id else None,"reverses_movement_id":str(x.reverses_movement_id) if x.reverses_movement_id else None,"created_at":x.created_at.isoformat()} for x in rows]
+    rows=(await db.execute(q.order_by(InventoryMovement.created_at.desc(),InventoryMovement.id).limit(limit))).all()
+    return [{"id":str(x.id),"item_id":str(x.item_id),"item":item_name,"lot_id":str(x.lot_id),"lot":lot_code,"location_id":str(x.location_id),"location":location_name,"author":author,"kind":x.kind,"quantity":str(x.quantity),"reason":x.reason,"transfer_id":str(x.transfer_id) if x.transfer_id else None,"reverses_movement_id":str(x.reverses_movement_id) if x.reverses_movement_id else None,"is_correction":x.reverses_movement_id is not None,"is_corrected":corrected_id is not None,"created_at":x.created_at.isoformat()} for x,author,item_name,lot_code,location_name,corrected_id in rows]
 
 @router.post("/items",status_code=201)
 async def create_item(p: ItemIn,user: User=Depends(require_roles(*MANAGE)),db: AsyncSession=Depends(get_db)):
