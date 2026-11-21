@@ -59,7 +59,7 @@ async def test_permissions_tenant_isolation_views_and_expiry(ctx):
     received=await c.post("/api/inventory/movements/receipt",headers=h,json=movement(item,lot,loc));assert received.status_code==201,received.text
     consumed=await c.post("/api/inventory/movements/consumption",headers=doctor,json=movement(item,lot,loc,"1"));assert consumed.status_code==201,consumed.text
     consumed_assistant=await c.post("/api/inventory/movements/consumption",headers=assistant,json=movement(item,lot,loc,"1"));assert consumed_assistant.status_code==201,consumed_assistant.text
-    view=(await c.get("/api/inventory",headers=h)).json();assert view["balances"][0]["expiring_soon"] is True
+    view=(await c.get("/api/inventory",headers=h)).json();assert any(x["expiring_soon"] for x in view["balances"] if Decimal(x["quantity"])>0);assert all(not x["expiring_soon"] for x in view["balances"] if Decimal(x["quantity"])==0)
     other=await setup_stock(c, h, minimum="2")
     zero=await c.get("/api/inventory",headers=h);assert any(x["item_id"]==other[0] and x["below_minimum"] for x in zero.json()["balances"])
     expired=await setup_stock(c,h,expires=(date.today()-timedelta(days=1)).isoformat())

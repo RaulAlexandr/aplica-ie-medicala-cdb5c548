@@ -145,13 +145,13 @@ async def overview(user: User=Depends(require_roles(*READ)),db: AsyncSession=Dep
             total=Decimal(0)
             for loc in locations:
                 qty=balances.get((lot.id,loc.id),Decimal(0)); total+=qty
-                lot_rows.append({"item_id":str(item.id),"item":item.name,"unit":item.unit,"minimum_quantity":str(item.minimum_quantity),"lot_id":str(lot.id),"lot":lot.code,"expires_on":lot.expires_on.isoformat() if lot.expires_on else None,"location_id":str(loc.id),"location":loc.name,"quantity":str(qty),"expired":bool(qty>0 and lot.expires_on and lot.expires_on<as_of),"expiring_soon":bool(qty>0 and lot.expires_on and as_of<=lot.expires_on<=as_of+timedelta(days=30))})
+                lot_rows.append({"item_id":str(item.id),"item":item.name,"unit":item.unit,"minimum_quantity":str(item.minimum_quantity),"lot_id":str(lot.id),"lot":lot.code,"expires_on":lot.expires_on.isoformat() if lot.expires_on else None,"location_id":str(loc.id),"location":loc.name,"quantity":format(qty,".3f"),"expired":bool(qty>0 and lot.expires_on and lot.expires_on<as_of),"expiring_soon":bool(qty>0 and lot.expires_on and as_of<=lot.expires_on<=as_of+timedelta(days=30))})
             item_total+=total
         result.extend(lot_rows)
         below_minimum=item.is_active and item_total<item.minimum_quantity
         summaries.append({"id":str(item.id),"name":item.name,"unit":item.unit,"minimum_quantity":str(item.minimum_quantity),"quantity_total":str(item_total),"below_minimum":below_minimum,"is_active":item.is_active})
         for row in lot_rows:
-            row["item_total"] = str(item_total)
+            row["item_total"] = format(item_total,".3f")
             row["below_minimum"] = below_minimum
     return {"items":summaries,
         "locations":[{"id":str(x.id),"name":x.name,"is_active":x.is_active} for x in locations],
