@@ -403,6 +403,60 @@ async def test_manager_closes_open_session_and_manual_entry_cannot_overlap(env):
     assert (await client.get("/api/team/attendance", params={"start": now.isoformat(), "end": now.isoformat()}, headers=doctor["auth"])).status_code == 403
 
 
+async def stored_session(sessions, c, user_id, start, end, correction=None):
+    item = TeamAttendance(id=uuid4(), clinic_id=UUID(c["clinic_id"]), user_id=UUID(user_id), source="clock", clock_in_at=start, clock_out_at=end, created_by_id=UUID(user_id))
+    async with sessions() as session:
+        session.add(item)
+        await session.flush()
+        if correction:
+            session.add(TeamAttendanceCorrection(clinic_id=item.clinic_id, attendance_id=item.id, revision=1, clock_in_at=correction[0], clock_out_at=correction[1], reason="Corecție fictivă", created_by_id=UUID(c["id"])))
+        await session.commit()
+    return str(item.id)
+
+
+async def attendance_ids(client, c, start, end):
+    listed = await client.get("/api/team/attendance", params={"start": start.isoformat(), "end": end.isoformat()}, headers=c["auth"])
+    assert listed.status_code == 200, listed.text
+    return [row["id"] for row in listed.json()]
+
+
+@pytest.mark.asyncio
+async def test_attendance_list_filters_on_the_effective_interval(env):
+    client, sessions = env
+    c = await clinic(client, sessions)
+    doctor = await person(sessions, c["clinic_id"], "doctor")
+    now = datetime.now(UTC).replace(microsecond=0)
+    three_days = now - timedelta(days=3)
+    shortened = await stored_session(sessions, c, doctor["id"], three_days, now - timedelta(days=1, hours=2), (three_days, three_days + timedelta(hours=8)))
+    moved = await stored_session(sessions, c, doctor["id"], now - timedelta(days=6), now - timedelta(days=6) + timedelta(hours=4), (now - timedelta(days=5), now - timedelta(days=5) + timedelta(hours=4)))
+    yesterday = (now - timedelta(days=1, hours=6), now - timedelta(days=1, hours=1))
+    assert shortened not in await attendance_ids(client, c, *yesterday)
+    assert shortened in await attendance_ids(client, c, three_days, three_days + timedelta(hours=1))
+    assert moved in await attendance_ids(client, c, now - timedelta(days=5, hours=1), now - timedelta(days=4, hours=23))
+    assert moved not in await attendance_ids(client, c, now - timedelta(days=6, hours=1), now - timedelta(days=5, hours=23))
+
+
+@pytest.mark.asyncio
+async def test_attendance_list_limit_applies_after_the_effective_filter(env):
+    client, sessions = env
+    c = await clinic(client, sessions)
+    doctor = await person(sessions, c["clinic_id"], "doctor")
+    now = datetime.now(UTC).replace(microsecond=0)
+    day = now - timedelta(days=2)
+    wanted = await stored_session(sessions, c, doctor["id"], day, day + timedelta(minutes=1))
+    far = now - timedelta(days=40)
+    async with sessions() as session:
+        for index in range(501):
+            start = day + timedelta(minutes=2 + index)
+            item = TeamAttendance(id=uuid4(), clinic_id=UUID(c["clinic_id"]), user_id=UUID(doctor["id"]), source="clock", clock_in_at=start, clock_out_at=start + timedelta(seconds=30), created_by_id=UUID(doctor["id"]))
+            session.add(item)
+            await session.flush()
+            moved_in = far + timedelta(minutes=index)
+            session.add(TeamAttendanceCorrection(clinic_id=item.clinic_id, attendance_id=item.id, revision=1, clock_in_at=moved_in, clock_out_at=moved_in + timedelta(seconds=30), reason="Mutată", created_by_id=UUID(c["id"])))
+        await session.commit()
+    assert await attendance_ids(client, c, day - timedelta(minutes=1), day + timedelta(hours=12)) == [wanted]
+
+
 @pytest.mark.asyncio
 async def test_attendance_is_separate_from_procedure_timers(env):
     client, sessions = env

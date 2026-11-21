@@ -21,9 +21,10 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.appointments.service import (
     ACTIVE_STATUSES,
@@ -745,12 +746,24 @@ async def list_attendance(
 ) -> list[dict]:
     if start.tzinfo is None or end.tzinfo is None or end <= start:
         raise HTTPException(422, "Interval invalid")
-    query = select(TeamAttendance).where(TeamAttendance.clinic_id == user.clinic_id, TeamAttendance.clock_in_at < end,
-                                         (TeamAttendance.clock_out_at.is_(None)) | (TeamAttendance.clock_out_at > start))
+    start, end = utc(start), utc(end)
+    # The filter and the limit use the effective interval: the last correction, else the original.
+    latest = select(TeamAttendanceCorrection.attendance_id, func.max(TeamAttendanceCorrection.revision).label("revision")).where(
+        TeamAttendanceCorrection.clinic_id == user.clinic_id).group_by(TeamAttendanceCorrection.attendance_id).subquery()
+    last = aliased(TeamAttendanceCorrection)
+    effective_in = func.coalesce(last.clock_in_at, TeamAttendance.clock_in_at)
+    effective_out = func.coalesce(last.clock_out_at, TeamAttendance.clock_out_at)
+    still_open = effective_out.is_(None) if start <= utcnow() else false()  # an open session has not reached a future day
+    query = (
+        select(TeamAttendance)
+        .outerjoin(latest, latest.c.attendance_id == TeamAttendance.id)
+        .outerjoin(last, and_(last.attendance_id == latest.c.attendance_id, last.revision == latest.c.revision))
+        .where(TeamAttendance.clinic_id == user.clinic_id, effective_in < end, or_(still_open, effective_out > start))
+    )
     if user_id:
         await member(db, user.clinic_id, user_id)
         query = query.where(TeamAttendance.user_id == user_id)
-    return await attendance_rows(db, list(await db.scalars(query.order_by(TeamAttendance.clock_in_at.desc()).limit(500))))
+    return await attendance_rows(db, list(await db.scalars(query.order_by(effective_in.desc(), TeamAttendance.id).limit(500))))
 
 
 async def assert_no_overlap(db: AsyncSession, clinic_id: UUID, user_id: UUID, start: datetime, end: datetime | None, exclude: UUID | None) -> None:
