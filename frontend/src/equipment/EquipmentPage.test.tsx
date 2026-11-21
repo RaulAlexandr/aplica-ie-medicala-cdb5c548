@@ -50,7 +50,7 @@ async function render(userValue: User, history: EquipmentHistory = historyWith()
   return renderer;
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('T21 equipment screen', () => {
   it('lets reception read affected appointments only, lets doctors report, and lets managers administer', async () => {
@@ -115,6 +115,49 @@ describe('T21 equipment screen', () => {
     const dependencyForm = renderer.root.findAllByType('form').find(form => text(form).includes('Dependență'))!;
     expect(dependencyForm.findAllByProps({ name: 'procedure_id' })).toHaveLength(1);
     expect(dependencyForm.findAllByProps({ name: 'room_id' })).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps all four submission forms intact and shows the server error after a rejected mutation', async () => {
+    const rejected = () => Promise.reject(new Error('Rezultatul este obligatoriu pentru o verificare efectuată'));
+    const create = vi.spyOn(equipmentApi, 'createEquipment').mockImplementation(rejected);
+    const report = vi.spyOn(equipmentApi, 'reportOutage').mockImplementation(rejected);
+    const addCheck = vi.spyOn(equipmentApi, 'addCheck').mockImplementation(rejected);
+    const addDocument = vi.spyOn(equipmentApi, 'addDocument').mockImplementation(rejected);
+    vi.stubGlobal('FormData', class { constructor(private form: { kind: string }) {} get(name: string) {
+      const values: Record<string, Record<string, string>> = {
+        equipment: { name: 'Unit păstrat', equipment_type: 'unit', responsible_id: 'manager-1' },
+        outage: { reason: 'Defecțiune păstrată', starts_at: '2026-11-25T11:00', ends_at: '2026-11-25T12:00' },
+        check: { check_type: 'inspection', due_at: '2026-11-25T11:00', completed_at: '', result: '' },
+        document: { title: 'Fișă păstrată', document_type: 'manual', reference: 'doc://fictiv' },
+      };
+      return values[this.form.kind][name] ?? '';
+    } });
+    const renderer = await render(user('clinic_manager'));
+    const cases = [
+      { heading: 'Nume', kind: 'equipment' },
+      { heading: 'Raportează indisponibilitate', kind: 'outage' },
+      { heading: 'Service / verificare periodică', kind: 'check' },
+      { heading: 'Document (referință)', kind: 'document' },
+    ];
+    for (const item of cases) {
+      const form = renderer.root.findAllByType('form').find(candidate => text(candidate).includes(item.heading))!;
+      const target = { kind: item.kind, reset: vi.fn() };
+      await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
+      expect(target.reset, item.heading).not.toHaveBeenCalled();
+      expect(text(renderer.root)).toContain('Operația nu a reușit.');
+    }
+    create.mockResolvedValue(equipment);
+    report.mockResolvedValue({ affected_appointments: [] } as never);
+    addCheck.mockResolvedValue({} as never);
+    addDocument.mockResolvedValue({} as never);
+    for (const item of cases) {
+      const form = renderer.root.findAllByType('form').find(candidate => text(candidate).includes(item.heading))!;
+      const target = { kind: item.kind, reset: vi.fn() };
+      await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
+      expect(target.reset, item.heading).toHaveBeenCalledTimes(1);
+    }
+    expect(text(renderer.root)).not.toContain('Operația nu a reușit.');
     await act(async () => renderer.unmount());
   });
 });
