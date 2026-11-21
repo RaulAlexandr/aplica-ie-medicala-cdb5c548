@@ -8,7 +8,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
-    UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -84,4 +84,10 @@ class EquipmentDependency(Base):
     procedure_id: Mapped[UUID | None] = mapped_column(ForeignKey("procedure_catalog.id", ondelete="RESTRICT"))
     created_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utcnow)
-    __table_args__ = (CheckConstraint("room_id IS NOT NULL OR procedure_id IS NOT NULL", name="ck_equipment_dependency_target"), UniqueConstraint("clinic_id", "equipment_id", "room_id", "procedure_id", name="uq_equipment_dependency"))
+    __table_args__ = (
+        CheckConstraint("room_id IS NOT NULL OR procedure_id IS NOT NULL", name="ck_equipment_dependency_target"),
+        Index("uq_equipment_dependency_room", "clinic_id", "equipment_id", "room_id", unique=True,
+              postgresql_where=text("room_id IS NOT NULL"), sqlite_where=text("room_id IS NOT NULL")),
+        Index("uq_equipment_dependency_procedure", "clinic_id", "equipment_id", "procedure_id", unique=True,
+              postgresql_where=text("procedure_id IS NOT NULL"), sqlite_where=text("procedure_id IS NOT NULL")),
+    )

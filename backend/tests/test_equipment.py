@@ -226,3 +226,17 @@ async def test_service_dependency_matches_normalized_text_and_procedure_links(ct
     assert set(affected) == expected_ids
     assert all(affected[str(row.id)] == "posibil" for row in appointment_rows[:4])
     assert affected[str(appointment_rows[4].id)] == affected[str(appointment_rows[5].id)] == "sigur"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_equipment_dependency_is_conflict(ctx):
+    client, _sessions = ctx
+    manager = await register(client, "equipment-duplicate-dependency@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    room = (await client.post("/api/rooms", headers=manager, json={"name": "Cabinet dependență unică"})).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit unic", "equipment_type": "unit", "responsible_id": identity["id"]})).json()
+    path = f"/api/equipment/{equipment['id']}/dependencies"
+    first = await client.post(path, headers=manager, json={"room_id": room["id"]})
+    duplicate = await client.post(path, headers=manager, json={"room_id": room["id"]})
+    assert first.status_code == 201
+    assert duplicate.status_code == 409

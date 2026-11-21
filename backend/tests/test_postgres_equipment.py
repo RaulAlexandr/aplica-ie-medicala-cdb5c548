@@ -150,3 +150,14 @@ async def test_postgres_two_simultaneous_check_completions_update_once(postgres_
         from app.equipment.models import EquipmentCheck
         rows = list(await session.scalars(select(EquipmentCheck).where(EquipmentCheck.id == check_id)))
         assert len(rows) == 1 and rows[0].completed_at is not None and rows[0].completed_by_id is not None
+
+
+@pytest.mark.asyncio
+async def test_postgres_duplicate_equipment_dependency_returns_conflict(postgres_ctx):
+    client, _sessions = postgres_ctx
+    headers, _identity, room, _patient, equipment = await setup_equipment(client)
+    path = f"/api/equipment/{equipment['id']}/dependencies"
+    first = await client.post(path, headers=headers, json={"room_id": room["id"]})
+    duplicate = await client.post(path, headers=headers, json={"room_id": room["id"]})
+    assert first.status_code == 201
+    assert duplicate.status_code == 409

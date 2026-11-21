@@ -58,7 +58,9 @@ def upgrade() -> None:
         sa.Column("procedure_id", UUID, sa.ForeignKey("procedure_catalog.id", ondelete="RESTRICT")),
         sa.Column("created_by_id", UUID, sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False), sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint("room_id IS NOT NULL OR procedure_id IS NOT NULL", name="ck_equipment_dependency_target"),
-        sa.UniqueConstraint("clinic_id", "equipment_id", "room_id", "procedure_id", name="uq_equipment_dependency"))
+    )
+    op.create_index("uq_equipment_dependency_room", "equipment_dependencies", ["clinic_id", "equipment_id", "room_id"], unique=True, postgresql_where=sa.text("room_id IS NOT NULL"), sqlite_where=sa.text("room_id IS NOT NULL"))
+    op.create_index("uq_equipment_dependency_procedure", "equipment_dependencies", ["clinic_id", "equipment_id", "procedure_id"], unique=True, postgresql_where=sa.text("procedure_id IS NOT NULL"), sqlite_where=sa.text("procedure_id IS NOT NULL"))
     for col in ("clinic_id", "equipment_id"): op.create_index(f"ix_equipment_dependencies_{col}", "equipment_dependencies", [col])
 
 
