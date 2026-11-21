@@ -126,6 +126,24 @@ describe('pagina Stocuri',()=>{
     const renderer=await page('doctor');expect(textOf(renderer.root)).toContain('Nu există mișcări înregistrate.');expect(textOf(renderer.root)).not.toMatch(/înregistrate\.\s*0/);
     await act(async()=>renderer.unmount());
   });
+  it('distinge istoricul gol de rezultatele goale ale filtrelor',async()=>{
+    const renderer=await page('doctor');
+    const itemFilter=renderer.root.findAllByType('select').find(x=>x.parent?.children[0]==='Filtru istoric articol')!;
+    await act(async()=>itemFilter.props.onChange({target:{value:'item-1'}}));
+    for(let n=0;n<3;n++)await act(async()=>{await new Promise(r=>setTimeout(r,0));});
+    expect(textOf(renderer.root)).toContain('Nu există mișcări pentru filtrele alese.');
+    expect(textOf(renderer.root)).not.toContain('Nu există mișcări înregistrate.');
+    await act(async()=>renderer.unmount());
+  });
+  it('nu arată mesaje de istoric gol cât timp cererea se încarcă sau a eșuat',async()=>{
+    let rejectHistory!:(error:Error)=>void;
+    vi.mocked(inventoryHistory).mockImplementation(()=>new Promise((_resolve,reject)=>{rejectHistory=reject;}));
+    const renderer=await page('doctor');let text=textOf(renderer.root);
+    expect(text).not.toContain('Nu există mișcări înregistrate.');expect(text).not.toContain('Nu există mișcări pentru filtrele alese.');
+    await act(async()=>{rejectHistory(new Error('network'));await new Promise(r=>setTimeout(r,0));});text=textOf(renderer.root);
+    expect(text).not.toContain('Nu există mișcări înregistrate.');expect(text).not.toContain('Nu există mișcări pentru filtrele alese.');
+    await act(async()=>renderer.unmount());
+  });
   it('folosește marcajul de expirare calculat de server chiar la limita zilei',async()=>{
     vi.mocked(inventoryOverview).mockResolvedValue({items:[{id:'item-1',name:'Material fictiv',unit:'buc',minimum_quantity:'2',quantity_total:'0',below_minimum:false,is_active:true}],locations:[{id:'loc-1',name:'Depozit fictiv',is_active:true}],lots:[{id:'lot-1',item_id:'item-1',item:'Material fictiv',code:'LOT-EXPIRAT',expires_on:'2026-11-21',expired:true}],balances:[]});
     const renderer=await page('doctor');const labels=renderer.root.findAllByType('label');
