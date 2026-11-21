@@ -8,7 +8,9 @@ Access rules enforced here:
 - Messages, task events, handovers and their acknowledgements are never edited or deleted.
 - Nothing here links to patients, and message text is never logged or written to the audit trail.
 
-Lock order: user rows, then conversation, task or shift row.
+Lock order: user rows, then conversation, task or shift row. User rows are locked FOR SHARE: that
+still blocks a deactivation (FOR UPDATE), but not the key-share locks taken by foreign keys, so two
+people writing to each other cannot deadlock.
 """
 
 from datetime import datetime
@@ -191,7 +193,7 @@ async def active_person(db: AsyncSession, clinic_id: UUID, user_id: UUID, *, loc
     """A person who may be added or assigned. Another clinic looks the same as a missing person."""
     query = select(User).where(User.id == user_id, User.clinic_id == clinic_id)
     if lock:
-        query = query.with_for_update().execution_options(populate_existing=True)
+        query = query.with_for_update(read=True).execution_options(populate_existing=True)
     person = await db.scalar(query)
     if not person:
         raise HTTPException(404, "Persoana nu a fost găsită")
@@ -202,7 +204,7 @@ async def active_person(db: AsyncSession, clinic_id: UUID, user_id: UUID, *, loc
 
 async def active_sender(db: AsyncSession, clinic_id: UUID, user_id: UUID) -> None:
     """Re-read under lock, so a deactivation committed meanwhile stops the write."""
-    person = await db.scalar(select(User).where(User.id == user_id, User.clinic_id == clinic_id).with_for_update().execution_options(populate_existing=True))
+    person = await db.scalar(select(User).where(User.id == user_id, User.clinic_id == clinic_id).with_for_update(read=True).execution_options(populate_existing=True))
     if not person or not person.is_active:
         raise HTTPException(403, "Contul este inactiv")
 
@@ -450,6 +452,11 @@ async def deliver(db: AsyncSession, response: Response, clinic_id: UUID, sender_
             raise HTTPException(409, f"{detail}. Mesajul nu a fost trimis.")
         conversation_id = await room_conversation(db, clinic_id, room_id, sender_id)
     conversation = await db.scalar(select(CollabConversation).where(CollabConversation.id == conversation_id).with_for_update().execution_options(populate_existing=True))
+    # The shared user lock no longer serializes one sender: a retry may have committed while this one waited.
+    committed = await replay(db, clinic_id, sender_id, payload, conversation_id if room_id is None else None, room_id)
+    if committed:
+        response.status_code = status.HTTP_200_OK
+        return (await message_rows(db, [committed]))[0]
     if conversation.kind == "direct":
         peer = await db.scalar(select(User.is_active).join(CollabMember, CollabMember.user_id == User.id).where(CollabMember.conversation_id == conversation.id, User.id != sender_id))
         if not peer:

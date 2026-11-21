@@ -10,12 +10,13 @@ from uuid import UUID, uuid4
 import asyncpg
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth.service import create_access_token
 from app.collab.models import CollabConversation, CollabHandover, CollabMessage, CollabTaskEvent
+from app.collab.router import active_sender
 from app.database import User, get_db, utcnow
 from app.main import app
 from app.team.models import TeamShift
@@ -245,3 +246,70 @@ async def test_simultaneous_handover_for_one_shift_creates_one(ctx):
     assert sorted(item.status_code for item in results) == [201, 409, 409]
     async with sessions() as session:
         assert await session.scalar(select(func.count()).select_from(CollabHandover).where(CollabHandover.shift_id == shift.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_two_people_on_shift_writing_to_each_other_do_not_deadlock(ctx):
+    client, sessions = ctx
+    _auth, me, room = await clinic(client)
+    (one, one_id), (two, two_id) = await person(sessions, me["clinic_id"], "doctor"), await person(sessions, me["clinic_id"], "assistant")
+    now = utcnow()
+    async with sessions() as session:
+        for user_id, post in ((one_id, "doctor"), (two_id, "assistant")):
+            session.add(TeamShift(clinic_id=UUID(me["clinic_id"]), user_id=UUID(user_id), room_id=UUID(room), post=post, starts_at=now - timedelta(hours=1), ends_at=now + timedelta(hours=2), status="active", created_by_id=UUID(me["id"])))
+        await session.commit()
+    seqs = []
+    for round_number in range(8):
+        override, _seen = barrier(sessions, 2)
+        app.dependency_overrides[get_db] = override
+        calls = [client.post(f"/api/collab/rooms/{room}/messages", headers=auth, json={"body": f"Runda {round_number}", "client_request_id": str(uuid4())}) for auth in (one, two)]
+        results = await asyncio.wait_for(asyncio.gather(*calls), 20)
+        assert [item.status_code for item in results] == [201, 201], [item.text for item in results]
+        seqs += [item.json()["seq"] for item in results]
+    assert sorted(seqs) == list(range(1, 17))
+
+
+@pytest.mark.asyncio
+async def test_cross_assigned_tasks_do_not_deadlock(ctx):
+    client, sessions = ctx
+    _auth, me, _room = await clinic(client)
+    (one, one_id), (two, two_id) = await person(sessions, me["clinic_id"], "doctor"), await person(sessions, me["clinic_id"], "assistant")
+    first = (await client.post("/api/collab/tasks", headers=one, json={"title": "Prima", "assignee_id": one_id})).json()
+    second = (await client.post("/api/collab/tasks", headers=two, json={"title": "A doua", "assignee_id": two_id})).json()
+    for round_number in range(8):
+        override, _seen = barrier(sessions, 2)
+        app.dependency_overrides[get_db] = override
+        first_to, second_to = (two_id, one_id) if round_number % 2 == 0 else (one_id, two_id)
+        calls = [
+            client.post(f"/api/collab/tasks/{first['id']}/changes", headers=one, json={"expected_version": first["version"], "assignee_id": first_to}),
+            client.post(f"/api/collab/tasks/{second['id']}/changes", headers=two, json={"expected_version": second["version"], "assignee_id": second_to}),
+        ]
+        results = await asyncio.wait_for(asyncio.gather(*calls), 20)
+        assert [item.status_code for item in results] == [200, 200], [item.text for item in results]
+        first, second = results[0].json(), results[1].json()
+
+
+@pytest.mark.asyncio
+async def test_sender_lock_allows_foreign_keys_and_blocks_deactivation(ctx):
+    client, sessions = ctx
+    _auth, me, _room = await clinic(client)
+    _, user_id = await person(sessions, me["clinic_id"], "doctor")
+    clinic_id, target = UUID(me["clinic_id"]), UUID(user_id)
+    deactivation = select(User).where(User.id == target).with_for_update()
+    async with sessions() as holder:
+        await active_sender(holder, clinic_id, target)
+        async with sessions() as inserter:  # a key-share lock through the foreign key must not wait
+            await inserter.execute(text("SET LOCAL lock_timeout = '1000ms'"))
+            inserter.add(CollabConversation(clinic_id=clinic_id, kind="group", title="FK", last_seq=0, created_by_id=target))
+            await inserter.flush()
+            await inserter.rollback()
+        async with sessions() as blocked:  # the deactivation path takes FOR UPDATE and has to wait
+            await blocked.execute(text("SET LOCAL lock_timeout = '300ms'"))
+            with pytest.raises(DBAPIError, match="lock timeout"):
+                await blocked.execute(deactivation)
+            await blocked.rollback()
+        await holder.rollback()
+    async with sessions() as released:  # once the sender finishes, the deactivation proceeds
+        await released.execute(text("SET LOCAL lock_timeout = '1000ms'"))
+        assert (await released.execute(deactivation)).scalar_one().id == target
+        await released.rollback()

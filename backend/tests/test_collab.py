@@ -7,7 +7,8 @@ from zoneinfo import ZoneInfo
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.auth.service import create_access_token
 from app.collab.models import (
@@ -693,3 +694,41 @@ async def test_before_seq_and_oldest_unread_follow_room_visibility_with_gaps(env
     assert seqs(older) == [2] and older["has_more"] is False
     assert seqs(await page(client, first, conversation, before_seq=3)) == [1, 2]
     assert (await page(client, first, conversation))["oldest_unread_seq"] == 1
+
+
+# ---------------------------------------------------------------------------------------------
+# User row locks (real concurrency is in test_postgres_collab.py)
+# ---------------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_collab_locks_users_for_share_on_every_write_path(env, monkeypatch):
+    client, sessions = env
+    c = await clinic(client, sessions)
+    doctor, assistant, reception = [await person(sessions, c["clinic_id"], role) for role in ("doctor", "assistant", "reception")]
+    seen: list[str] = []
+    original_scalar = AsyncSession.scalar
+
+    async def recording_scalar(self, statement, *args, **kwargs):
+        if hasattr(statement, "compile"):
+            sql = str(statement.compile(dialect=postgresql.dialect()))
+            if "FROM users" in sql and " FOR " in sql:
+                seen.append(sql)
+        return await original_scalar(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, "scalar", recording_scalar)
+    shift_id = await on_shift(sessions, c, doctor["id"], "doctor")
+    await on_shift(sessions, c, assistant["id"], "assistant")
+    conversation = await direct(client, doctor, assistant["id"])
+    assert (await send(client, doctor, conversation["id"])).status_code == 201
+    assert (await client.post(f"/api/collab/rooms/{c['room']}/messages", headers=doctor["auth"], json=message())).status_code == 201
+    group = await client.post("/api/collab/conversations", headers=doctor["auth"], json={"kind": "group", "title": "G", "member_ids": [assistant["id"]]})
+    assert (await client.post(f"/api/collab/conversations/{group.json()['id']}/members", headers=doctor["auth"], json={"user_id": reception["id"]})).status_code == 201
+    task = await new_task(client, doctor, doctor["id"])
+    other = await new_task(client, doctor, doctor["id"])
+    assert (await change(client, doctor, other, assignee_id=assistant["id"])).status_code == 200
+    created = await client.post("/api/collab/handovers", headers=doctor["auth"], json={"shift_id": shift_id, "to_user_id": assistant["id"], "notes": "Note"})
+    await acknowledge(client, assistant, created.json())
+    assert (await client.post(take_url(created.json(), task), headers=assistant["auth"], json={"expected_version": task["version"]})).status_code == 200
+    assert len(seen) >= 8
+    assert all("FOR SHARE" in sql and "FOR UPDATE" not in sql for sql in seen), [sql[-40:] for sql in seen if "FOR SHARE" not in sql]
