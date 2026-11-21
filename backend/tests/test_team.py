@@ -458,6 +458,58 @@ async def test_attendance_list_limit_applies_after_the_effective_filter(env):
 
 
 @pytest.mark.asyncio
+async def test_forgotten_clock_in_is_refused_closed_flagged_and_cleared_by_correction(env):
+    client, sessions = env
+    c = await clinic(client, sessions)
+    doctor = await person(sessions, c["clinic_id"], "doctor")
+    entered = datetime(2026, 1, 12, 7, 30, tzinfo=UTC)
+    item = await stored_session(sessions, c, doctor["id"], entered, None)
+    refused = await client.post("/api/team/attendance/clock-in", headers=doctor["auth"])
+    assert refused.status_code == 409
+    assert "12.01.2026, 09:30" in refused.json()["detail"] and "Închide" in refused.json()["detail"]
+    assert refused.json()["clock_in_at"] == "2026-01-12T07:30:00Z" and refused.json()["attendance_id"] == item
+    mine = (await client.get("/api/team/attendance/me", headers=doctor["auth"])).json()
+    assert len(mine["sessions"]) == 1 and mine["open"]["open_over_limit"] is True and mine["open"]["needs_review"] is False
+    closed = await client.post("/api/team/attendance/clock-out", headers=doctor["auth"])
+    assert closed.status_code == 200 and closed.json()["is_open"] is False
+    assert closed.json()["needs_review"] is True and closed.json()["open_over_limit"] is False
+    assert closed.json()["clock_in_at"] == "2026-01-12T07:30:00Z" and closed.json()["corrections"] == []
+    url = f"/api/team/attendance/{item}/corrections"
+    assert (await client.post(url, headers=c["auth"], json={"clock_in_at": "2026-01-12T08:00:00Z", "reason": "tot prea lung"})).status_code == 422
+    fixed = await client.post(url, headers=c["auth"], json={"clock_out_at": "2026-01-12T15:30:00Z", "reason": "Ieșire reală"})
+    assert fixed.status_code == 201 and fixed.json()["needs_review"] is False and fixed.json()["worked_seconds"] == 8 * 3600
+    assert fixed.json()["clock_out_at"] == closed.json()["clock_out_at"]
+    assert (await client.post("/api/team/attendance/clock-in", headers=doctor["auth"])).status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_open_session_under_the_limit_stays_idempotent_and_unflagged(env):
+    client, sessions = env
+    c = await clinic(client, sessions)
+    doctor = await person(sessions, c["clinic_id"], "doctor")
+    item = await stored_session(sessions, c, doctor["id"], datetime.now(UTC) - timedelta(hours=23, minutes=59), None)
+    again = await client.post("/api/team/attendance/clock-in", headers=doctor["auth"])
+    assert again.status_code == 200 and again.json()["id"] == item and again.json()["open_over_limit"] is False
+    closed = await client.post("/api/team/attendance/clock-out", headers=doctor["auth"])
+    assert closed.json()["needs_review"] is False
+
+
+@pytest.mark.asyncio
+async def test_manager_alerts_list_sessions_to_review_within_the_clinic(env):
+    client, sessions = env
+    c, other = await clinic(client, sessions), await clinic(client, sessions)
+    doctor, assistant, fine = [await person(sessions, c["clinic_id"], role) for role in ("doctor", "assistant", "reception")]
+    now = datetime.now(UTC).replace(microsecond=0)
+    still_open = await stored_session(sessions, c, doctor["id"], now - timedelta(days=3), None)
+    too_long = await stored_session(sessions, c, assistant["id"], now - timedelta(days=4), now - timedelta(days=1))
+    await stored_session(sessions, c, fine["id"], now - timedelta(hours=9), now - timedelta(hours=1))
+    assert (await client.get("/api/team/attendance/alerts", headers=doctor["auth"])).status_code == 403
+    alerts = await client.get("/api/team/attendance/alerts", headers=c["auth"])
+    assert alerts.status_code == 200 and {row["id"] for row in alerts.json()["review"]} == {still_open, too_long}
+    assert (await client.get("/api/team/attendance/alerts", headers=other["auth"])).json()["review"] == []
+
+
+@pytest.mark.asyncio
 async def test_attendance_is_separate_from_procedure_timers(env):
     client, sessions = env
     c = await clinic(client, sessions)

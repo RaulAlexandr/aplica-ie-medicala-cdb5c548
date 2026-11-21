@@ -59,6 +59,8 @@ router = APIRouter(prefix="/team", tags=["team"])
 MANAGERS = ("clinic_manager", "administrator")
 MAX_SHIFT = timedelta(hours=24)
 MAX_ATTENDANCE = timedelta(hours=24)
+REVIEW_WINDOW = timedelta(days=90)
+REVIEW_LIMIT = 100
 MAX_LEAVE_DAYS = 366
 LEAVE_AGENDA_LABEL = "Concediu"  # all staff can read unavailability: never the type or reason
 
@@ -666,6 +668,7 @@ async def attendance_rows(db: AsyncSession, sessions: list[TeamAttendance]) -> l
             corrections.setdefault(row.attendance_id, []).append(row)
     people = await names(db, {s.user_id for s in sessions} | {c.created_by_id for rows in corrections.values() for c in rows})
     result = []
+    now = utcnow()
     for session in sessions:
         history = corrections.get(session.id, [])
         effective_in, effective_out = effective(session, history)
@@ -674,6 +677,9 @@ async def attendance_rows(db: AsyncSession, sessions: list[TeamAttendance]) -> l
             "clock_in_at": iso(session.clock_in_at), "clock_out_at": iso(session.clock_out_at),
             "effective_clock_in_at": iso(effective_in), "effective_clock_out_at": iso(effective_out), "is_open": session.clock_out_at is None,
             "worked_seconds": int((effective_out - effective_in).total_seconds()) if effective_out else None,
+            # Calculated, never stored: a valid correction is at most 24 h, so it clears the flag.
+            "needs_review": effective_out is not None and effective_out - effective_in > MAX_ATTENDANCE,
+            "open_over_limit": effective_out is None and now - effective_in > MAX_ATTENDANCE,
             "corrections": [{"revision": c.revision, "clock_in_at": iso(c.clock_in_at), "clock_out_at": iso(c.clock_out_at), "reason": c.reason,
                              "created_by": people.get(c.created_by_id, "—"), "created_at": iso(c.created_at)} for c in history],
         })
@@ -702,13 +708,26 @@ async def my_attendance(user: User = Depends(get_current_user), db: AsyncSession
     return {"open": next((row for row in rows if row["is_open"]), None), "sessions": rows}
 
 
+async def existing_clock_in(db: AsyncSession, clinic_id: UUID, session: TeamAttendance) -> JSONResponse:
+    """Same session for a double click; a forgotten one must be closed, never silently continued."""
+    row = (await attendance_rows(db, [session]))[0]
+    if not row["open_over_limit"]:
+        return JSONResponse(row, status_code=200)
+    _, zone = await clinic_timezone(db, clinic_id)
+    entered = datetime.fromisoformat(row["effective_clock_in_at"]).astimezone(zone)
+    return JSONResponse({
+        "detail": f"Ai un pontaj deschis din {entered:%d.%m.%Y, %H:%M}. Închide pontajul, apoi înregistrează o intrare nouă.",
+        "attendance_id": row["id"], "clock_in_at": row["effective_clock_in_at"],
+    }, status_code=409)
+
+
 @router.post("/attendance/clock-in", status_code=status.HTTP_201_CREATED)
 async def clock_in(request_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     clinic_id, user_id = request_user.clinic_id, request_user.id
     await member(db, clinic_id, user_id, lock=True)
     existing = await open_session(db, clinic_id, user_id)
-    if existing:  # double click or second tab: same open session, nothing new
-        return JSONResponse((await attendance_rows(db, [existing]))[0], status_code=200)
+    if existing:  # double click or second tab: nothing new
+        return await existing_clock_in(db, clinic_id, existing)
     item = TeamAttendance(clinic_id=clinic_id, user_id=user_id, source="clock", clock_in_at=utcnow(), created_by_id=user_id)
     db.add(item)
     try:
@@ -719,7 +738,7 @@ async def clock_in(request_user: User = Depends(get_current_user), db: AsyncSess
         await db.rollback()
         existing = await open_session(db, clinic_id, user_id)
         if existing:
-            return JSONResponse((await attendance_rows(db, [existing]))[0], status_code=200)
+            return await existing_clock_in(db, clinic_id, existing)
         raise HTTPException(409, "Prezența nu a putut fi înregistrată; reîncearcă") from None
     return (await attendance_rows(db, [item]))[0]
 
@@ -737,6 +756,16 @@ async def clock_out(user: User = Depends(get_current_user), db: AsyncSession = D
     audit(db, clinic_id, user_id, "team_attendance", item.id, "clock_out")
     await db.commit()
     return (await attendance_rows(db, [item]))[0]
+
+
+@router.get("/attendance/alerts")
+async def attendance_alerts(user: User = Depends(require_roles(*MANAGERS)), db: AsyncSession = Depends(get_db)) -> dict:
+    since = utcnow() - REVIEW_WINDOW
+    recent = list(await db.scalars(select(TeamAttendance).where(
+        TeamAttendance.clinic_id == user.clinic_id, or_(TeamAttendance.clock_out_at.is_(None), TeamAttendance.clock_out_at >= since),
+    ).order_by(TeamAttendance.clock_in_at.desc())))
+    review = [row for row in await attendance_rows(db, recent) if row["needs_review"] or row["open_over_limit"]]
+    return {"review": review[:REVIEW_LIMIT], "inactive": []}
 
 
 @router.get("/attendance")

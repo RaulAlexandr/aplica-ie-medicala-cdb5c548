@@ -30,6 +30,7 @@ export function workedLabel(seconds: number | null): string {
   const minutes = Math.floor(seconds / 60);
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`;
 }
+export const attendanceHours = (row: team.Attendance) => row.needs_review || row.open_over_limit ? 'De verificat' : workedLabel(row.worked_seconds);
 export function shiftsForDay(shifts: team.Shift[], day: team.ScheduleDay): team.Shift[] {
   const start = Date.parse(day.start); const end = Date.parse(day.end);
   return shifts.filter(item => Date.parse(item.starts_at) < end && Date.parse(item.ends_at) > start);
@@ -54,9 +55,10 @@ function MyAttendance({ timezone }: { timezone: string }) {
     <h2>Prezența mea</h2>
     <p className="muted">Prezența arată când ești la clinică. Este separată de timpul manoperelor.</p>
     <p><strong>{open ? `Prezent de la ${formatTime(open.effective_clock_in_at, timezone)}` : 'Nu ești pontat acum'}</strong></p>
+    {open?.open_over_limit && <p className="error" role="alert">Pontajul este deschis de peste 24 de ore, din {formatDateTime(open.effective_clock_in_at, timezone)}. Închide-l, apoi cere managerului corectarea orei de ieșire.</p>}
     {open ? <button disabled={busy} onClick={() => leave.mutate()}>Înregistrează ieșirea</button> : <button disabled={busy} onClick={() => enter.mutate()}>Înregistrează intrarea</button>}
     <Failure error={query.error ?? enter.error ?? leave.error} />
-    <div className="list">{query.data?.sessions.slice(0, 5).map(row => <article key={row.id}><span>{formatDateTime(row.effective_clock_in_at, timezone)} – {row.effective_clock_out_at ? formatTime(row.effective_clock_out_at, timezone) : 'în curs'}{row.corrections.length > 0 ? ' · corectat de manager' : ''}</span><span>{workedLabel(row.worked_seconds)}</span></article>)}</div>
+    <div className="list">{query.data?.sessions.slice(0, 5).map(row => <article key={row.id}><span>{formatDateTime(row.effective_clock_in_at, timezone)} – {row.effective_clock_out_at ? formatTime(row.effective_clock_out_at, timezone) : 'în curs'}{row.corrections.length > 0 ? ' · corectat de manager' : ''}</span><span>{attendanceHours(row)}</span></article>)}</div>
   </section>;
 }
 
@@ -241,6 +243,7 @@ function AttendanceManager({ members, timezone }: { members: team.TeamMember[]; 
   const bounds = useQuery({ queryKey: ['team', 'schedule', 'day', day], queryFn: () => team.getSchedule('day', day) });
   const range = bounds.data?.days[0];
   const query = useQuery({ queryKey: ['team', 'attendance', 'day', day, range?.start], queryFn: () => team.listAttendance(range!.start, range!.end), enabled: Boolean(range) });
+  const alerts = useQuery({ queryKey: ['team', 'attendance', 'alerts'], queryFn: team.attendanceAlerts });
   const [form, setForm] = useState({ id: '', clock_in: '', clock_out: '', reason: '' });
   const [manual, setManual] = useState({ user_id: '', clock_in: '', clock_out: '', reason: '' });
   const [fold, setFold] = useState<'' | '0' | '1'>('');
@@ -257,11 +260,19 @@ function AttendanceManager({ members, timezone }: { members: team.TeamMember[]; 
   const foldField = <label>Ora repetată la schimbarea orei<select value={fold} onChange={e => setFold(e.target.value as '' | '0' | '1')}><option value="">Nu e cazul</option><option value="0">Prima apariție</option><option value="1">A doua apariție</option></select></label>;
   return <section className="card" aria-label="Prezența echipei">
     <h2>Prezența echipei</h2>
+    <Failure error={alerts.error} />
+    {Boolean(alerts.data?.review.length) && <section aria-label="Pontaje de verificat">
+      <h3>Pontaje de verificat</h3>
+      <div className="list">{alerts.data?.review.map(row => <article key={row.id}>
+        <span><strong>{row.user_name}</strong> · {formatDateTime(row.effective_clock_in_at, timezone)} – {row.effective_clock_out_at ? formatDateTime(row.effective_clock_out_at, timezone) : 'deschis de peste 24 de ore'} · {attendanceHours(row)}</span>
+        <button className="secondary" onClick={() => setForm({ id: row.id, clock_in: '', clock_out: '', reason: '' })}>Corectează</button>
+      </article>)}</div>
+    </section>}
     <label>Ziua<input type="date" value={day} onChange={e => e.target.value && setDay(e.target.value)} /></label>
     <Failure error={bounds.error ?? query.error} />
     {query.data?.length === 0 && <p className="muted">Nicio prezență în această zi.</p>}
     <div className="list">{query.data?.map(row => <article key={row.id}>
-      <span><strong>{row.user_name}</strong> · {formatDateTime(row.effective_clock_in_at, timezone)} – {row.effective_clock_out_at ? formatDateTime(row.effective_clock_out_at, timezone) : 'în curs'} · {workedLabel(row.worked_seconds)}{row.corrections.map(c => <small key={c.revision}><br />Corecție {c.revision}: {c.reason} ({c.created_by})</small>)}</span>
+      <span><strong>{row.user_name}</strong> · {formatDateTime(row.effective_clock_in_at, timezone)} – {row.effective_clock_out_at ? formatDateTime(row.effective_clock_out_at, timezone) : 'în curs'} · {attendanceHours(row)}{row.corrections.map(c => <small key={c.revision}><br />Corecție {c.revision}: {c.reason} ({c.created_by})</small>)}</span>
       <button className="secondary" onClick={() => setForm({ id: row.id, clock_in: '', clock_out: '', reason: '' })}>Corectează</button>
     </article>)}</div>
     {form.id && <form onSubmit={e => { e.preventDefault(); correct.mutate(); }} aria-label="Corecție prezență">

@@ -28,8 +28,11 @@ export type Leave = {
 export type AttendanceCorrection = { revision: number; clock_in_at: string; clock_out_at: string | null; reason: string; created_by: string; created_at: string };
 export type Attendance = {
   id: string; user_id: string; user_name: string; source: 'clock' | 'manager'; clock_in_at: string; clock_out_at: string | null;
-  effective_clock_in_at: string; effective_clock_out_at: string | null; is_open: boolean; worked_seconds: number | null; corrections: AttendanceCorrection[];
+  effective_clock_in_at: string; effective_clock_out_at: string | null; is_open: boolean; worked_seconds: number | null;
+  needs_review: boolean; open_over_limit: boolean; user_is_active: boolean; corrections: AttendanceCorrection[];
 };
+export type InactiveAlert = { user_id: string; user_name: string; future_shifts: number; open_attendance: boolean };
+export type AttendanceAlerts = { review: Attendance[]; inactive: InactiveAlert[] };
 
 export const listMembers = async () => (await api.get<TeamMember[]>('/team/members')).data;
 export const updateProfile = async (id: string, body: ProfileInput) => (await api.put<TeamMember>(`/team/members/${id}/profile`, body)).data;
@@ -53,5 +56,6 @@ export const myAttendance = async () => (await api.get<{ open: Attendance | null
 export const clockIn = async () => (await api.post<Attendance>('/team/attendance/clock-in')).data;
 export const clockOut = async () => (await api.post<Attendance>('/team/attendance/clock-out')).data;
 export const listAttendance = async (start: string, end: string) => (await api.get<Attendance[]>('/team/attendance', { params: { start, end } })).data;
+export const attendanceAlerts = async () => (await api.get<AttendanceAlerts>('/team/attendance/alerts')).data;
 export const correctAttendance = async (id: string, body: { clock_in_at?: string; clock_out_at?: string; reason: string }) => (await api.post<Attendance>(`/team/attendance/${id}/corrections`, body)).data;
 export const addManualAttendance = async (body: { user_id: string; clock_in_at: string; clock_out_at: string; reason: string }) => (await api.post<Attendance>('/team/attendance/manual', body)).data;

@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as client from '../api/client';
 import * as team from './api';
-import { addDays, clinicDate, formatTime, mondayOf, shiftsForDay, TeamPage, workedLabel } from './TeamPage';
+import { addDays, attendanceHours, clinicDate, formatTime, mondayOf, shiftsForDay, TeamPage, workedLabel } from './TeamPage';
 
 const tz = 'Europe/Bucharest';
 const userWith = (role: string) => ({ id: 'me', clinic_id: 'c', full_name: 'Persoană Fictivă', email: 'x@example.com', role }) as client.User;
@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.spyOn(team, 'listLeave').mockResolvedValue([]);
   vi.spyOn(team, 'listDocuments').mockResolvedValue([]);
   vi.spyOn(team, 'listAttendance').mockResolvedValue([]);
+  vi.spyOn(team, 'attendanceAlerts').mockResolvedValue({ review: [], inactive: [] });
 });
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -59,6 +60,43 @@ describe('T19 helpers', () => {
   });
 });
 
+const session = (extra: Partial<team.Attendance>): team.Attendance => ({ id: 'a9', user_id: 'me', user_name: 'Persoană Fictivă', source: 'clock', clock_in_at: '2026-11-20T07:00:00Z', clock_out_at: null, effective_clock_in_at: '2026-11-20T07:00:00Z', effective_clock_out_at: null, is_open: true, worked_seconds: null, needs_review: false, open_over_limit: false, user_is_active: true, corrections: [], ...extra });
+
+describe('T19 forgotten attendance', () => {
+  it('replaces hours with a review label only for flagged sessions', () => {
+    expect(attendanceHours(session({ is_open: false, worked_seconds: 259200, needs_review: true }))).toBe('De verificat');
+    expect(attendanceHours(session({ open_over_limit: true }))).toBe('De verificat');
+    expect(attendanceHours(session({ is_open: false, worked_seconds: 3600 }))).toBe('1 h 00 min');
+    expect(attendanceHours(session({}))).toBe('în curs');
+  });
+  it('tells the employee to close a forgotten session and hides its hours', async () => {
+    const forgotten = session({ open_over_limit: true });
+    vi.mocked(team.myAttendance).mockResolvedValue({ open: forgotten, sessions: [forgotten] });
+    const r = await render('assistant');
+    const own = text(section(r, 'Prezența mea')[0]);
+    expect(own).toContain('deschis de peste 24 de ore');
+    expect(own).toContain('De verificat');
+    expect(buttons(r, 'Înregistrează ieșirea')).toHaveLength(1);
+    await act(async () => r.unmount());
+  });
+  it('shows the manager sessions to review, with a correction action', async () => {
+    vi.mocked(team.attendanceAlerts).mockResolvedValue({ review: [session({ user_name: 'Nume uitat', open_over_limit: true })], inactive: [] });
+    const r = await render('clinic_manager');
+    const alerts = section(r, 'Pontaje de verificat');
+    expect(alerts).toHaveLength(1);
+    expect(text(alerts[0])).toContain('Nume uitat');
+    expect(text(alerts[0])).toContain('De verificat');
+    expect(alerts[0].findAllByType('button').filter(item => text(item) === 'Corectează')).toHaveLength(1);
+    await act(async () => r.unmount());
+  });
+  it('does not ask a non-manager for the manager alerts', async () => {
+    const r = await render('doctor');
+    expect(team.attendanceAlerts).not.toHaveBeenCalled();
+    expect(section(r, 'Pontaje de verificat')).toHaveLength(0);
+    await act(async () => r.unmount());
+  });
+});
+
 describe('T19 screen by role', () => {
   it('doctor sees own attendance, schedule, leave and documents but no manager actions', async () => {
     const r = await render('doctor');
@@ -80,7 +118,7 @@ describe('T19 screen by role', () => {
     await act(async () => r.unmount());
   });
   it('clock-in calls the API once and then offers clock-out', async () => {
-    const open: team.Attendance = { id: 'a1', user_id: 'me', user_name: 'x', source: 'clock', clock_in_at: '2026-11-23T07:00:00Z', clock_out_at: null, effective_clock_in_at: '2026-11-23T07:00:00Z', effective_clock_out_at: null, is_open: true, worked_seconds: null, corrections: [] };
+    const open: team.Attendance = { id: 'a1', user_id: 'me', user_name: 'x', source: 'clock', clock_in_at: '2026-11-23T07:00:00Z', clock_out_at: null, effective_clock_in_at: '2026-11-23T07:00:00Z', effective_clock_out_at: null, is_open: true, worked_seconds: null, needs_review: false, open_over_limit: false, user_is_active: true, corrections: [] };
     const clockIn = vi.spyOn(team, 'clockIn').mockResolvedValue(open);
     const r = await render('assistant');
     vi.mocked(team.myAttendance).mockResolvedValue({ open, sessions: [open] });
