@@ -182,9 +182,12 @@ async def _affected(db: AsyncSession, user: User, equipment: Equipment, outage: 
 @router.get("")
 async def list_equipment(db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*READERS))):
     rows = list(await db.scalars(select(Equipment).where(Equipment.clinic_id == user.clinic_id).order_by(Equipment.name)))
+    now = utcnow()
     open_equipment_ids = set((await db.scalars(select(EquipmentUnavailability.equipment_id).where(
         EquipmentUnavailability.clinic_id == user.clinic_id,
-        EquipmentUnavailability.closed_at.is_(None)))).all())
+        EquipmentUnavailability.closed_at.is_(None),
+        EquipmentUnavailability.starts_at <= now,
+        EquipmentUnavailability.ends_at > now))).all())
     return [{**_json(row), "missing_unavailability": row.state in {"broken", "maintenance"}
              and row.id not in open_equipment_ids} for row in rows]
 
@@ -214,10 +217,13 @@ async def update_equipment(equipment_id: UUID, payload: EquipmentInput, db: Asyn
     for key, item in payload.model_dump().items():
         setattr(value, key, item)
     value.updated_at = utcnow(); await db.commit(); await db.refresh(value)
+    now = utcnow()
     open_outage_id = await db.scalar(select(EquipmentUnavailability.id).where(
         EquipmentUnavailability.clinic_id == user.clinic_id,
         EquipmentUnavailability.equipment_id == value.id,
-        EquipmentUnavailability.closed_at.is_(None)).order_by(EquipmentUnavailability.created_at.desc()))
+        EquipmentUnavailability.closed_at.is_(None),
+        EquipmentUnavailability.starts_at <= now,
+        EquipmentUnavailability.ends_at > now).order_by(EquipmentUnavailability.created_at.desc()))
     return {**_json(value), "open_unavailability_id": str(open_outage_id) if open_outage_id else None,
             "unavailability_required": value.state in {"broken", "maintenance"} and open_outage_id is None}
 

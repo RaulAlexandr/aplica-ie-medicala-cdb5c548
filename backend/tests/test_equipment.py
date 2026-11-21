@@ -255,3 +255,30 @@ async def test_broken_or_maintenance_state_requires_open_unavailability(ctx):
     assert changed.json()["open_unavailability_id"] is None
     row = next(item for item in (await client.get("/api/equipment", headers=manager)).json() if item["id"] == equipment["id"])
     assert row["missing_unavailability"] is True
+
+
+@pytest.mark.asyncio
+async def test_expired_and_future_open_outages_do_not_satisfy_broken_state(ctx):
+    client, _sessions = ctx
+    manager = await register(client, "equipment-outage-current-window@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit fereastră", "equipment_type": "unit", "responsible_id": identity["id"]})).json()
+    now = datetime.now(UTC).replace(microsecond=0)
+    payload = {key: equipment.get(key) for key in ("name", "equipment_type", "serial_number", "room_id", "responsible_id", "is_active")}
+    expired = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities", headers=manager, json={
+        "reason": "Expirată fictiv", "starts_at": (now - timedelta(days=2)).isoformat(), "ends_at": (now - timedelta(days=1)).isoformat()})
+    assert expired.status_code == 201
+    changed = await client.patch(f"/api/equipment/{equipment['id']}", headers=manager, json={**payload, "state": "broken"})
+    assert changed.status_code == 200 and changed.json()["unavailability_required"] is True
+    assert changed.json()["open_unavailability_id"] is None
+    listed = await client.get("/api/equipment", headers=manager)
+    assert next(row for row in listed.json() if row["id"] == equipment["id"])["missing_unavailability"] is True
+
+    future = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities", headers=manager, json={
+        "reason": "Viitoare fictivă", "starts_at": (now + timedelta(days=20)).isoformat(), "ends_at": (now + timedelta(days=21)).isoformat()})
+    assert future.status_code == 201
+    changed = await client.patch(f"/api/equipment/{equipment['id']}", headers=manager, json={**payload, "state": "maintenance"})
+    assert changed.status_code == 200 and changed.json()["unavailability_required"] is True
+    assert changed.json()["open_unavailability_id"] is None
+    listed = await client.get("/api/equipment", headers=manager)
+    assert next(row for row in listed.json() if row["id"] == equipment["id"])["missing_unavailability"] is True
