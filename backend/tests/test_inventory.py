@@ -153,3 +153,12 @@ async def test_cannot_deactivate_item_or_location_with_stock(ctx):
     assert next(x for x in balances if x["location_id"]==loc)["quantity"]=="0.000"
     assert (await c.patch(f"/api/inventory/items/{item}",headers=h,json={**item_view,"is_active":False})).status_code==200
     disable_empty_location=await c.patch(f"/api/inventory/locations/{loc}",headers=h,json={"name":location_view["name"],"is_active":False});assert disable_empty_location.status_code==200,disable_empty_location.text
+
+@pytest.mark.asyncio
+async def test_inactive_item_does_not_raise_low_stock_alert(ctx):
+    c,_=ctx;h=await register(c,"inv-inactive-low@example.com");item,_,_,_=await setup_stock(c,h,minimum="5")
+    data=(await c.get("/api/inventory",headers=h)).json();record=next(x for x in data["items"] if x["id"]==item)
+    deactivated=await c.patch(f"/api/inventory/items/{item}",headers=h,json={"name":record["name"],"unit":record["unit"],"minimum_quantity":record["minimum_quantity"],"is_active":False});assert deactivated.status_code==200
+    data=(await c.get("/api/inventory",headers=h)).json();record=next(x for x in data["items"] if x["id"]==item)
+    assert record["below_minimum"] is False
+    assert all(not x["below_minimum"] for x in data["balances"] if x["item_id"]==item)
