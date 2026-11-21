@@ -151,7 +151,8 @@ async def _affected(db: AsyncSession, user: User, equipment: Equipment, outage: 
     if service_ids:
         sure_appointment_ids.update((await db.scalars(select(PerformedProcedure.appointment_id).where(
             PerformedProcedure.clinic_id == user.clinic_id,
-            PerformedProcedure.procedure_catalog_id.in_(service_ids)))).all())
+            PerformedProcedure.procedure_catalog_id.in_(service_ids),
+            PerformedProcedure.status != "cancelled"))).all())
         sure_appointment_ids.update((await db.scalars(select(TreatmentPlanItem.appointment_id).where(
             TreatmentPlanItem.clinic_id == user.clinic_id,
             TreatmentPlanItem.procedure_catalog_id.in_(service_ids),

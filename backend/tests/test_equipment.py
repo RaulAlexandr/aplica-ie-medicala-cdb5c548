@@ -188,7 +188,7 @@ async def test_service_dependency_matches_normalized_text_and_procedure_links(ct
         session.add(service)
         await session.flush()
         appointment_rows = []
-        labels = ("Detartraj", "detartraj", "Detartraj complet", "Detártraj complet", "Intervenție efectuată", "Control planificat")
+        labels = ("Detartraj", "detartraj", "Detartraj complet", "Detártraj complet", "Intervenție efectuată", "Control planificat", "Manoperă anulată")
         for index, label in enumerate(labels):
             appointment = Appointment(clinic_id=identity["clinic_id"], patient_id=patient["id"], doctor_id=identity["id"],
                 room_id=room["id"], starts_at=now + timedelta(minutes=10 + index), ends_at=now + timedelta(minutes=40 + index),
@@ -213,9 +213,14 @@ async def test_service_dependency_matches_normalized_text_and_procedure_links(ct
             position=0, procedure_catalog_id=service.id, procedure_code=service.code, procedure_name=service.name,
             currency="RON", estimated_price=Decimal("100.00"), estimated_duration_minutes=30,
             status="active", appointment_id=planned_link.id))
+        cancelled_link = appointment_rows[6]
+        session.add(PerformedProcedure(clinic_id=identity["clinic_id"], appointment_id=cancelled_link.id, patient_id=patient["id"],
+            procedure_catalog_id=service.id, executed_by_id=identity["id"], procedure_code=service.code,
+            procedure_name=service.name, procedure_base_price=service.base_price, procedure_currency="RON",
+            procedure_default_duration=30, status="cancelled"))
         await session.commit()
         procedure_id = str(service.id)
-        expected_ids = {str(row.id) for row in appointment_rows}
+        expected_ids = {str(row.id) for row in appointment_rows[:6]}
     dependency = await client.post(f"/api/equipment/{equipment['id']}/dependencies", headers=manager, json={"procedure_id": procedure_id})
     assert dependency.status_code == 201
     outage = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities", headers=manager, json={
