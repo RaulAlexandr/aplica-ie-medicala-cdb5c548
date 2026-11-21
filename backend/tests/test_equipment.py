@@ -364,6 +364,7 @@ async def test_completed_check_rejects_future_time_and_missing_result(ctx):
         "completed_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat()})
     assert future.status_code == 422
     assert missing_result.status_code == 422
+    assert missing_result.json()["detail"] == "Rezultatul este obligatoriu pentru o verificare efectuată"
 
 
 @pytest.mark.asyncio
@@ -375,7 +376,7 @@ async def test_check_result_requires_completion_time(ctx):
     response = await client.post(f"/api/equipment/{equipment['id']}/checks", headers=manager, json={
         "check_type": "inspection", "due_at": (datetime.now(UTC) + timedelta(days=2)).isoformat(), "result": "Conform fictiv"})
     assert response.status_code == 422
-    assert response.json()["detail"] == "Rezultatul este obligatoriu pentru o verificare efectuată"
+    assert response.json()["detail"] == "Rezultatul se completează numai pentru o verificare efectuată"
 
 
 @pytest.mark.asyncio

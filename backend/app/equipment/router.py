@@ -259,7 +259,7 @@ async def add_check(equipment_id: UUID, payload: CheckInput, db: AsyncSession = 
         if result is None:
             raise HTTPException(422, "Rezultatul este obligatoriu pentru o verificare efectuată")
     elif result is not None:
-        raise HTTPException(422, "Rezultatul este obligatoriu pentru o verificare efectuată")
+        raise HTTPException(422, "Rezultatul se completează numai pentru o verificare efectuată")
     value = EquipmentCheck(clinic_id=user.clinic_id, equipment_id=equipment.id, author_id=user.id,
         check_type=payload.check_type, due_at=due, completed_at=completed,
         completed_by_id=user.id if completed else None, result=result)
