@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -179,3 +180,15 @@ async def test_inventory_overview_query_count_does_not_scale_with_lot_count(ctx)
     finally:event.remove(s.kw["bind"].sync_engine,"before_cursor_execute",count_selects)
     assert response.status_code==200,response.text
     assert count<=6,f"Interogările GET /inventory trebuie să rămână constante; s-au executat {count}."
+
+@pytest.mark.asyncio
+async def test_inventory_expiry_views_hide_zero_rows_and_expose_all_lots(ctx):
+    c,_=ctx;h=await register(c,"inv-expiry-zero@example.com")
+    item,expired_lot,loc,_dest=await setup_stock(c,h,minimum="0",expires=(date.today()-timedelta(days=1)).isoformat())
+    soon=await c.post("/api/inventory/lots",headers=h,json={"item_id":item,"code":"LOT-SOON-ZERO","expires_on":(date.today()+timedelta(days=5)).isoformat()});assert soon.status_code==201
+    stocked=await c.post("/api/inventory/movements/receipt",headers=h,json=movement(item,expired_lot,loc,"2"));assert stocked.status_code==201
+    view=(await c.get("/api/inventory",headers=h)).json()
+    assert {x["id"] for x in view["lots"]}>={expired_lot,soon.json()["id"]}
+    assert all(Decimal(x["quantity"])>0 for x in view["balances"] if x["expired"] or x["expiring_soon"])
+    assert any(x["lot_id"]==expired_lot and x["expired"] for x in view["balances"])
+    assert not any(x["lot_id"]==soon.json()["id"] and x["expiring_soon"] for x in view["balances"])
