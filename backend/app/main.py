@@ -20,6 +20,7 @@ from app.procedures.router import router as procedures_router
 from app.reports.router import router as reports_router
 from app.rooms_router import router as rooms_router
 from app.staff.router import router as staff_management_router
+from app.team.router import router as team_router
 from app.treatment_plans.router import router as treatment_plans_router
 from app.waitlist.router import router as waitlist_router
 
@@ -50,6 +51,7 @@ app.include_router(rooms_router, prefix="/api")
 app.include_router(staff_router, prefix="/api")
 app.include_router(staff_management_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
+app.include_router(team_router, prefix="/api")
 
 
 @app.get("/health")
