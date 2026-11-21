@@ -111,3 +111,31 @@ async def test_validation_and_append_only_check_document_dependency_history(ctx)
     assert history.status_code == 200
     assert history.json()["checks"][0]["author_id"] == identity["id"]
     assert len(history.json()["checks"]) == len(history.json()["documents"]) == len(history.json()["dependencies"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_closed_outage_truncates_affected_appointments_in_history_and_affected_route(ctx):
+    client, sessions = ctx
+    manager = await register(client, "equipment-closed-outage@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    room = (await client.post("/api/rooms", headers=manager, json={"name": "Cabinet închidere"})).json()
+    patient = (await client.post("/api/patients", headers=manager, json={"first_name": "Pacient", "last_name": "Fictiv"})).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit închis", "equipment_type": "unit", "room_id": room["id"], "responsible_id": identity["id"]})).json()
+    now = datetime.now(UTC).replace(microsecond=0)
+    appt_start = now + timedelta(hours=1)
+    async with sessions() as session:
+        session.add(Appointment(clinic_id=identity["clinic_id"], patient_id=patient["id"], doctor_id=identity["id"],
+            room_id=room["id"], starts_at=appt_start, ends_at=appt_start + timedelta(minutes=30), duration_minutes=30,
+            status="scheduled", appointment_type="Control fictiv"))
+        await session.commit()
+    created = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities", headers=manager, json={
+        "reason": "Test închidere fictivă", "starts_at": (now - timedelta(hours=1)).isoformat(),
+        "ends_at": (now + timedelta(hours=8)).isoformat()})
+    assert created.status_code == 201 and len(created.json()["affected_appointments"]) == 1
+    outage_id = created.json()["id"]
+    closed = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities/{outage_id}/close", headers=manager)
+    assert closed.status_code == 200
+    affected = await client.get(f"/api/equipment/{equipment['id']}/unavailabilities/{outage_id}/affected", headers=manager)
+    history = await client.get(f"/api/equipment/{equipment['id']}/history", headers=manager)
+    assert affected.status_code == 200 and affected.json() == []
+    assert history.status_code == 200 and history.json()["unavailabilities"][0]["affected_appointments"] == []

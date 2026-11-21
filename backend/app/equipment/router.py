@@ -25,6 +25,10 @@ READERS = (*STAFF, "reception")
 ACTIVE_APPOINTMENT_STATUSES = ("scheduled", "confirmed", "arrived", "in_progress")
 
 
+def effective_end(outage: EquipmentUnavailability) -> datetime:
+    return min(outage.ends_at, outage.closed_at) if outage.closed_at else outage.ends_at
+
+
 class EquipmentInput(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     equipment_type: str = Field(min_length=1, max_length=100)
@@ -99,6 +103,7 @@ async def _clinic_datetime(db: AsyncSession, clinic_id: UUID, value: datetime) -
 
 
 async def _affected(db: AsyncSession, user: User, equipment: Equipment, outage: EquipmentUnavailability):
+    outage_end = effective_end(outage)
     deps = list(await db.scalars(select(EquipmentDependency).where(
         EquipmentDependency.clinic_id == user.clinic_id, EquipmentDependency.equipment_id == equipment.id)))
     room_ids = {d.room_id for d in deps if d.room_id}
@@ -120,11 +125,11 @@ async def _affected(db: AsyncSession, user: User, equipment: Equipment, outage: 
              .join(User, and_(User.id == Appointment.doctor_id, User.clinic_id == user.clinic_id))
              .join(Room, and_(Room.id == Appointment.room_id, Room.clinic_id == user.clinic_id))
              .where(Appointment.clinic_id == user.clinic_id, Appointment.status.in_(ACTIVE_APPOINTMENT_STATUSES),
-                    Appointment.starts_at < outage.ends_at, or_(*conditions))
+                    Appointment.starts_at < outage_end, or_(*conditions))
              .order_by(Appointment.starts_at))
     rows = (await db.execute(query)).all()
     rows = [(a, p, d, r) for a, p, d, r in rows
-            if (a.ends_at or a.starts_at + timedelta(minutes=a.duration_minutes)) > outage.starts_at]
+            if (a.ends_at or a.starts_at + timedelta(minutes=a.duration_minutes)) > outage.starts_at and a.starts_at < outage_end]
     return [{"appointment_id": str(a.id), "patient": f"{p.first_name} {p.last_name}",
              "starts_at": a.starts_at.isoformat(), "ends_at": a.ends_at.isoformat() if a.ends_at else None,
              "doctor": doctor.full_name, "room": room.name, "appointment_type": a.appointment_type,
