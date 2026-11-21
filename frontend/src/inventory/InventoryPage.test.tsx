@@ -112,8 +112,13 @@ describe('pagina Stocuri',()=>{
     const selects=renderer.root.findAllByType('select');
     await act(async()=>selects.find(x=>x.parent?.children[0]==='Filtru istoric articol')?.props.onChange({target:{value:'item-1'}}));
     for(let n=0;n<3;n++)await act(async()=>{await new Promise(r=>setTimeout(r,0));});
-    expect(vi.mocked(inventoryHistory)).toHaveBeenLastCalledWith({item_id:'item-1',lot_id:'',location_id:'',kind:''});
+    expect(vi.mocked(inventoryHistory)).toHaveBeenLastCalledWith({item_id:'item-1',lot_id:undefined,location_id:undefined,kind:undefined});
     expect(client.getQueryCache().findAll().some(x=>JSON.stringify(x.queryKey)===JSON.stringify(['inventory-history','item-1','','','']))).toBe(true);
+    await act(async()=>renderer.unmount());
+  });
+  it('avertizează când istoricul atinge limita de 200 de mișcări',async()=>{
+    vi.mocked(inventoryHistory).mockResolvedValue(Array.from({length:200},(_,i)=>({id:`move-${i}`,item_id:'item-1',item:'Material fictiv',lot_id:'lot-1',lot:'LOT-FICTIV',location_id:'loc-1',location:'Depozit fictiv',author:'Manager fictiv',kind:'receipt',quantity:'1',reason:'',transfer_id:null,reverses_movement_id:null,is_correction:false,is_corrected:false,created_at:'2026-11-21T10:00:00Z'})));
+    const renderer=await page('doctor');expect(textOf(renderer.root)).toContain('Se afișează ultimele 200 de mișcări; restrânge filtrele');
     await act(async()=>renderer.unmount());
   });
   it('nu afișează cifra zero când istoricul este gol',async()=>{

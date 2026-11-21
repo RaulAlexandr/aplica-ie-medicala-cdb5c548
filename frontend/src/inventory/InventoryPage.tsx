@@ -8,8 +8,9 @@ const staff=['clinic_manager','administrator','doctor','assistant'];
 const newId=()=>crypto.randomUUID();
 const movementLabels:Record<string,string>={receipt:'Recepție',consumption:'Consum',transfer_in:'Transfer primit',transfer_out:'Transfer expediat',adjustment_in:'Ajustare — adăugare',adjustment_out:'Ajustare — scădere',reversal_in:'Corecție — adăugare',reversal_out:'Corecție — scădere'};
 export function InventoryPage({role}:{role:string}) {
-  const client=useQueryClient(), view=useQuery({queryKey:['inventory'],queryFn:inventoryOverview}), history=useQuery({queryKey:['inventory-history'],queryFn:inventoryHistory}), clinic=useQuery({queryKey:['clinic'],queryFn:getClinic});
+  const client=useQueryClient(), view=useQuery({queryKey:['inventory'],queryFn:inventoryOverview}), clinic=useQuery({queryKey:['clinic'],queryFn:getClinic});
   const [message,setMessage]=useState(''),[itemName,setItemName]=useState(''),[unit,setUnit]=useState(''),[minimum,setMinimum]=useState('0'),[locationName,setLocationName]=useState(''),[lotItem,setLotItem]=useState(''),[lotCode,setLotCode]=useState(''),[expiry,setExpiry]=useState(''),[kind,setKind]=useState('consumption'),[itemId,setItemId]=useState(''),[lotId,setLotId]=useState(''),[locationId,setLocationId]=useState(''),[destination,setDestination]=useState(''),[quantity,setQuantity]=useState('1'),[reason,setReason]=useState(''),[direction,setDirection]=useState('increase'),[filter,setFilter]=useState('all'),[historyItem,setHistoryItem]=useState(''),[historyLot,setHistoryLot]=useState(''),[historyLocation,setHistoryLocation]=useState(''),[historyKind,setHistoryKind]=useState('');
+  const history=useQuery({queryKey:['inventory-history',historyItem,historyLot,historyLocation,historyKind],queryFn:()=>inventoryHistory({item_id:historyItem||undefined,lot_id:historyLot||undefined,location_id:historyLocation||undefined,kind:historyKind||undefined})});
   const movementRequestId=useRef(newId()),movementBusy=useRef(false),reverseRequests=useRef(new Map<string,{requestId:string;reason:string}>()),reverseBusy=useRef(new Set<string>());
   const changed=(success='Mișcarea a fost salvată.')=>{void client.invalidateQueries({queryKey:['inventory']});void client.invalidateQueries({queryKey:['inventory-history']});setMessage(success);};
   const showError=(e:unknown)=>setMessage(apiErrorMessage(e));
@@ -22,7 +23,7 @@ export function InventoryPage({role}:{role:string}) {
   const reverse=useMutation({mutationFn:(input:{id:string;reason:string;requestId:string})=>reverseInventoryMovement(input.id,{client_request_id:input.requestId,reason:input.reason}),onSuccess:(_data,input)=>{reverseRequests.current.delete(input.id);changed();},onError:e=>setMessage(apiErrorMessage(e)),onSettled:(_data,_error,input)=>{reverseBusy.current.delete(input.id);}});
   const isManager=managers.includes(role),canWork=staff.includes(role);
   const balances=(view.data?.balances??[]).filter(x=>filter==='all'||filter==='low'&&x.below_minimum||filter==='expired'&&x.expired||filter==='soon'&&x.expiring_soon);
-  const visibleHistory=(history.data??[]).filter(x=>(!historyItem||x.item_id===historyItem)&&(!historyLot||x.lot_id===historyLot)&&(!historyLocation||x.location_id===historyLocation)&&(!historyKind||x.kind===historyKind));
+  const visibleHistory=history.data??[];
   function submit(e:FormEvent,fn:()=>void){e.preventDefault();setMessage('');fn();}
   function movementField<T>(setter:(value:T)=>void,value:T){setter(value);movementRequestId.current=newId();}
   return <section className="inventory-page">
@@ -50,7 +51,7 @@ export function InventoryPage({role}:{role:string}) {
       <label>Cantitate<input type="number" min="0.001" step="0.001" required value={quantity} onChange={e=>movementField(setQuantity,e.target.value)}/></label>
       {kind==='adjustment'&&<label>Motiv<input required value={reason} onChange={e=>movementField(setReason,e.target.value)}/></label>}
       </div><button disabled={movement.isPending}>Salvează mișcarea</button></form>}
-    <section className="card"><h2>Istoricul mișcărilor</h2>
+    <section className="card"><h2>Istoricul mișcărilor</h2>{visibleHistory.length>=200&&<p role="status">Se afișează ultimele 200 de mișcări; restrânge filtrele</p>}
       <div className="grid two">
         <label>Filtru istoric articol<select value={historyItem} onChange={e=>setHistoryItem(e.target.value)}><option value="">Toate articolele</option>{view.data?.items.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
         <label>Filtru istoric lot<select value={historyLot} onChange={e=>setHistoryLot(e.target.value)}><option value="">Toate loturile</option>{view.data?.lots.map(x=><option key={x.id} value={x.id}>{x.code}</option>)}</select></label>
