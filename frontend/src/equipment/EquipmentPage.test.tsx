@@ -81,6 +81,24 @@ describe('T21 equipment screen', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('uses singular wording for one affected appointment in the card and mutation notice', async () => {
+    const oneOutage = { id: 'outage-1', equipment_id: equipment.id, reason: 'Defecțiune', starts_at: '2026-11-25T08:00:00Z', ends_at: '2026-11-25T10:00:00Z', closed_at: null, affected_appointments: [affected('sigur', 'appointment-1')] };
+    const report = vi.spyOn(equipmentApi, 'reportOutage')
+      .mockResolvedValueOnce({ affected_appointments: [affected('sigur', 'appointment-1')] } as never)
+      .mockResolvedValueOnce({ affected_appointments: [affected('sigur', 'appointment-1'), affected('sigur', 'appointment-2')] } as never);
+    vi.stubGlobal('FormData', class { get(name: string) { return ({ reason: 'Defecțiune', starts_at: '2026-11-25T11:00', ends_at: '2026-11-25T12:00' } as Record<string, string>)[name] ?? ''; } });
+    const renderer = await render(user('clinic_manager'), historyWith({ unavailabilities: [oneOutage] }));
+    const form = renderer.root.findAllByType('form').find(candidate => text(candidate).includes('Raportează indisponibilitate'))!;
+    const target = { reset: vi.fn() };
+    await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
+    expect(text(renderer.root)).toContain('1 programare afectată');
+    expect(text(renderer.root)).not.toContain('1 programări afectate');
+    await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
+    expect(text(renderer.root)).toContain('2 programări afectate');
+    expect(report).toHaveBeenCalledTimes(2);
+    await act(async () => renderer.unmount());
+  });
+
   it('shows Romanian equipment states in the registry', async () => {
     const equipmentItems = (['available', 'maintenance', 'broken', 'retired'] as const).map((state, index) => ({
       ...equipment, id: `equipment-${index}`, name: index === 0 ? equipment.name : `Unit ${index}`, state,
