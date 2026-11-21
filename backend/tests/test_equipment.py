@@ -240,3 +240,18 @@ async def test_duplicate_equipment_dependency_is_conflict(ctx):
     duplicate = await client.post(path, headers=manager, json={"room_id": room["id"]})
     assert first.status_code == 201
     assert duplicate.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_broken_or_maintenance_state_requires_open_unavailability(ctx):
+    client, _sessions = ctx
+    manager = await register(client, "equipment-state-outage@example.com")
+    identity = (await client.get("/api/auth/me", headers=manager)).json()
+    equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit stare defectă", "equipment_type": "unit", "responsible_id": identity["id"]})).json()
+    payload = {key: equipment.get(key) for key in ("name", "equipment_type", "serial_number", "room_id", "responsible_id", "is_active")}
+    changed = await client.patch(f"/api/equipment/{equipment['id']}", headers=manager, json={**payload, "state": "broken"})
+    assert changed.status_code == 200
+    assert changed.json()["unavailability_required"] is True
+    assert changed.json()["open_unavailability_id"] is None
+    row = next(item for item in (await client.get("/api/equipment", headers=manager)).json() if item["id"] == equipment["id"])
+    assert row["missing_unavailability"] is True
