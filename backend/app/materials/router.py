@@ -801,25 +801,45 @@ async def actuals(from_date: date | None = Query(default=None), to_date: date | 
         InventoryMovement.kind == "reversal_in",
     ).group_by(InventoryMovement.reverses_movement_id))).all()
     reversal_by_movement = {movement_id: _decimal(quantity) for movement_id, quantity in reversals}
+    recipe_version_by_procedure = {}
+    for batch in batches:
+        if batch.recipe_version_id:
+            recipe_version_by_procedure.setdefault(batch.performed_procedure_id, batch.recipe_version_id)
+    recipe_versions = set(recipe_version_by_procedure.values())
+    recipe_rows = (await db.scalars(select(MaterialRecipeLine).where(
+        MaterialRecipeLine.clinic_id == user.clinic_id,
+        MaterialRecipeLine.recipe_version_id.in_(recipe_versions) if recipe_versions else False,
+    ))).all()
+    recipe_lines_by_version = defaultdict(list)
+    for recipe_line in recipe_rows:
+        recipe_lines_by_version[recipe_line.recipe_version_id].append(recipe_line)
     batch_map = {batch.id: batch for batch in batches}
-    item_ids = {line.item_id for line in consumption_lines}
-    items = (await db.scalars(select(InventoryItem).where(InventoryItem.clinic_id == user.clinic_id,
-        InventoryItem.id.in_(item_ids) if item_ids else False))).all()
-    item_map = {item.id: item for item in items}
     catalog = (await db.execute(select(PerformedProcedure.id, ProcedureCatalog.name).join(
         ProcedureCatalog, ProcedureCatalog.id == PerformedProcedure.procedure_catalog_id,
     ).where(PerformedProcedure.id.in_({batch.performed_procedure_id for batch in batches})))).all()
     procedure_names = dict(catalog)
     aggregates = {}
+    for procedure_id, recipe_version_id in recipe_version_by_procedure.items():
+        for recipe_line in recipe_lines_by_version[recipe_version_id]:
+            aggregates[(procedure_id, recipe_line.item_id)] = {
+                "estimated": _decimal(recipe_line.estimated_quantity), "actual": Decimal(0),
+                "recipe_version": recipe_version_id,
+            }
     for line in consumption_lines:
         batch = batch_map[line.batch_id]
         key = (batch.performed_procedure_id, line.item_id)
-        row = aggregates.setdefault(key, {"estimated": _decimal(line.estimated_quantity), "actual": Decimal(0),
-            "recipe_version": line.recipe_version_id})
+        row = aggregates.setdefault(key, {"estimated": Decimal(0), "actual": Decimal(0),
+            "recipe_version": recipe_version_by_procedure.get(batch.performed_procedure_id)})
         row["actual"] += max(Decimal(0), _decimal(line.actual_quantity) - reversal_by_movement.get(line.inventory_movement_id, Decimal(0)))
+    item_ids = {item_id for _procedure_id, item_id in aggregates}
+    items = (await db.scalars(select(InventoryItem).where(
+        InventoryItem.clinic_id == user.clinic_id,
+        InventoryItem.id.in_(item_ids) if item_ids else False,
+    ))).all()
+    item_map = {item.id: item for item in items}
     result = [{"performed_procedure_id": str(procedure_id), "procedure_name": procedure_names.get(procedure_id, "Manoperă"),
         "item_id": str(item_id), "item_name": item_map[item_id].name, "unit": item_map[item_id].unit,
         "recipe_version_id": str(data["recipe_version"]) if data["recipe_version"] else None,
         "estimated_quantity": format(data["estimated"], ".3f"), "actual_quantity": format(data["actual"], ".3f")}
-        for (procedure_id, item_id), data in aggregates.items()]
+        for (procedure_id, item_id), data in sorted(aggregates.items(), key=lambda entry: (str(entry[0][0]), str(entry[0][1])))]
     return {"from_date": start_day.isoformat(), "to_date": end_day.isoformat(), "lines": result}

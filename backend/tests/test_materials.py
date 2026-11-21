@@ -228,8 +228,13 @@ async def test_confirm_consumption_is_atomic_idempotent_and_keeps_estimate(env):
     client, sessions = env
     ctx = await register(client)
     stock = await add_stock(client, ctx["auth"], quantity="5")
+    recipe_unused = await add_stock(client, ctx["auth"], quantity="5")
+    extra_material = await add_stock(client, ctx["auth"], quantity="5")
     procedure_id = await add_procedure(client, ctx["auth"])
-    saved = await save_recipe(client, ctx["auth"], procedure_id, 0, [{"item_id": stock["item_id"], "estimated_quantity": "2.500"}])
+    saved = await save_recipe(client, ctx["auth"], procedure_id, 0, [
+        {"item_id": stock["item_id"], "estimated_quantity": "2.500"},
+        {"item_id": recipe_unused["item_id"], "estimated_quantity": "1.250"},
+    ])
     assert saved.status_code == 201, saved.text
     appointment_id = await add_appointment(client, ctx)
     performed = await client.post("/api/performed-procedures", headers=ctx["auth"], json={
@@ -248,16 +253,23 @@ async def test_confirm_consumption_is_atomic_idempotent_and_keeps_estimate(env):
     second_without_reason = await client.post(f"/api/materials/performed-procedures/{performed_id}/confirm", headers=ctx["auth"], json={"client_request_id": str(uuid4()), "lines": [{**stock, "quantity": "1"}]})
     assert second_without_reason.status_code == 422
     second = await client.post(f"/api/materials/performed-procedures/{performed_id}/confirm", headers=ctx["auth"], json={
-        "client_request_id": str(uuid4()), "reason": "Consum suplimentar fictiv", "lines": [{**stock, "quantity": "1"}],
+        "client_request_id": str(uuid4()), "reason": "Consum suplimentar fictiv", "lines": [
+            {**stock, "quantity": "1"}, {**extra_material, "quantity": "1"},
+        ],
     })
     assert second.status_code == 201, second.text
     async with sessions() as session:
         movements = (await session.scalars(select(InventoryMovement).where(InventoryMovement.kind == "consumption"))).all()
-        assert len(movements) == 2
+        assert len(movements) == 3
     actuals = await client.get("/api/materials/actuals", headers=ctx["auth"], params={"from_date": "2026-12-01", "to_date": "2026-12-14"})
     assert actuals.status_code == 200, actuals.text
     line = next(row for row in actuals.json()["lines"] if row["item_id"] == stock["item_id"])
     assert line["estimated_quantity"] == "2.500" and line["actual_quantity"] == "3.000"
+    lines_by_item = {row["item_id"]: row for row in actuals.json()["lines"]}
+    assert lines_by_item[recipe_unused["item_id"]]["estimated_quantity"] == "1.250"
+    assert lines_by_item[recipe_unused["item_id"]]["actual_quantity"] == "0.000"
+    assert lines_by_item[extra_material["item_id"]]["estimated_quantity"] == "0.000"
+    assert lines_by_item[extra_material["item_id"]]["actual_quantity"] == "1.000"
 
 
 @pytest.mark.asyncio
