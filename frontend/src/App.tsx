@@ -10,6 +10,7 @@ import { WaitlistPanel } from './waitlist/Waitlist';
 import { ReportsPage } from './reports/ReportsPage';
 import { StaffDetail } from './staff/StaffDetail';
 import { TeamPage } from './team/TeamPage';
+import { CollabNavLink, CollabPage } from './collab/CollabPage';
 import { locationLabel, ruleOf } from './catalog/locations';
 import { CatalogProcedureForm } from './catalog/CatalogProcedureForm';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
@@ -48,6 +49,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {staffRoles.includes(user.role) && <Link to="/procedures">Procedure catalog</Link>}
         {staffRoles.includes(user.role) && <Link to="/waitlist">Lista de așteptare</Link>}
         {staffRoles.includes(user.role) && <Link to="/team">Echipă</Link>}
+        {staffRoles.includes(user.role) && <CollabNavLink />}
         {cashRoles.includes(user.role) && <Link to="/finance/daily">Încasări zi</Link>}
         {managementRoles.includes(user.role) && <Link to="/reports">Rapoarte</Link>}
         {managementRoles.includes(user.role) && <><Link to="/setup">Clinic setup</Link><Link to="/staff">Staff</Link></>}
@@ -463,6 +465,7 @@ export default function App() {
       <Route path="/appointments" element={<Appointments user={user} />} />
       <Route path="/waitlist" element={staffRoles.includes(user.role) ? <WaitlistPanel /> : <Navigate to="/" />} />
       <Route path="/team" element={staffRoles.includes(user.role) ? <TeamPage user={user} /> : <Navigate to="/" />} />
+      <Route path="/messages" element={staffRoles.includes(user.role) ? <CollabPage user={user} /> : <Navigate to="/" />} />
       <Route path="/appointments/:appointmentId/visit" element={<VisitPage user={user} />} />
       <Route path="/procedures" element={<Procedures user={user} />} />
       <Route path="/procedures/:id" element={<ProcedureDetail user={user} />} />
