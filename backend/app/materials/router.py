@@ -211,6 +211,11 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
     plan_items = [row for row in plan_items if row.performed_procedure_id not in completed_ids]
     procedure_ids = {row.procedure_catalog_id for row in plan_items}
     latest, lines_by_version = await _latest_recipes(db, user.clinic_id, procedure_ids)
+    catalogs = (await db.scalars(select(ProcedureCatalog).where(
+        ProcedureCatalog.clinic_id == user.clinic_id,
+        ProcedureCatalog.id.in_(procedure_ids) if procedure_ids else False,
+    ))).all()
+    catalog_map = {row.id: row for row in catalogs}
     stock = await _stock_rows(db, user.clinic_id)
     reservations = await _current_reservation_events(db, user.clinic_id)
     reserve_by_item = defaultdict(Decimal)
@@ -233,6 +238,7 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
     unknown_procedures = []
     shortage_by_item = defaultdict(lambda: {"quantity": Decimal(0), "appointments": []})
     requirements_by_item = defaultdict(Decimal)
+    demand_by_item = defaultdict(list)
     for appointment, patient in appointment_pairs:
         local_date = appointment.starts_at.astimezone(zone).date()
         planned = plan_by_appt.get(appointment.id, [])
@@ -244,7 +250,7 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
         appointment_lines = defaultdict(list)
         for planned_item in planned:
             recipe = latest.get(planned_item.procedure_catalog_id)
-            catalog = await db.get(ProcedureCatalog, planned_item.procedure_catalog_id)
+            catalog = catalog_map.get(planned_item.procedure_catalog_id)
             performed_id = str(planned_item.performed_procedure_id) if planned_item.performed_procedure_id else None
             if not recipe:
                 unknown_procedures.append({"appointment_id": str(appointment.id), "procedure_catalog_id": str(planned_item.procedure_catalog_id),
@@ -274,23 +280,82 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
                 "recipe_version": recipe.version, "recipe_version_id": str(recipe.id),
                 "performed_procedure_id": performed_id, "recipe_missing": False, "lines": requirement_lines})
         for item_id, item_lines in appointment_lines.items():
-            required = sum((line[1] for line in item_lines), Decimal(0))
-            own_reserved = reserve_by_appt_item[(appointment.id, item_id)]
-            other_reserved = max(Decimal(0), reserve_by_item[item_id] - own_reserved)
-            available = max(Decimal(0), _available_on(stock, item_id, local_date) - other_reserved)
-            shortage = max(Decimal(0), required - own_reserved - available)
+            demand_by_item[item_id].append({
+                "appointment_id": appointment.id, "local_date": local_date,
+                "patient_name": row["patient_name"],
+                "required": sum((line[1] for line in item_lines), Decimal(0)),
+                "reserved": reserve_by_appt_item[(appointment.id, item_id)], "lines": item_lines,
+            })
+        appointment_output.append(row)
+
+    reservation_appointment_ids = {appointment_id for appointment_id, _item_id in reservations}
+    reservation_appointments = {}
+    if reservation_appointment_ids:
+        reservation_rows = (await db.execute(select(Appointment.id, Appointment.starts_at).where(
+            Appointment.clinic_id == user.clinic_id,
+            Appointment.id.in_(reservation_appointment_ids),
+        ))).all()
+        reservation_appointments = {appointment_id: starts_at for appointment_id, starts_at in reservation_rows}
+    lots_by_item = defaultdict(list)
+    lot_map = {}
+    for stock_row in stock:
+        key = (stock_row["item_id"], stock_row["lot_id"])
+        lot = lot_map.setdefault(key, {"expires_on": stock_row["expires_on"], "quantity": Decimal(0), "lot_id": stock_row["lot_id"]})
+        lot["quantity"] += stock_row["quantity"]
+    for (item_id, _lot_id), lot in lot_map.items():
+        lots_by_item[item_id].append(lot)
+    for lots in lots_by_item.values():
+        lots.sort(key=lambda lot: (lot["expires_on"] is None, lot["expires_on"] or date.max, str(lot["lot_id"])))
+
+    def take_from_lots(lots, quantity, on_date):
+        remaining = quantity
+        for lot in lots:
+            if lot["quantity"] <= 0 or (lot["expires_on"] is not None and lot["expires_on"] < on_date):
+                continue
+            taken = min(lot["quantity"], remaining)
+            lot["quantity"] -= taken
+            remaining -= taken
+            if remaining <= 0:
+                break
+        return quantity - remaining
+
+    for item_id, item_demands in demand_by_item.items():
+        lots = lots_by_item.get(item_id, [])
+        reservations_for_item = sorted(
+            ((appointment_id, event) for (appointment_id, reserved_item), (event, _status) in reservations.items()
+             if reserved_item == item_id),
+            key=lambda pair: (reservation_appointments.get(pair[0], datetime.max.replace(tzinfo=ZoneInfo("UTC"))), str(pair[0])),
+        )
+        reserved_allocations = {}
+        for appointment_id, event in reservations_for_item:
+            appointment_at = reservation_appointments.get(appointment_id)
+            if appointment_at is None:
+                continue
+            reserved_allocations[appointment_id] = take_from_lots(
+                lots, _decimal(event.quantity), appointment_at.astimezone(zone).date())
+        for demand in item_demands:
+            on_date = demand["local_date"]
+            reserved_coverage = min(demand["required"], reserved_allocations.get(demand["appointment_id"], Decimal(0)))
+            available = sum((lot["quantity"] for lot in lots
+                             if lot["quantity"] > 0 and (lot["expires_on"] is None or lot["expires_on"] >= on_date)), Decimal(0))
+            need_after_reservation = demand["required"] - reserved_coverage
+            free_coverage = take_from_lots(lots, need_after_reservation, on_date)
+            shortage = need_after_reservation - free_coverage
             remaining = shortage
-            for line_output, need, _procedure_name in reversed(item_lines):
+            for line_output, need, _procedure_name in reversed(demand["lines"]):
                 assigned = min(need, remaining)
+                line_output["available"] = format(available, ".3f")
+                line_output["reserved"] = format(demand["reserved"], ".3f")
                 line_output["shortage"] = format(assigned, ".3f")
                 remaining -= assigned
             if shortage > 0:
                 shortage_by_item[item_id]["quantity"] += shortage
-                shortage_by_item[item_id]["appointments"].append({"appointment_id": str(appointment.id),
-                    "local_date": local_date.isoformat(), "patient_name": row["patient_name"],
-                    "procedure_name": ", ".join(dict.fromkeys(entry[2] for entry in item_lines)),
-                    "shortage": format(shortage, ".3f")})
-        appointment_output.append(row)
+                shortage_by_item[item_id]["appointments"].append({
+                    "appointment_id": str(demand["appointment_id"]), "local_date": on_date.isoformat(),
+                    "patient_name": demand["patient_name"],
+                    "procedure_name": ", ".join(dict.fromkeys(entry[2] for entry in demand["lines"])),
+                    "shortage": format(shortage, ".3f"),
+                })
     shortages = []
     for item_id, data in shortage_by_item.items():
         item = item_map[item_id]

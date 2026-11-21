@@ -306,3 +306,67 @@ async def test_requirement_does_not_count_lot_expired_before_appointment(env):
     assert result.status_code == 200, result.text
     line = result.json()["appointments"][0]["procedures"][0]["lines"][0]
     assert line["available"] == "0.000" and line["shortage"] == "2.000"
+
+@pytest.mark.asyncio
+async def test_shortages_allocate_stock_fifo_across_appointments_and_expiry_dates(env):
+    client, _sessions = env
+    ctx = await register(client)
+    stock = await add_stock(client, ctx["auth"], quantity="10")
+    procedure_id = await add_procedure(client, ctx["auth"])
+    saved = await save_recipe(client, ctx["auth"], procedure_id, 0, [
+        {"item_id": stock["item_id"], "estimated_quantity": "6"},
+    ])
+    assert saved.status_code == 201, saved.text
+    first = await add_appointment(client, ctx, starts_at="2026-12-02T09:00:00+00:00")
+    second = await add_appointment(client, ctx, starts_at="2026-12-04T09:00:00+00:00")
+    await add_plan_item(_sessions, ctx, procedure_id, first)
+    await add_plan_item(_sessions, ctx, procedure_id, second)
+
+    result = await client.get("/api/materials/requirements", headers=ctx["auth"], params={
+        "from_date": "2026-12-01", "to_date": "2026-12-14",
+    })
+    assert result.status_code == 200, result.text
+    assert result.json()["shortages"][0]["quantity"] == "2.000"
+    assert result.json()["shortages"][0]["appointments"][0]["appointment_id"] == second
+
+    reservation = await client.post("/api/materials/reservations", headers=ctx["auth"], json={
+        "appointment_id": first, "item_id": stock["item_id"], "quantity": "2", "client_request_id": str(uuid4()),
+    })
+    assert reservation.status_code == 201, reservation.text
+    reserved_result = await client.get("/api/materials/requirements", headers=ctx["auth"], params={
+        "from_date": "2026-12-01", "to_date": "2026-12-14",
+    })
+    assert reserved_result.status_code == 200, reserved_result.text
+    assert reserved_result.json()["shortages"][0]["quantity"] == "2.000"
+    assert reserved_result.json()["shortages"][0]["appointments"][0]["appointment_id"] == second
+
+
+@pytest.mark.asyncio
+async def test_fifo_does_not_use_lot_after_its_expiry_for_later_appointment(env):
+    client, sessions = env
+    ctx = await register(client)
+    stock = await add_stock(client, ctx["auth"], quantity="6", expires_on="2026-12-03")
+    later_lot = await client.post("/api/inventory/lots", headers=ctx["auth"], json={
+        "item_id": stock["item_id"], "code": f"LOT-LATER-{uuid4().hex[:8]}",
+    })
+    assert later_lot.status_code == 201, later_lot.text
+    receipt = await client.post("/api/inventory/movements/receipt", headers=ctx["auth"], json={
+        "item_id": stock["item_id"], "lot_id": later_lot.json()["id"], "location_id": stock["location_id"],
+        "quantity": "4", "client_request_id": str(uuid4()),
+    })
+    assert receipt.status_code == 201, receipt.text
+    procedure_id = await add_procedure(client, ctx["auth"])
+    saved = await save_recipe(client, ctx["auth"], procedure_id, 0, [
+        {"item_id": stock["item_id"], "estimated_quantity": "6"},
+    ])
+    assert saved.status_code == 201, saved.text
+    first = await add_appointment(client, ctx, starts_at="2026-12-02T09:00:00+00:00")
+    second = await add_appointment(client, ctx, starts_at="2026-12-04T09:00:00+00:00")
+    await add_plan_item(sessions, ctx, procedure_id, first)
+    await add_plan_item(sessions, ctx, procedure_id, second)
+    result = await client.get("/api/materials/requirements", headers=ctx["auth"], params={
+        "from_date": "2026-12-01", "to_date": "2026-12-14",
+    })
+    assert result.status_code == 200, result.text
+    assert result.json()["shortages"][0]["quantity"] == "2.000"
+    assert result.json()["shortages"][0]["appointments"][0]["appointment_id"] == second
