@@ -174,6 +174,89 @@ describe('visit UI', () => {
     expect(renderer.root.findAllByType('h2').some(node => text(node) === 'in progress')).toBe(true);
   });
 
+  describe('status double click', () => {
+    const COOLDOWN_MS = 1500;
+    const button = (renderer: TestRenderer.ReactTestRenderer, label: string) => renderer.root.findAllByType('button').find(item => text(item) === label);
+    async function statusVisit(initial: Appointment['status']) {
+      const server = { status: initial };
+      vi.spyOn(apiClient, 'getAppointment').mockImplementation(async () => ({ ...appointment, status: server.status }));
+      vi.spyOn(apiClient, 'listProcedures').mockResolvedValue([]);
+      vi.spyOn(clinicalApi, 'getVisitSummary').mockImplementation(async () => ({ ...summary({ ...procedure, status: 'completed' }, true), performed_procedures: [], unresolved_procedures: [] }));
+      const update = vi.spyOn(apiClient, 'updateAppointmentStatus').mockImplementation(async (_id, status) => { server.status = status; return { ...appointment, status }; });
+      let renderer!: TestRenderer.ReactTestRenderer;
+      await act(async () => { renderer = TestRenderer.create(makeTree()); await flush(); });
+      return { server, update, renderer };
+    }
+    const nextLabel = (status: string) => `Mark ${status.replace('_', ' ')}`;
+
+    it('a second click on the same button sends nothing while the request is in flight', async () => {
+      const { update, renderer } = await statusVisit('scheduled');
+      await until(() => Boolean(button(renderer, nextLabel('confirmed'))), 'Mark confirmed');
+      let finish!: (value: Appointment) => void;
+      update.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+      const click = button(renderer, nextLabel('confirmed'))!.props.onClick;
+      await act(async () => { click(); click(); });
+      expect(update).toHaveBeenCalledTimes(1);
+      await act(async () => { finish({ ...appointment, status: 'confirmed' }); await flush(); });
+    });
+
+    it('double click on Mark in progress leaves the visit in progress', async () => {
+      const { server, update, renderer } = await statusVisit('arrived');
+      await until(() => Boolean(button(renderer, nextLabel('in_progress'))), 'Mark in progress');
+      await act(async () => { button(renderer, nextLabel('in_progress'))!.props.onClick(); await flush(); });
+      await until(() => Boolean(button(renderer, 'Close visit')), 'Close visit');
+      await until(() => !renderer.root.findAllByType('p').some(node => text(node).includes('Checking unresolved')), 'the summary');
+      expect(button(renderer, 'Close visit')!.props.disabled).toBe(true);
+      await act(async () => { button(renderer, 'Close visit')!.props.onClick(); await flush(); });
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(server.status).toBe('in_progress');
+    });
+
+    it('double click on Mark confirmed leaves confirmed, and the next step works after the pause', async () => {
+      const { server, update, renderer } = await statusVisit('scheduled');
+      await until(() => Boolean(button(renderer, nextLabel('confirmed'))), 'Mark confirmed');
+      await act(async () => { button(renderer, nextLabel('confirmed'))!.props.onClick(); await flush(); });
+      await until(() => Boolean(button(renderer, nextLabel('arrived'))), 'Mark arrived');
+      expect(button(renderer, nextLabel('arrived'))!.props.disabled).toBe(true);
+      await act(async () => { button(renderer, nextLabel('arrived'))!.props.onClick(); await flush(); });
+      expect(update).toHaveBeenCalledTimes(1);
+      expect(server.status).toBe('confirmed');
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, COOLDOWN_MS + 100)); });
+      await until(() => button(renderer, nextLabel('arrived'))?.props.disabled === false, 'Mark arrived enabled');
+      await act(async () => { button(renderer, nextLabel('arrived'))!.props.onClick(); await flush(); });
+      expect(update).toHaveBeenCalledTimes(2);
+      expect(server.status).toBe('arrived');
+    });
+
+    it('does not block the first display, and a failed request can be retried immediately', async () => {
+      const { server, update, renderer } = await statusVisit('scheduled');
+      await until(() => Boolean(button(renderer, nextLabel('confirmed'))), 'Mark confirmed');
+      expect(button(renderer, nextLabel('confirmed'))!.props.disabled).toBe(false);
+      const failure = new AxiosError('Request failed');
+      Object.defineProperty(failure, 'response', { value: { data: { detail: 'Conflict' } } });
+      update.mockRejectedValueOnce(failure);
+      await act(async () => { button(renderer, nextLabel('confirmed'))!.props.onClick(); await flush(); });
+      expect(server.status).toBe('scheduled');
+      await until(() => button(renderer, nextLabel('confirmed'))?.props.disabled === false, 'the retry button');
+      await act(async () => { button(renderer, nextLabel('confirmed'))!.props.onClick(); await flush(); });
+      expect(update).toHaveBeenCalledTimes(2);
+      expect(server.status).toBe('confirmed');
+    });
+
+    it('clears the pause timer on unmount', async () => {
+      const { renderer } = await statusVisit('scheduled');
+      await until(() => Boolean(button(renderer, nextLabel('confirmed'))), 'Mark confirmed');
+      const set = vi.spyOn(globalThis, 'setTimeout');
+      const clear = vi.spyOn(globalThis, 'clearTimeout');
+      await act(async () => { button(renderer, nextLabel('confirmed'))!.props.onClick(); await flush(); });
+      await until(() => Boolean(button(renderer, nextLabel('arrived'))), 'Mark arrived');
+      const timers = set.mock.results.filter((_, index) => set.mock.calls[index][1] === COOLDOWN_MS).map(result => result.value);
+      expect(timers.length).toBeGreaterThan(0);
+      await act(async () => { renderer.unmount(); });
+      expect(clear).toHaveBeenCalledWith(timers[timers.length - 1]);
+    });
+  });
+
   it('keeps procedure details out of the reception visit view', async () => {
     const receptionist = { ...user, id: 'reception-1', role: 'reception' };
     vi.spyOn(apiClient, 'getAppointment').mockResolvedValue(appointment);

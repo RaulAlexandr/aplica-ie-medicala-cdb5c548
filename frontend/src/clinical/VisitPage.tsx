@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { VisitFinanceCard } from '../finance/VisitFinanceCard';
@@ -14,6 +15,8 @@ const nextStatus: Record<string, string | undefined> = {
   confirmed: 'arrived',
   arrived: 'in_progress',
 };
+// The next status button appears under the cursor, so a double click must not reach it.
+const STATUS_COOLDOWN_MS = 1500;
 
 function AppointmentStatus({ appointment, canManage, canCloseVisit, isSummaryLoading, hasSummary, onChanged }: {
   appointment: Appointment;
@@ -23,18 +26,57 @@ function AppointmentStatus({ appointment, canManage, canCloseVisit, isSummaryLoa
   hasSummary: boolean;
   onChanged: () => Promise<void>;
 }) {
+  const locked = useRef(false); // synchronous: `isPending` changes only after the next render
+  const applied = useRef(false);
+  const mounted = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [coolingDown, setCoolingDown] = useState(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = null;
+    };
+  }, []);
+  function startCooldown() {
+    if (!mounted.current) return;
+    if (timer.current !== null) clearTimeout(timer.current);
+    setCoolingDown(true);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      locked.current = false;
+      setCoolingDown(false);
+    }, STATUS_COOLDOWN_MS);
+  }
   const statusMutation = useMutation({
     mutationFn: (status: string) => updateAppointmentStatus(appointment.id, status),
-    onSuccess: onChanged,
+    onSuccess: async () => {
+      applied.current = true;
+      startCooldown();
+      try {
+        await onChanged();
+      } finally {
+        startCooldown(); // counted again from when the refreshed button is on screen
+      }
+    },
+    onError: () => { if (!applied.current) locked.current = false; },
   });
+  function changeStatus(status: string) {
+    if (locked.current) return;
+    locked.current = true;
+    applied.current = false;
+    statusMutation.mutate(status);
+  }
+  const busy = statusMutation.isPending || coolingDown;
   const next = nextStatus[appointment.status];
   const canClose = canManage && appointment.status === 'in_progress' && canCloseVisit;
   const blockedByProcedures = appointment.status === 'in_progress' && hasSummary && !canCloseVisit;
   return <section className="card visit-status-panel">
     <div className="detail-heading"><div><p className="eyebrow">VISIT STATUS</p><h2>{appointment.status.replace('_', ' ')}</h2></div><span className="clinical-status">{appointment.status.replace('_', ' ')}</span></div>
-    {canManage && next && <div className="clinical-actions"><button disabled={statusMutation.isPending} onClick={() => statusMutation.mutate(next)}>{statusMutation.isPending ? 'Saving…' : `Mark ${next.replace('_', ' ')}`}</button><p className="muted">Appointment status advances one allowed step at a time.</p></div>}
+    {canManage && next && <div className="clinical-actions"><button disabled={busy} onClick={() => changeStatus(next)}>{statusMutation.isPending ? 'Saving…' : `Mark ${next.replace('_', ' ')}`}</button><p className="muted">Appointment status advances one allowed step at a time.</p></div>}
     {canManage && appointment.status === 'in_progress' && <div className="visit-close-action">
-      <button disabled={!canClose || statusMutation.isPending || isSummaryLoading} onClick={() => statusMutation.mutate('completed')}>{statusMutation.isPending ? 'Closing…' : 'Close visit'}</button>
+      <button disabled={!canClose || busy || isSummaryLoading} onClick={() => changeStatus('completed')}>{statusMutation.isPending ? 'Closing…' : 'Close visit'}</button>
       {isSummaryLoading && <p className="muted">Checking unresolved procedures…</p>}
       {!isSummaryLoading && !hasSummary && <p className="error" role="status">Visit readiness is unavailable. Reload the summary before closing.</p>}
       {blockedByProcedures && <p className="error" role="status">Resolve every pending, running or paused procedure before closing this visit.</p>}
