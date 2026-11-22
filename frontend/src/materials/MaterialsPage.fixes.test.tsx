@@ -1,4 +1,4 @@
-// INT4: the lists refresh after a mutation (the query keys start with 'materials-', not 'materials').
+// INT4: lists refresh after a mutation, and errors appear next to the control that was used (same D1 rule as T17/T21).
 import TestRenderer, { act } from 'react-test-renderer';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -91,3 +91,79 @@ describe('MaterialsPage: lists refresh after a mutation', () => {
   });
 });
 
+describe('MaterialsPage: errors next to the control (D1 rule)', () => {
+  it('shows a refused reservation as a red alert next to its button, not as a top status', async () => {
+    vi.mocked(reserveMaterial).mockRejectedValue(new Error('Stoc insuficient pentru rezervare.'));
+    const tree = await mount('doctor');
+    const button = buttonNamed(tree, 'Rezervă necesarul');
+    await act(async () => { button.props.onClick(); });
+    await flush();
+    const found = alerts(tree).filter(a => text(a).includes('Stoc insuficient pentru rezervare.'));
+    expect(found).toHaveLength(1);
+    expect(found[0].props.className).toContain('error');
+    expect(up(found[0], 'article')).toBe(up(button, 'article'));
+    expect(statuses(tree).some(s => text(s).includes('Stoc insuficient'))).toBe(false);
+    expect(scrolled).toHaveBeenCalledWith({ block: 'nearest' });
+    await act(async () => tree.unmount());
+  });
+
+  it('shows a refused consumption inside the consumption form and keeps the entered values', async () => {
+    vi.mocked(confirmMaterials).mockRejectedValue(new Error('Stoc insuficient'));
+    const tree = await mount('doctor');
+    const select = tree.root.findAllByType('select').find(s => s.parent?.children[0] === 'Manoperă')!;
+    await act(async () => select.props.onChange({ target: { value: 'performed-1' } }));
+    const form = tree.root.findAllByType('form')[0];
+    const selects = form.findAllByType('select');
+    await act(async () => { selects[1].props.onChange({ target: { value: 'lot-1' } }); selects[2].props.onChange({ target: { value: 'loc-1' } }); });
+    await act(async () => form.findAllByType('input').find(i => i.props.type === 'number')!.props.onChange({ target: { value: '7' } }));
+    await act(async () => { form.props.onSubmit({ preventDefault() {} }); });
+    await flush();
+    const found = alerts(tree).filter(a => text(a).includes('Stoc insuficient'));
+    expect(found).toHaveLength(1);
+    expect(up(found[0], 'form')).toBe(tree.root.findAllByType('form')[0]);
+    expect(statuses(tree).some(s => text(s).includes('Stoc insuficient'))).toBe(false);
+    expect(tree.root.findAllByType('form')[0].findAllByType('input').find(i => i.props.type === 'number')!.props.value).toBe('7');
+    await act(async () => tree.unmount());
+  });
+
+  it('shows a refused recipe save inside the recipe form', async () => {
+    vi.mocked(saveRecipe).mockRejectedValue(new Error('Rețeta s-a schimbat simultan.'));
+    const tree = await mount('clinic_manager');
+    await act(async () => tree.root.findAllByType('select')[0].props.onChange({ target: { value: 'proc-1' } }));
+    await flush();
+    const form = tree.root.findAllByType('form').find(f => text(f).includes('Salvează versiunea'))!;
+    await act(async () => { form.props.onSubmit({ preventDefault() {} }); });
+    await flush();
+    const found = alerts(tree).filter(a => text(a).includes('Rețeta s-a schimbat simultan.'));
+    expect(found).toHaveLength(1);
+    expect(up(found[0], 'form')).toBe(tree.root.findAllByType('form').find(f => text(f).includes('Salvează versiunea')));
+    await act(async () => tree.unmount());
+  });
+
+  it('delegates validation details to apiErrorMessage (no raw English text)', async () => {
+    const detail = [{ type: 'string_too_long', msg: 'String should have at most 5 characters', ctx: { max_length: 5 } }];
+    vi.mocked(saveRecipe).mockRejectedValue({ response: { data: { detail } }, delegated: 'Textul este prea lung (maximum 5 caractere).' });
+    const tree = await mount('clinic_manager');
+    await act(async () => tree.root.findAllByType('select')[0].props.onChange({ target: { value: 'proc-1' } }));
+    await flush();
+    const form = tree.root.findAllByType('form').find(f => text(f).includes('Salvează versiunea'))!;
+    await act(async () => { form.props.onSubmit({ preventDefault() {} }); });
+    await flush();
+    expect(alerts(tree).map(text).join(' ')).toContain('Textul este prea lung (maximum 5 caractere).');
+    expect(alerts(tree).map(text).join(' ')).not.toContain('String should have');
+    await act(async () => tree.unmount());
+  });
+
+  it('clears the error when the next attempt succeeds and shows the success as a status', async () => {
+    vi.mocked(reserveMaterial).mockRejectedValueOnce(new Error('Stoc insuficient pentru rezervare.')).mockResolvedValue({} as never);
+    const tree = await mount('doctor');
+    await act(async () => { buttonNamed(tree, 'Rezervă necesarul').props.onClick(); });
+    await flush();
+    expect(alerts(tree)).toHaveLength(1);
+    await act(async () => { buttonNamed(tree, 'Rezervă necesarul').props.onClick(); });
+    await flush();
+    expect(alerts(tree)).toHaveLength(0);
+    expect(statuses(tree).some(s => text(s).includes('Rezervarea a fost înregistrată.'))).toBe(true);
+    await act(async () => tree.unmount());
+  });
+});
