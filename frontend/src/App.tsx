@@ -15,6 +15,7 @@ import { CollabNavLink, CollabPage } from './collab/CollabPage';
 import { locationLabel, ruleOf } from './catalog/locations';
 import { CatalogProcedureForm } from './catalog/CatalogProcedureForm';
 import { InventoryPage } from './inventory/InventoryPage';
+import { MaterialsPage } from './materials/MaterialsPage';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -54,6 +55,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {staffRoles.includes(user.role) && <Link to="/equipment">Echipamente</Link>}
         {staffRoles.includes(user.role) && <Link to="/inventory">Stocuri</Link>}
         {staffRoles.includes(user.role) && <CollabNavLink />}
+        {staffRoles.includes(user.role) && <Link to="/materials">Materiale</Link>}
         {cashRoles.includes(user.role) && <Link to="/finance/daily">Încasări zi</Link>}
         {managementRoles.includes(user.role) && <Link to="/reports">Rapoarte</Link>}
         {managementRoles.includes(user.role) && <><Link to="/setup">Clinic setup</Link><Link to="/staff">Staff</Link></>}
@@ -472,6 +474,7 @@ export default function App() {
       <Route path="/equipment" element={staffRoles.includes(user.role) ? <EquipmentPage user={user} /> : <Navigate to="/" />} />
       <Route path="/inventory" element={staffRoles.includes(user.role) ? <InventoryPage role={user.role} /> : <Navigate to="/" />} />
       <Route path="/messages" element={staffRoles.includes(user.role) ? <CollabPage user={user} /> : <Navigate to="/" />} />
+      <Route path="/materials" element={staffRoles.includes(user.role) ? <MaterialsPage role={user.role} /> : <Navigate to="/" />} />
       <Route path="/appointments/:appointmentId/visit" element={<VisitPage user={user} />} />
       <Route path="/procedures" element={<Procedures user={user} />} />
       <Route path="/procedures/:id" element={<ProcedureDetail user={user} />} />

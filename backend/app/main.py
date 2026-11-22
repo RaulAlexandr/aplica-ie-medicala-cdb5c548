@@ -15,6 +15,7 @@ from app.equipment.router import router as equipment_router
 from app.finance.router import router as finance_router
 from app.forms.router import router as forms_router
 from app.inventory.router import router as inventory_router
+from app.materials.router import router as materials_router
 from app.odontogram.router import router as odontogram_router
 from app.patients.router import router as patients_router
 from app.performed_procedures.router import router as performed_procedures_router
@@ -50,6 +51,7 @@ app.include_router(finance_router, prefix="/api")
 app.include_router(equipment_router, prefix="/api")
 app.include_router(waitlist_router, prefix="/api")
 app.include_router(inventory_router, prefix="/api")
+app.include_router(materials_router, prefix="/api")
 app.include_router(forms_router, prefix="/api")
 app.include_router(availability_router, prefix="/api")
 app.include_router(rooms_router, prefix="/api")
