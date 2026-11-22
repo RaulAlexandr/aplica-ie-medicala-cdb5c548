@@ -196,20 +196,23 @@ async def create_lot(p: LotIn,user: User=Depends(require_roles(*MANAGE)),db: Asy
     if not await db.scalar(select(InventoryItem.id).where(InventoryItem.id==p.item_id,InventoryItem.clinic_id==user.clinic_id)):raise HTTPException(404,"Resursă inexistentă")
     x=InventoryLot(clinic_id=user.clinic_id,**p.model_dump());db.add(x);await _commit_unique(db,"Codul lotului există deja pentru acest articol.");return {"id":str(x.id)}
 
-async def _write(p,kind,user,db):
+async def _write_without_commit(p,kind,user,db):
+    """Validate and stage one T17 movement in the caller's transaction.
+
+    Materials confirmations use this boundary to stage multiple consumption rows atomically.
+    The public T17 endpoint wraps it in the existing commit and retry response behavior.
+    """
     sig=_signature(kind,p);req=str(p.client_request_id)
     prior=await db.scalar(select(InventoryMovement).where(InventoryMovement.clinic_id==user.clinic_id,InventoryMovement.client_request_id==req))
     if prior:
         if prior.signature!=sig:raise HTTPException(409,"client_request_id deja folosit cu alt conținut")
-        response={"id":str(prior.id),"transfer_id":str(prior.transfer_id) if prior.transfer_id else None,"retry":True}
-        await db.rollback();return response
+        return {"id":str(prior.id),"transfer_id":str(prior.transfer_id) if prior.transfer_id else None,"retry":True},None
     item,lot,loc,dest=await _item_location_lot(db,user,p)
     # Another request may have completed while this one waited for the lot lock.
     prior=await db.scalar(select(InventoryMovement).where(InventoryMovement.clinic_id==user.clinic_id,InventoryMovement.client_request_id==req))
     if prior:
         if prior.signature!=sig:raise HTTPException(409,"client_request_id deja folosit cu alt conținut")
-        response={"id":str(prior.id),"transfer_id":str(prior.transfer_id) if prior.transfer_id else None,"retry":True}
-        await db.rollback();return response
+        return {"id":str(prior.id),"transfer_id":str(prior.transfer_id) if prior.transfer_id else None,"retry":True},None
     if kind=="consumption" and lot.expires_on and lot.expires_on<await _clinic_today(db,user.clinic_id):raise HTTPException(409,"Lot expirat; consumul este interzis")
     if kind in ("consumption","transfer_out","adjustment_out") and await _balance(db,user.clinic_id,lot.id,loc.id)<p.quantity:raise HTTPException(409,"Stoc insuficient")
     if kind.startswith("adjustment") and not p.reason.strip():raise HTTPException(422,"Motivul ajustării este obligatoriu")
@@ -219,20 +222,29 @@ async def _write(p,kind,user,db):
         transfer_reason=p.reason.strip() or "Transfer"
         tid=uuid4();out=_movement(user.clinic_id,user,item,lot,loc,kind,p.quantity,req,sig,transfer_reason,tid);inc=_movement(user.clinic_id,user,item,lot,dest,"transfer_in",p.quantity,str(uuid4()),sig,transfer_reason,tid)
         db.add_all([out,inc])
-        try:await db.commit()
-        except IntegrityError:
-            await db.rollback();prior=await db.scalar(select(InventoryMovement).where(InventoryMovement.clinic_id==user.clinic_id,InventoryMovement.client_request_id==req))
-            if prior and prior.signature==sig:return {"id":str(prior.id),"transfer_id":str(prior.transfer_id),"retry":True}
-            raise HTTPException(409,"Retry sau conflict de transfer; reîncearcă aceeași cheie")
-        return {"id":str(out.id),"transfer_id":str(tid)}
+        await db.flush()
+        return {"id":str(out.id),"transfer_id":str(tid)},out
     row=_movement(user.clinic_id,user,item,lot,loc,kind,p.quantity,req,sig,p.reason.strip())
-    db.add(row)
-    try:await db.commit()
+    db.add(row);await db.flush()
+    return {"id":str(row.id)},row
+
+async def _write(p,kind,user,db):
+    try:
+        response,_row=await _write_without_commit(p,kind,user,db)
+        if response.get("retry"):
+            await db.rollback()
+            return response
+        await db.commit()
+        return response
     except IntegrityError:
-        await db.rollback();prior=await db.scalar(select(InventoryMovement).where(InventoryMovement.clinic_id==user.clinic_id,InventoryMovement.client_request_id==req))
-        if prior and prior.signature==sig:return {"id":str(prior.id),"retry":True}
+        await db.rollback()
+        sig=_signature(kind,p);req=str(p.client_request_id)
+        prior=await db.scalar(select(InventoryMovement).where(InventoryMovement.clinic_id==user.clinic_id,InventoryMovement.client_request_id==req))
+        if prior and prior.signature==sig:
+            if kind=="transfer_out":return {"id":str(prior.id),"transfer_id":str(prior.transfer_id),"retry":True}
+            return {"id":str(prior.id),"retry":True}
+        if kind=="transfer_out":raise HTTPException(409,"Retry sau conflict de transfer; reîncearcă aceeași cheie")
         raise HTTPException(409,"Mișcare conflictuală")
-    return {"id":str(row.id)}
 
 @router.post("/movements/{kind}",status_code=201)
 async def movement(kind: str,p: MovementIn,user: User=Depends(require_roles(*READ)),db: AsyncSession=Depends(get_db)):
