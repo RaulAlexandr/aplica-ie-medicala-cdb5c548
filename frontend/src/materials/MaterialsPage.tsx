@@ -28,7 +28,7 @@ export function MaterialsPage({role}:{role:string}) {
     }
     return apiErrorMessage(error).replace(/Value error,\s*/gi,'');
   };
-  const finish=(text:string)=>{setMessage(text);void qc.invalidateQueries({queryKey:['materials']});void qc.invalidateQueries({queryKey:['inventory']});};
+  const finish=(text:string)=>{setMessage(text);void qc.invalidateQueries({predicate:query=>String(query.queryKey[0]).startsWith('materials')});void qc.invalidateQueries({queryKey:['inventory']});};
   const recipeMutation=useMutation({mutationFn:()=>{const body={procedureId,expected_version:recipe.data?.version??0,lines:recipeLines};return saveRecipe(procedureId,recipe.data?.version??0,recipeLines,requestKey(recipeKey,body));},onSuccess:()=>{finish('Rețeta a fost salvată.');setRecipeLines([]);recipeKey.current={key:id(),signature:''};void qc.invalidateQueries({queryKey:['materials-recipe',procedureId]});},onError:e=>setMessage(errorText(e)),onSettled:()=>{busy.current=false;}});
   const reserveMutation=useMutation({mutationFn:(p:{appointment_id:string;item_id:string;quantity:string})=>reserveMaterial({...p,client_request_id:requestKey(reserveKey,p)}),onSuccess:()=>{finish('Rezervarea a fost înregistrată.');reserveKey.current={key:id(),signature:''};},onError:e=>setMessage(errorText(e)),onSettled:()=>{busy.current=false;}});
   const releaseMutation=useMutation({mutationFn:(p:{appointment_id:string;item_id:string})=>releaseReservation(p.appointment_id,p.item_id,requestKey(releaseKey,p)),onSuccess:()=>{finish('Rezervarea a fost eliberată.');releaseKey.current={key:id(),signature:''};},onError:e=>setMessage(errorText(e)),onSettled:()=>{busy.current=false;}});
