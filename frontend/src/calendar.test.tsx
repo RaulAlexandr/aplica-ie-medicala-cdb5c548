@@ -7,6 +7,7 @@ import { Calendar, clinicDate, clinicTime, Details, Form } from './Calendar';
 import * as client from './api/client';
 import type { Unavailability } from './api/client';
 import { clinicLocalToUtc } from './timezone';
+import * as appointmentProceduresApi from './appointment_procedures/api';
 
 const patient = { id: 'patient-101', clinic_id: 'clinic', first_name: 'Beyond', last_name: 'Page', date_of_birth: null, sex: null, phone: null, email: 'beyond@example.com', address: null, emergency_contact: null, occupation: null, allergies: null, medications: null, chronic_diseases: null, pregnancy_status: null, smoking_status: null, previous_surgeries: null, relevant_medical_conditions: null, medical_alerts: null, notes: null, created_at: '2027-01-01T00:00:00Z', updated_at: '2027-01-01T00:00:00Z' };
 const appointment = { id: 'appointment-1', clinic_id: 'clinic', patient_id: patient.id, doctor_id: 'doctor', assistant_id: 'assistant', room_id: 'room', starts_at: '2027-01-04T23:30:00Z', ends_at: '2027-01-05T00:00:00Z', local_start: '2027-01-05T01:30:00+02:00', local_end: '2027-01-05T03:00:00+02:00', timezone: 'Europe/Bucharest', duration_minutes: 90, appointment_type: 'Consultation', status: 'scheduled', notes: null, patient_name: 'Beyond Page', doctor_name: 'Doctor', assistant_name: 'Assistant', room_name: 'Room' };
@@ -52,6 +53,8 @@ function calendarEvents(renderer: TestRenderer.ReactTestRenderer) {
 }
 
 async function renderCalendar(): Promise<TestRenderer.ReactTestRenderer> {
+  vi.spyOn(appointmentProceduresApi, 'getAppointmentProcedures').mockResolvedValue({ appointment_id: 'appointment-1', revision: 0, procedures: [] });
+  vi.spyOn(client, 'listProcedures').mockResolvedValue([]);
   vi.spyOn(client, 'getClinic').mockResolvedValue({ timezone: 'Europe/Bucharest' } as never);
   vi.spyOn(client, 'listAppointments').mockResolvedValue([appointment, appointmentB]);
   vi.spyOn(client, 'listRooms').mockResolvedValue([{ id: 'room', clinic_id: 'clinic', name: 'Room', is_active: true }]);
