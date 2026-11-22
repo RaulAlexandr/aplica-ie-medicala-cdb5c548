@@ -30,6 +30,10 @@ describe('shared form controls on narrow screens', () => {
   it('lets selects, inputs and textareas shrink to their container (a long option must not widen the page)', () => {
     expect(bodies('input,textarea,select').some(body => /max-width:\s*100%/.test(body))).toBe(true);
   });
+  it('lets a grid label shrink below the width of its widest option (grid track minmax(0, 1fr))', () => {
+    // Measured in the browser at 390 px: max-width alone is not enough inside `label{display:grid}`.
+    expect(bodies('label').some(body => /display:\s*grid/.test(body) && /grid-template-columns:\s*minmax\(0,\s*1fr\)/.test(body))).toBe(true);
+  });
 });
 
 describe('shared text colours keep at least 4.5:1 contrast on their backgrounds (accessibility)', () => {
