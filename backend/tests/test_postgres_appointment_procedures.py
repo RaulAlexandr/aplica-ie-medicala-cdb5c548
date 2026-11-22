@@ -84,7 +84,7 @@ async def test_simultaneous_replacements_and_partial_unique_index(temp_database)
     app.dependency_overrides[get_db] = override
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            registered = await client.post("/api/auth/register", json={"clinic_name": "A1 PG Fictivă", "full_name": "Doctor PG", "email": f"{uuid4().hex}@a1.test", "password": "correct horse battery staple"})
+            registered = await client.post("/api/auth/register", json={"clinic_name": "A1 PG Fictivă", "full_name": "Doctor PG", "email": f"{uuid4().hex}@example.com", "password": "correct horse battery staple"})
             assert registered.status_code == 201, registered.text
             headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
             me = (await client.get("/api/auth/me", headers=headers)).json()
