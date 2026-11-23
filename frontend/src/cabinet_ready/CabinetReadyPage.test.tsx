@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import TestRenderer, { act } from 'react-test-renderer';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AxiosError, AxiosHeaders } from 'axios';
@@ -9,6 +7,7 @@ import type { User } from '../api/client';
 import * as cabinetApi from './api';
 import type { CabinetBoard, CabinetCard } from './api';
 import { cabinetErrorText, CabinetReadyPage } from './CabinetReadyPage';
+import pageCss from './cabinet-ready.css?raw';
 
 const user = (role: string, id = `${role}-1`): User => ({ id, clinic_id: 'clinic-1', full_name: 'Utilizator Fictiv', email: `${role}@example.test`, role });
 const staffCard = (values: Partial<CabinetCard> = {}): CabinetCard => ({
@@ -103,8 +102,7 @@ describe('CabinetReadyPage', () => {
   });
 
   it('keeps the page content at the top when it is shorter than the screen', () => {
-    const css = readFileSync(resolve(process.cwd(), 'src/cabinet_ready/cabinet-ready.css'), 'utf8');
-    expect(css).toMatch(/\.cabinet-page \{[^}]*align-content: start/);
+    expect(pageCss).toMatch(/\.cabinet-page \{[^}]*align-content: start/);
   });
 
   it('turns a non-JSON server failure into Romanian text', () => {
