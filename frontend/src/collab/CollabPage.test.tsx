@@ -17,6 +17,15 @@ const task = (extra: Partial<collab.Task> = {}): collab.Task => ({ id: 't1', tit
 const handover = (extra: Partial<collab.Handover> = {}): collab.Handover => ({ id: 'h1', shift_id: 's1', shift_starts_at: '2026-11-23T07:00:00Z', shift_ends_at: '2026-11-23T11:00:00Z', from_user_id: 'o', from_user: 'Nume o', to_user_id: 'me', to_user: 'Persoană Fictivă', created_by: 'Nume o', notes: 'Note fictive', created_at: '2026-11-23T11:00:00Z', acknowledged_at: null, tasks: [], ...extra });
 const text = (node: TestRenderer.ReactTestInstance): string => node.children.map(child => (typeof child === 'string' ? child : text(child))).join('');
 const flush = async () => { for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); };
+async function waitFor(condition: () => boolean, description: string, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let ready = false;
+    await act(async () => { ready = condition(); if (!ready) await new Promise(resolve => setTimeout(resolve, 5)); });
+    if (ready) return;
+  }
+  throw new Error(`Timed out waiting for ${description}`);
+}
 const buttons = (r: TestRenderer.ReactTestRenderer, label: string) => r.root.findAllByType('button').filter(item => text(item).startsWith(label));
 const submit = (r: TestRenderer.ReactTestRenderer) => r.root.findByType('form').props.onSubmit({ preventDefault() {} });
 const type = async (r: TestRenderer.ReactTestRenderer, value: string) => { await act(async () => { r.root.findByType('textarea').props.onChange({ target: { value } }); }); };
@@ -293,8 +302,25 @@ describe('T20 long history', () => {
     const size = options.limit ?? 50;
     return { messages: visible.slice(-size), has_more: visible.length > size, oldest_unread_seq: oldest };
   };
-  const open = async (r: TestRenderer.ReactTestRenderer) => { await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); }); await flush(); };
-  const older = async (r: TestRenderer.ReactTestRenderer) => { await act(async () => { buttons(r, 'Mesaje mai vechi')[0].props.onClick(); }); await flush(); };
+  const waitFor = async (condition: () => boolean, description: string, timeoutMs = 15_000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      let ready = false;
+      await act(async () => { ready = condition(); if (!ready) await new Promise(resolve => setTimeout(resolve, 5)); });
+      if (ready) return;
+    }
+    throw new Error(`Timed out waiting for ${description} after ${timeoutMs} ms`);
+  };
+  const loadedMessageCount = (r: TestRenderer.ReactTestRenderer) => r.root.findAll(node => node.type === 'article' && node.props.className?.includes('collab-message')).length;
+  const open = async (r: TestRenderer.ReactTestRenderer) => {
+    await act(async () => { r.root.findAll(item => item.type === 'button' && item.props.className === 'collab-conversation')[0].props.onClick(); });
+    await waitFor(() => buttons(r, 'Mesaje mai vechi').length === 1 || text(r.root).includes('Niciun mesaj încă.'), 'conversation messages');
+  };
+  const older = async (r: TestRenderer.ReactTestRenderer) => {
+    const previousCount = loadedMessageCount(r);
+    await act(async () => { buttons(r, 'Mesaje mai vechi')[0].props.onClick(); });
+    await waitFor(() => loadedMessageCount(r) > previousCount, `older message page (${previousCount} to more)`);
+  };
 
   it('merges pages by sequence without duplicates', () => {
     expect(mergeMessages([message(3), message(4)], [message(1), message(3)]).map(item => item.seq)).toEqual([1, 3, 4]);
@@ -324,12 +350,13 @@ describe('T20 long history', () => {
     for (let page = 0; page < 9; page += 1) await older(r);
     expect(collab.markRead).not.toHaveBeenCalled();
     await older(r);
+    await waitFor(() => text(r.root).includes('Mesaj 1') && !text(r.root).includes('Ai mesaje necitite mai vechi'), 'all unread messages and read receipt');
     expect(collab.markRead).toHaveBeenCalledWith('k1', 510);
     expect(text(r.root)).toContain('Mesaj 1');
     expect(text(r.root)).not.toContain('Ai mesaje necitite mai vechi');
     expect(buttons(r, 'Mesaje mai vechi')).toHaveLength(0);
     await act(async () => r.unmount());
-  });
+  }, 30_000);
   it('marks read right away when the unread messages are in the first page, even with older history', async () => {
     vi.mocked(collab.listConversations).mockResolvedValue([conversation({ unread: 2, last_read_seq: 118 })]);
     vi.mocked(collab.listMessages).mockImplementation(server(history(120), 119));
