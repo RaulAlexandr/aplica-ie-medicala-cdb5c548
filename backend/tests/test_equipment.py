@@ -3,10 +3,11 @@ from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.appointment_procedures.models import AppointmentProcedure
 from app.database import (
     Appointment,
     Base,
@@ -176,63 +177,111 @@ async def test_existing_check_can_be_completed_once_and_leaves_due_queue(ctx):
 
 
 @pytest.mark.asyncio
-async def test_service_dependency_matches_normalized_text_and_procedure_links(ctx):
+async def test_service_dependency_uses_effective_procedures_for_overlapping_appointments(ctx):
     client, sessions = ctx
     manager = await register(client, "equipment-service-match@example.com")
+    foreign = await register(client, "equipment-service-foreign@example.com")
     identity = (await client.get("/api/auth/me", headers=manager)).json()
+    foreign_identity = (await client.get("/api/auth/me", headers=foreign)).json()
     room = (await client.post("/api/rooms", headers=manager, json={"name": "Cabinet detartraj"})).json()
+    combined_room = (await client.post("/api/rooms", headers=manager, json={"name": "Cabinet combinat"})).json()
+    foreign_room = (await client.post("/api/rooms", headers=foreign, json={"name": "Cabinet străin"})).json()
     patient = (await client.post("/api/patients", headers=manager, json={"first_name": "Pacient", "last_name": "Fictiv"})).json()
+    foreign_patient = (await client.post("/api/patients", headers=foreign, json={"first_name": "Pacient", "last_name": "Străin"})).json()
     equipment = (await client.post("/api/equipment", headers=manager, json={"name": "Unit detartraj", "equipment_type": "unit", "responsible_id": identity["id"]})).json()
     now = datetime.now(UTC).replace(microsecond=0)
+    outage_start = now + timedelta(days=3)
     async with sessions() as session:
         service = ProcedureCatalog(clinic_id=identity["clinic_id"], code="DET", code_lower="det", name="Detartraj",
             default_duration_minutes=30, base_price=Decimal("100.00"), currency="RON", is_active=True)
-        session.add(service)
+        other_service = ProcedureCatalog(clinic_id=identity["clinic_id"], code="CONS", code_lower="cons", name="Consultație",
+            default_duration_minutes=30, base_price=Decimal("80.00"), currency="RON", is_active=True)
+        session.add_all([service, other_service])
         await session.flush()
-        appointment_rows = []
-        labels = ("Detartraj", "detartraj", "Detartraj complet", "Detártraj complet", "Intervenție efectuată", "Control planificat", "Manoperă anulată")
-        for index, label in enumerate(labels):
+        cases = {
+            "manual": ("Control fără serviciu în titlu", room["id"]),
+            "accepted": ("Plan acceptat fără serviciu în titlu", room["id"]),
+            "in_progress": ("Plan în curs fără serviciu în titlu", room["id"]),
+            "draft": ("Detartraj planificat", room["id"]),
+            "cancelled_plan": ("Detartraj din plan anulat", room["id"]),
+            "performed": ("Manoperă efectuată", room["id"]),
+            "cancelled_performed": ("Detartraj cu manoperă anulată", room["id"]),
+            "text_only": ("Detartraj sugerat", room["id"]),
+            "other_procedure": ("Detartraj și altă procedură", room["id"]),
+            "combined": ("Vizită în cabinetul echipamentului", combined_room["id"]),
+            "outside": ("Detartraj în afara intervalului", room["id"]),
+        }
+        appointments = {}
+        for index, (key, (label, room_id)) in enumerate(cases.items()):
+            starts_at = outage_start + (timedelta(hours=3) if key == "outside" else timedelta(minutes=10 + index))
             appointment = Appointment(clinic_id=identity["clinic_id"], patient_id=patient["id"], doctor_id=identity["id"],
-                room_id=room["id"], starts_at=now + timedelta(minutes=10 + index), ends_at=now + timedelta(minutes=40 + index),
+                room_id=room_id, starts_at=starts_at, ends_at=starts_at + timedelta(minutes=30),
                 duration_minutes=30, status="scheduled", appointment_type=label)
+            appointments[key] = appointment
             session.add(appointment)
-            appointment_rows.append(appointment)
+        foreign_appointment = Appointment(clinic_id=foreign_identity["clinic_id"], patient_id=foreign_patient["id"],
+            doctor_id=foreign_identity["id"], room_id=foreign_room["id"], starts_at=outage_start + timedelta(minutes=20),
+            ends_at=outage_start + timedelta(minutes=50), duration_minutes=30, status="scheduled",
+            appointment_type="Detartraj în altă clinică")
+        session.add(foreign_appointment)
         await session.flush()
-        performed_link = appointment_rows[4]
-        session.add(PerformedProcedure(clinic_id=identity["clinic_id"], appointment_id=performed_link.id, patient_id=patient["id"],
-            procedure_catalog_id=service.id, executed_by_id=identity["id"], procedure_code=service.code,
-            procedure_name=service.name, procedure_base_price=service.base_price, procedure_currency="RON",
-            procedure_default_duration=30, status="pending"))
-        plan = TreatmentPlan(clinic_id=identity["clinic_id"], patient_id=patient["id"], title="Plan fictiv",
-            status="draft", version=1, created_by_id=identity["id"])
-        session.add(plan)
-        await session.flush()
-        stage = TreatmentPlanStage(clinic_id=identity["clinic_id"], plan_id=plan.id, position=0, title="Etapă fictivă")
-        session.add(stage)
-        await session.flush()
-        planned_link = appointment_rows[5]
-        session.add(TreatmentPlanItem(clinic_id=identity["clinic_id"], plan_id=plan.id, stage_id=stage.id,
-            position=0, procedure_catalog_id=service.id, procedure_code=service.code, procedure_name=service.name,
-            currency="RON", estimated_price=Decimal("100.00"), estimated_duration_minutes=30,
-            status="active", appointment_id=planned_link.id))
-        cancelled_link = appointment_rows[6]
-        session.add(PerformedProcedure(clinic_id=identity["clinic_id"], appointment_id=cancelled_link.id, patient_id=patient["id"],
-            procedure_catalog_id=service.id, executed_by_id=identity["id"], procedure_code=service.code,
-            procedure_name=service.name, procedure_base_price=service.base_price, procedure_currency="RON",
-            procedure_default_duration=30, status="cancelled"))
+        for key in ("manual", "combined"):
+            session.add(AppointmentProcedure(clinic_id=identity["clinic_id"], appointment_id=appointments[key].id,
+                procedure_catalog_id=service.id, quantity=1, added_by_id=identity["id"]))
+        session.add(AppointmentProcedure(clinic_id=identity["clinic_id"], appointment_id=appointments["other_procedure"].id,
+            procedure_catalog_id=other_service.id, quantity=1, added_by_id=identity["id"]))
+        for key, status in (("performed", "pending"), ("cancelled_performed", "cancelled")):
+            session.add(PerformedProcedure(clinic_id=identity["clinic_id"], appointment_id=appointments[key].id,
+                patient_id=patient["id"], procedure_catalog_id=service.id, executed_by_id=identity["id"],
+                procedure_code=service.code, procedure_name=service.name, procedure_base_price=service.base_price,
+                procedure_currency="RON", procedure_default_duration=30, status=status))
+        for key, status in (("accepted", "accepted"), ("in_progress", "in_progress"),
+                            ("draft", "draft"), ("cancelled_plan", "cancelled")):
+            plan = TreatmentPlan(clinic_id=identity["clinic_id"], patient_id=patient["id"], title=f"Plan {key}",
+                status=status, version=1, accepted_version=1 if status in {"accepted", "in_progress"} else None,
+                created_by_id=identity["id"])
+            session.add(plan)
+            await session.flush()
+            stage = TreatmentPlanStage(clinic_id=identity["clinic_id"], plan_id=plan.id, position=0, title=f"Etapă {key}")
+            session.add(stage)
+            await session.flush()
+            session.add(TreatmentPlanItem(clinic_id=identity["clinic_id"], plan_id=plan.id, stage_id=stage.id,
+                position=0, procedure_catalog_id=service.id, procedure_code=service.code, procedure_name=service.name,
+                currency="RON", estimated_price=Decimal("100.00"), estimated_duration_minutes=30,
+                status="active", appointment_id=appointments[key].id))
         await session.commit()
         procedure_id = str(service.id)
-        expected_ids = {str(row.id) for row in appointment_rows[:6]}
     dependency = await client.post(f"/api/equipment/{equipment['id']}/dependencies", headers=manager, json={"procedure_id": procedure_id})
     assert dependency.status_code == 201
-    outage = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities", headers=manager, json={
-        "reason": "Defecțiune detartraj", "starts_at": (now + timedelta(minutes=1)).isoformat(),
-        "ends_at": (now + timedelta(hours=2)).isoformat()})
+    room_dependency = await client.post(f"/api/equipment/{equipment['id']}/dependencies", headers=manager, json={"room_id": combined_room["id"]})
+    assert room_dependency.status_code == 201
+    statements = []
+    engine = sessions.kw["bind"].sync_engine
+    def record_select(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().lower().startswith("select"):
+            statements.append(statement.lower())
+    event.listen(engine, "before_cursor_execute", record_select)
+    try:
+        outage = await client.post(f"/api/equipment/{equipment['id']}/unavailabilities", headers=manager, json={
+            "reason": "Defecțiune detartraj", "starts_at": outage_start.isoformat(),
+            "ends_at": (outage_start + timedelta(hours=2)).isoformat()})
+    finally:
+        event.remove(engine, "before_cursor_execute", record_select)
     assert outage.status_code == 201
-    affected = {row["appointment_id"]: row["match"] for row in outage.json()["affected_appointments"]}
-    assert set(affected) == expected_ids
-    assert all(affected[str(row.id)] == "posibil" for row in appointment_rows[:4])
-    assert affected[str(appointment_rows[4].id)] == affected[str(appointment_rows[5].id)] == "sigur"
+    affected_rows = outage.json()["affected_appointments"]
+    affected = {row["appointment_id"]: row["match"] for row in affected_rows}
+    expected = {
+        "manual": "sigur", "accepted": "sigur", "in_progress": "sigur",
+        "draft": "posibil", "cancelled_plan": "posibil", "performed": "sigur",
+        "cancelled_performed": "posibil", "text_only": "posibil", "combined": "sigur",
+    }
+    expected_ids = {str(appointments[key].id): match for key, match in expected.items()}
+    assert affected == expected_ids
+    assert len(affected_rows) == len({row["appointment_id"] for row in affected_rows})
+    assert sum("from appointments " in statement for statement in statements) == 1
+    assert sum("from appointment_procedures " in statement for statement in statements) == 1
+    assert sum("from treatment_plan_items " in statement for statement in statements) == 1
+    assert sum("from performed_procedures " in statement for statement in statements) == 1
 
 
 @pytest.mark.asyncio

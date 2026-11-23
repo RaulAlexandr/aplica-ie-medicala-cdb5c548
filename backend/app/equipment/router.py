@@ -9,6 +9,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.appointment_procedures.effective import effective_procedures
 from app.auth.service import require_roles
 from app.database import (
     Appointment,
@@ -17,7 +18,6 @@ from app.database import (
     PerformedProcedure,
     ProcedureCatalog,
     Room,
-    TreatmentPlanItem,
     User,
     get_db,
     utcnow,
@@ -147,16 +147,6 @@ async def _affected(db: AsyncSession, user: User, equipment: Equipment, outage: 
         service_terms = {normalize_service_text(value) for row in services for value in row if value.strip()}
     if not room_ids and not service_ids:
         return []
-    sure_appointment_ids = set()
-    if service_ids:
-        sure_appointment_ids.update((await db.scalars(select(PerformedProcedure.appointment_id).where(
-            PerformedProcedure.clinic_id == user.clinic_id,
-            PerformedProcedure.procedure_catalog_id.in_(service_ids),
-            PerformedProcedure.status != "cancelled"))).all())
-        sure_appointment_ids.update((await db.scalars(select(TreatmentPlanItem.appointment_id).where(
-            TreatmentPlanItem.clinic_id == user.clinic_id,
-            TreatmentPlanItem.procedure_catalog_id.in_(service_ids),
-            TreatmentPlanItem.status == "active", TreatmentPlanItem.appointment_id.is_not(None)))).all())
     query = (select(Appointment, Patient, User, Room).join(Patient, and_(Patient.id == Appointment.patient_id, Patient.clinic_id == user.clinic_id))
              .join(User, and_(User.id == Appointment.doctor_id, User.clinic_id == user.clinic_id))
              .join(Room, and_(Room.id == Appointment.room_id, Room.clinic_id == user.clinic_id))
@@ -164,14 +154,33 @@ async def _affected(db: AsyncSession, user: User, equipment: Equipment, outage: 
                     Appointment.starts_at < outage_end)
              .order_by(Appointment.starts_at))
     rows = (await db.execute(query)).all()
-    responsible = await db.get(User, equipment.responsible_id)
-    affected = []
+    overlapping = []
     for appointment, patient, doctor, room in rows:
         end = appointment.ends_at or appointment.starts_at + timedelta(minutes=appointment.duration_minutes)
-        if end <= outage.starts_at or appointment.starts_at >= outage_end:
-            continue
-        match = "sigur" if room.id in room_ids or appointment.id in sure_appointment_ids else "posibil"
+        if end > outage.starts_at and appointment.starts_at < outage_end:
+            overlapping.append((appointment, patient, doctor, room, end))
+    appointment_ids = [row[0].id for row in overlapping]
+    effective_by_appointment = await effective_procedures(db, user.clinic_id, appointment_ids) if service_ids else {}
+    performed_by_appointment = {}
+    if service_ids and appointment_ids:
+        performed_rows = await db.execute(select(PerformedProcedure.appointment_id, PerformedProcedure.procedure_catalog_id).where(
+            PerformedProcedure.clinic_id == user.clinic_id,
+            PerformedProcedure.appointment_id.in_(appointment_ids),
+            PerformedProcedure.status != "cancelled"))
+        for appointment_id, procedure_id in performed_rows:
+            performed_by_appointment.setdefault(appointment_id, set()).add(procedure_id)
+    responsible = await db.scalar(select(User).where(User.id == equipment.responsible_id, User.clinic_id == user.clinic_id))
+    affected = []
+    for appointment, patient, doctor, room, end in overlapping:
+        effective_ids = {line["procedure_catalog_id"] for line in effective_by_appointment.get(appointment.id, [])}
+        performed_ids = performed_by_appointment.get(appointment.id, set())
+        known_procedure_ids = effective_ids | performed_ids
+        service_match = bool(service_ids & known_procedure_ids)
+        room_match = room.id in room_ids
+        match = "sigur" if room_match or service_match else "posibil"
         if match == "posibil":
+            if known_procedure_ids:
+                continue
             appointment_text = normalize_service_text(appointment.appointment_type)
             if not any(term and term in appointment_text for term in service_terms):
                 continue
