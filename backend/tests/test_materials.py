@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth.service import create_access_token
@@ -21,7 +21,7 @@ from app.database import (
 )
 from app.inventory.models import InventoryMovement
 from app.main import app
-from app.materials.models import MaterialReservationEvent
+from app.materials.models import MaterialConsumptionBatch, MaterialReservationEvent
 
 PASSWORD = "correct horse battery staple"
 
@@ -272,6 +272,29 @@ async def test_confirm_consumption_is_atomic_idempotent_and_keeps_estimate(env):
     assert lines_by_item[extra_material["item_id"]]["actual_quantity"] == "1.000"
 
 
+@pytest.mark.asyncio
+async def test_confirm_consumption_shortage_names_item_and_lot_and_is_atomic(env):
+    client, sessions = env
+    ctx = await register(client)
+    enough = await add_stock(client, ctx["auth"], quantity="5")
+    short = await add_stock(client, ctx["auth"], quantity="1")
+    procedure_id = await add_procedure(client, ctx["auth"])
+    appointment_id = await add_appointment(client, ctx)
+    performed = await client.post("/api/performed-procedures", headers=ctx["auth"], json={
+        "appointment_id": appointment_id, "procedure_catalog_id": procedure_id,
+    })
+    assert performed.status_code == 201, performed.text
+    response = await client.post(f"/api/materials/performed-procedures/{performed.json()['id']}/confirm",
+        headers=ctx["auth"], json={"client_request_id": str(uuid4()), "lines": [
+            {**enough, "quantity": "2"}, {**short, "quantity": "2"},
+        ]})
+    assert response.status_code == 409
+    assert response.json()["detail"].startswith("Stoc insuficient pentru Material ")
+    assert "(lot LOT-" in response.json()["detail"]
+    async with sessions() as session:
+        assert await session.scalar(select(func.count()).select_from(MaterialConsumptionBatch)) == 0
+        assert await session.scalar(select(func.count()).select_from(InventoryMovement).where(
+            InventoryMovement.kind == "consumption")) == 0
 @pytest.mark.asyncio
 async def test_replenishment_formula_reports_available_reserved_and_need(env):
     client, sessions = env

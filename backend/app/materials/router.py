@@ -748,7 +748,15 @@ async def confirm_consumption(performed_id: UUID, payload: ConsumptionConfirmIn,
             movement_request = uuid5(request_namespace, f"movement:{index}")
             movement_input = MovementIn(item_id=line.item_id, lot_id=line.lot_id, location_id=line.location_id,
                 quantity=line.quantity, client_request_id=movement_request, reason="Consum confirmat prin materiale")
-            movement_response, movement_row = await _write_without_commit(movement_input, "consumption", user, db)
+            try:
+                movement_response, movement_row = await _write_without_commit(movement_input, "consumption", user, db)
+            except HTTPException as exc:
+                if exc.status_code == 409 and exc.detail == "Stoc insuficient":
+                    item_name = await db.scalar(select(InventoryItem.name).where(
+                        InventoryItem.id == line.item_id, InventoryItem.clinic_id == user.clinic_id))
+                    raise HTTPException(409,
+                        f"Stoc insuficient pentru {item_name} (lot {lot_map[line.lot_id].code}).") from exc
+                raise
             if not movement_row:
                 movement_row = await db.get(InventoryMovement, UUID(movement_response["id"]))
             recipe_line = estimate_by_item.get(line.item_id)
