@@ -638,3 +638,14 @@ async def test_board_query_count_does_not_grow_with_appointments(env):  # noqa: 
         assert len(statements) == baseline
     finally:
         event.remove(engine, "before_cursor_execute", count)
+
+
+async def test_block_text_reads_as_sentences_and_equipment_wording_is_neutral(env):  # noqa: F811
+    client, sessions = env
+    ctx, _procedure_id, appointment_id = await scenario(client)
+    await client.post(f"/api/cabinet-ready/appointments/{appointment_id}/blocks", headers=ctx["auth"],
+                      json={**key(), "reason": "Scaun defect", "check_with": "Ana"})
+    await add_outage(sessions, ctx, room_id=ctx["room_id"])
+    row = await card(client, ctx["auth"], appointment_id)
+    assert "Blocaj manual: Scaun defect. Verifică cu: Ana." in row["missing"]
+    assert any("Compresor fictiv nu este disponibil: Revizie fictivă." in text for text in row["missing"])

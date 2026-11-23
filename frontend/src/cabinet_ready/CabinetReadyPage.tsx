@@ -124,7 +124,7 @@ function Card({ card, user, refresh }: { card: CabinetCard; user: User; refresh:
       ? <div className="cabinet-missing"><h3>Ce lipsește</h3>{card.missing?.length ? <ul>{card.missing.map(text => <li key={text}>{text}</li>)}</ul> : <p>Nimic. Toate elementele obligatorii sunt confirmate.</p>}</div>
       : card.blockers.length > 0 && <div className="cabinet-missing"><h3>Blocaje</h3><ul>{card.blockers.map(row => <li key={row.type}>{row.type_label}</li>)}</ul></div>}
     <p className="cabinet-muted">{card.room_name} · {card.doctor_name}</p>
-    <p className="cabinet-muted">Începe pregătirea până la {card.start_by_local}{card.late && <span className="cabinet-late"> · Întârziat</span>}</p>
+    <p className="cabinet-muted">{card.total_required > 0 ? <>Începe pregătirea până la {card.start_by_local}{card.late && <span className="cabinet-late"> · Întârziat</span>}</> : 'Timpul de pregătire nu se poate calcula încă.'}</p>
     {card.warnings?.map(row => <p className="cabinet-warning" key={row.text}>{row.text} Verifică cu: {row.check_with}.</p>)}
     {canStart && <div className="cabinet-actions"><button type="button" disabled={action.pending !== null} onClick={() => void action.run(startScope, card.explanation ?? '', id => startPreparation(card.appointment_id, id))}>{card.explanation ? 'Reîncepe pregătirea' : 'Începe pregătirea'}</button>{action.errorAt(startScope)}</div>}
     {canWrite && card.items?.map((line, index) => <ItemRow key={line.id ?? `${line.label}-${index}`} line={line} canWrite={canWrite} action={action} />)}

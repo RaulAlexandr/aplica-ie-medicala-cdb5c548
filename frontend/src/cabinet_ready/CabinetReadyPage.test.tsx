@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import TestRenderer, { act } from 'react-test-renderer';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AxiosError, AxiosHeaders } from 'axios';
@@ -91,6 +93,18 @@ describe('CabinetReadyPage', () => {
     const renderer = await render(user('assistant'), boardWith([staffCard({ started: false, explanation, missing: [explanation], items: [{ ...staffCard().items![0], id: null }] })]));
     expect(text(renderer.root)).toContain(explanation);
     expect(button(renderer, 'Reîncepe pregătirea')).toBeTruthy();
+  });
+
+  it('does not promise a start time when no required minutes are known', async () => {
+    const renderer = await render(user('assistant'), boardWith([staffCard({ state: 'unknown', state_label: 'Necunoscut', total_required: 0, counter: '0 din 0', items: [], missing: ['Programarea nu are nicio procedură efectivă.'] })]));
+    const page = text(renderer.root);
+    expect(page).toContain('Timpul de pregătire nu se poate calcula');
+    expect(page).not.toContain('Începe pregătirea până la');
+  });
+
+  it('keeps the page content at the top when it is shorter than the screen', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/cabinet_ready/cabinet-ready.css'), 'utf8');
+    expect(css).toMatch(/\.cabinet-page \{[^}]*align-content: start/);
   });
 
   it('turns a non-JSON server failure into Romanian text', () => {

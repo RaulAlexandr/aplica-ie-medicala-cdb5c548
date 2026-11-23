@@ -1,4 +1,4 @@
-.cabinet-page { max-width: 1200px; margin: 0 auto; display: grid; gap: 1rem; min-width: 0; }
+.cabinet-page { max-width: 1200px; margin: 0 auto; display: grid; align-content: start; gap: 1rem; min-width: 0; }
 .cabinet-note { margin: 0; padding: .7rem .9rem; border: 1px solid #b45309; border-radius: .5rem; background: #fff7e6; color: #5c3200; font-weight: 600; }
 .cabinet-toolbar { display: flex; flex-wrap: wrap; gap: .8rem; align-items: end; }
 .cabinet-toolbar label { display: grid; gap: .25rem; min-width: 0; }

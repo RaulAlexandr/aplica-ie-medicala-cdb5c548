@@ -170,7 +170,7 @@ async def _equipment_signals(db, clinic_id: UUID, rows: list[RequestRow], demand
                 continue
             if room.id in equipment_rooms or linked[appointment.id] & equipment_services:
                 blockers[appointment.id].append({"type": "equipment", "type_label": BLOCK_LABELS["equipment"],
-                    "text": f"{equipment.name} este indisponibil: {outage.reason}.", "check_with": check_with})
+                    "text": f"{equipment.name} nu este disponibil: {outage.reason.rstrip('.')}.", "check_with": check_with})
             elif any(term and term in normalize_service_text(appointment.appointment_type) for term in equipment_terms):
                 warnings[appointment.id].append({"type": "equipment_possible",
                     "text": f"Posibil afectată de indisponibilitatea echipamentului {equipment.name}.", "check_with": check_with})
@@ -329,7 +329,7 @@ async def build_cards(db: AsyncSession, user: User, rows: list[RequestRow], zone
         ready_at = None
         if state == "ready":
             ready_at = max(datetime.fromisoformat(line["confirmed_at"]) for line in required).isoformat()
-        missing = [*(f"{row['type_label']}: {row['text']} Verifică cu: {row['check_with']}." for row in blockers), *unknown_reasons]
+        missing = [*(f"{row['type_label']}: {row['text'].rstrip('.')}. Verifică cu: {row['check_with']}." for row in blockers), *unknown_reasons]
         if explanation:
             missing.append(explanation)
         missing.extend(f"De confirmat: {line['label']}" for line in required if not line["confirmed"])
