@@ -12,7 +12,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth.service import create_access_token
-from app.cabinet_ready.models import CabinetChecklistVersion, CabinetConfirmationEvent, CabinetRequestKey
+from app.cabinet_ready.models import (
+    CabinetChecklistVersion,
+    CabinetConfirmationEvent,
+    CabinetRequestKey,
+)
 from app.database import User, get_db
 from app.main import app
 
