@@ -36,6 +36,14 @@ describe('shared form controls on narrow screens', () => {
   });
 });
 
+const PANEL = 'section[aria-label="Proceduri planificate"] .inline-form';
+describe('appointment procedures panel on narrow screens', () => {
+  it('lets the catalog select and search input shrink to the card (a long procedure name must not widen the calendar page)', () => {
+    // Measured in the browser at 390 px: the page was 502 px wide with the panel open and 390 px without it.
+    expect(bodies(`${PANEL} select,${PANEL} input`).some(body => /width:\s*100%/.test(body) && /min-width:\s*0/.test(body))).toBe(true);
+  });
+});
+
 describe('shared text colours keep at least 4.5:1 contrast on their backgrounds (accessibility)', () => {
   it.each([['page', '#f5f7f9'], ['card', '#ffffff']])('.eyebrow on the %s background %s', (_name, background) => {
     expect(colorOf('.eyebrow')).not.toBe('');
