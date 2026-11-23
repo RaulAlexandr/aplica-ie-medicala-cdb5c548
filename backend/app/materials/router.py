@@ -194,6 +194,17 @@ async def _procedure_demand(db: AsyncSession, clinic_id: UUID, appointment_ids: 
     upcoming work, so it counts as a plan unit before applying the same max(manual, plan) rule.
     """
     effective = await effective_procedures(db, clinic_id, appointment_ids)
+    completed_rows = (await db.execute(select(
+        PerformedProcedure.appointment_id, PerformedProcedure.procedure_catalog_id,
+        func.count(PerformedProcedure.id),
+    ).where(
+        PerformedProcedure.clinic_id == clinic_id,
+        PerformedProcedure.appointment_id.in_(appointment_ids) if appointment_ids else False,
+        PerformedProcedure.status == "completed",
+    ).group_by(PerformedProcedure.appointment_id, PerformedProcedure.procedure_catalog_id))).all()
+    completed_by_appointment: dict[UUID, dict[UUID, int]] = defaultdict(dict)
+    for appointment_id, procedure_id, quantity in completed_rows:
+        completed_by_appointment[appointment_id][procedure_id] = int(quantity)
     open_rows = (await db.execute(select(
         TreatmentPlanItem.appointment_id, TreatmentPlanItem.procedure_catalog_id,
         TreatmentPlanItem.procedure_name, TreatmentPlanItem.performed_procedure_id,
@@ -222,11 +233,16 @@ async def _procedure_demand(db: AsyncSession, clinic_id: UUID, appointment_ids: 
         })
         entry["plan"] += 1
         entry["performed_id"] = entry["performed_id"] or performed_id
-    return {
-        appointment_id: [{**entry, "quantity": max(entry["manual"], entry["plan"])}
-                         for _procedure_id, entry in sorted(by_procedure.items(), key=lambda pair: str(pair[0]))]
-        for appointment_id, by_procedure in merged.items()
-    }
+    result = {}
+    for appointment_id, by_procedure in merged.items():
+        lines = []
+        for procedure_id, entry in sorted(by_procedure.items(), key=lambda pair: str(pair[0])):
+            manual_remaining = max(0, entry["manual"] - completed_by_appointment[appointment_id].get(procedure_id, 0))
+            quantity = max(manual_remaining, entry["plan"])
+            if quantity > 0:
+                lines.append({**entry, "quantity": quantity})
+        result[appointment_id] = lines
+    return result
 
 
 async def _requirements(db: AsyncSession, user: User, from_date: date | None, to_date: date | None):
@@ -241,6 +257,11 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
     ).order_by(Appointment.starts_at, Appointment.id))).all()
     appointment_ids = [appointment.id for appointment, _patient in appointment_pairs]
     demand_by_appt = await _procedure_demand(db, user.clinic_id, appointment_ids)
+    performed_appointment_ids = set((await db.scalars(select(PerformedProcedure.appointment_id).where(
+        PerformedProcedure.clinic_id == user.clinic_id,
+        PerformedProcedure.appointment_id.in_(appointment_ids) if appointment_ids else False,
+        PerformedProcedure.status != "cancelled",
+    ).group_by(PerformedProcedure.appointment_id))).all())
     procedure_ids = {entry["procedure_catalog_id"] for entries in demand_by_appt.values() for entry in entries}
     latest, lines_by_version = await _latest_recipes(db, user.clinic_id, procedure_ids)
     catalogs = (await db.scalars(select(ProcedureCatalog).where(
@@ -274,7 +295,7 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
         procedures = demand_by_appt.get(appointment.id, [])
         row = {"id": str(appointment.id), "starts_at": appointment.starts_at.isoformat(), "local_date": local_date.isoformat(),
                "status": appointment.status, "patient_name": f"{patient.first_name} {patient.last_name}", "procedures": []}
-        if not procedures:
+        if not procedures and appointment.id not in performed_appointment_ids:
             unknown_appointments.append({"id": str(appointment.id), "starts_at": appointment.starts_at.isoformat(),
                                          "local_date": local_date.isoformat(), "patient_name": row["patient_name"]})
         appointment_lines = defaultdict(list)
