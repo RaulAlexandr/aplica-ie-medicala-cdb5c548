@@ -34,7 +34,7 @@ async function mount(role: string) {
 const alerts = (tree: TestRenderer.ReactTestRenderer) => tree.root.findAll(n => typeof n.type === 'string' && n.props.role === 'alert');
 const statuses = (tree: TestRenderer.ReactTestRenderer) => tree.root.findAll(n => typeof n.type === 'string' && n.props.role === 'status');
 const up = (node: TestRenderer.ReactTestInstance, type: string) => { let n: TestRenderer.ReactTestInstance | null = node; while (n && n.type !== type) n = n.parent; return n; };
-const buttonNamed = (tree: TestRenderer.ReactTestRenderer, name: string) => tree.root.findAllByType('button').find(b => text(b) === name)!;
+const buttonNamed = (tree: TestRenderer.ReactTestRenderer, name: string) => tree.root.findAllByType('button').find(b => text(b) === name || name === 'Rezervă necesarul' && text(b).startsWith(name + ':'))!;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -164,6 +164,51 @@ describe('MaterialsPage: errors next to the control (D1 rule)', () => {
     await flush();
     expect(alerts(tree)).toHaveLength(0);
     expect(statuses(tree).some(s => text(s).includes('Rezervarea a fost înregistrată.'))).toBe(true);
+    await act(async () => tree.unmount());
+  });
+});
+
+describe('MaterialsPage: clinic-facing UX', () => {
+  it('names the reserved item in reservation actions and refusal', async () => {
+    vi.mocked(reserveMaterial).mockRejectedValue(new Error('Stoc insuficient pentru rezervare.'));
+    const tree = await mount('doctor');
+    expect(buttonNamed(tree, 'Rezervă necesarul: Material test')).toBeTruthy();
+    await act(async () => buttonNamed(tree, 'Rezervă necesarul: Material test').props.onClick());
+    await flush();
+    expect(alerts(tree).map(text).join(' ')).toContain('Material test');
+  });
+
+  it('localizes appointment and procedure states and explains available stock', async () => {
+    const tree = await mount('doctor');
+    expect(text(tree.root)).toContain('Disponibil = stoc liber, după rezervări.');
+    expect(text(tree.root)).toContain('Programată');
+    expect(text(tree.root)).toContain('Finalizată');
+    expect(text(tree.root)).not.toContain('scheduled');
+    expect(text(tree.root)).not.toContain('completed');
+    await act(async () => tree.unmount());
+  });
+
+  it('shows replenishment empty state only after a successful load', async () => {
+    vi.mocked(getReplenishment).mockRejectedValueOnce(new Error('offline'));
+    const tree = await mount('doctor');
+    expect(text(tree.root)).not.toContain('Nu este nevoie de reaprovizionare.');
+    await act(async () => tree.unmount());
+    vi.mocked(getReplenishment).mockResolvedValue({ items: [] } as never);
+    const loaded = await mount('doctor');
+    expect(text(loaded.root)).toContain('Nu este nevoie de reaprovizionare.');
+    await act(async () => loaded.unmount());
+  });
+
+  it('places operation success status beside its action and keeps line buttons spaced', async () => {
+    vi.mocked(reserveMaterial).mockResolvedValue({} as never);
+    const tree = await mount('doctor');
+    await act(async () => buttonNamed(tree, 'Rezervă necesarul: Material test').props.onClick());
+    await flush();
+    const status = statuses(tree).find(node => text(node).includes('Rezervarea a fost înregistrată.'))!;
+    expect(up(status, 'article')).toBe(up(buttonNamed(tree, 'Rezervă necesarul: Material test'), 'article'));
+    const select = tree.root.findAllByType('select').find(s => s.parent?.children[0] === 'Manoperă')!;
+    await act(async () => select.props.onChange({ target: { value: 'performed-1' } }));
+    expect(tree.root.findAllByType('button').find(b => text(b) === 'Elimină linia')?.props.className).toContain('consume-line-action');
     await act(async () => tree.unmount());
   });
 });

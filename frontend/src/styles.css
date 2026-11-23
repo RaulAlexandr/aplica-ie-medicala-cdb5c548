@@ -7,3 +7,4 @@
 .calendar-block{border-left:4px solid #b45309;background:rgba(180,83,9,.08);padding:.4rem .6rem;margin:.3rem 0}
 
 @media(max-width:800px){section[aria-label="Proceduri planificate"] .inline-form select,section[aria-label="Proceduri planificate"] .inline-form input{width:100%;min-width:0}}
+.materials-page .consume-line-action{margin-top:10px;justify-self:start}.materials-page .consume-add-action{margin:8px 0 14px}
