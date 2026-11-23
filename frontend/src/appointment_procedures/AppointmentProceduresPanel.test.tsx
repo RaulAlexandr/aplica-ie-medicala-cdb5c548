@@ -89,4 +89,27 @@ describe('appointment procedures panel', () => {
     expect(replace).toHaveBeenCalledWith('visit', 0, [{ procedure_catalog_id: 'p3', quantity: 1 }]);
     renderer!.unmount();
   });
+
+  it('shows a Romanian message, keeps the draft and allows a retry when the server answers 500 without a detail', async () => {
+    vi.spyOn(api, 'getAppointmentProcedures').mockResolvedValue(set);
+    vi.spyOn(client, 'listProcedures').mockResolvedValue([]);
+    const failure = new AxiosError('Request failed with status code 500');
+    failure.response = { status: 500, data: 'Internal Server Error' } as never;
+    const replace = vi.spyOn(api, 'replaceAppointmentProcedures').mockRejectedValueOnce(failure).mockResolvedValue({ ...set, revision: 5 });
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = render(true); });
+    await waitFor(renderer!, () => renderer!.root.findAllByProps({ 'aria-label': 'Cantitate Obturație' }).length === 1);
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': 'Cantitate Obturație' }).props.onChange({ target: { value: '3' } }); });
+    const saveButton = () => renderer!.root.findAllByType('button').find(button => label(button) === 'Salvează procedurile')!;
+    await act(async () => { saveButton().props.onClick(); });
+    await waitFor(renderer!, () => renderer!.root.findAllByProps({ role: 'alert' }).length === 1);
+    const message = renderer!.root.findByProps({ role: 'alert' }).children.join('');
+    expect(message).not.toMatch(/Request failed|status code/);
+    expect(message).toMatch(/Serverul/);
+    expect(renderer!.root.findByProps({ 'aria-label': 'Cantitate Obturație' }).props.value).toBe(3);
+    await act(async () => { saveButton().props.onClick(); });
+    await waitFor(renderer!, () => replace.mock.calls.length === 2);
+    expect(replace).toHaveBeenLastCalledWith('visit', 4, [{ procedure_catalog_id: 'p1', quantity: 3 }]);
+    renderer!.unmount();
+  });
 });
