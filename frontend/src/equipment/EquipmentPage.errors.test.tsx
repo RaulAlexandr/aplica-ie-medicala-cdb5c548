@@ -11,7 +11,15 @@ import { EquipmentPage } from './EquipmentPage';
 const equipment: Equipment = { id: 'equipment-1', name: 'Unit fictiv', equipment_type: 'unit dentar', serial_number: null, room_id: null, responsible_id: 'manager-1', state: 'available', is_active: true };
 const manager: User = { id: 'manager-1', clinic_id: 'clinic-1', full_name: 'Manager Fictiv', email: 'm@example.test', role: 'clinic_manager' };
 const text = (node: TestRenderer.ReactTestInstance): string => node.children.map(child => (typeof child === 'string' ? child : text(child))).join('');
-const flush = () => new Promise(resolve => setTimeout(resolve, 10));
+async function waitFor(condition: () => boolean, description: string, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let ready = false;
+    await act(async () => { ready = condition(); if (!ready) await new Promise(resolve => setTimeout(resolve, 5)); });
+    if (ready) return;
+  }
+  throw new Error(`Timed out waiting for ${description}`);
+}
 const history = (values: Partial<EquipmentHistory> = {}): EquipmentHistory => ({ checks: [], documents: [], dependencies: [], unavailabilities: [], ...values });
 
 const scrolled = vi.fn();
@@ -22,13 +30,14 @@ async function render(historyValue: EquipmentHistory = history()) {
   vi.spyOn(clientApi, 'listProcedures').mockResolvedValue([]);
   vi.spyOn(equipmentApi, 'listEquipment').mockResolvedValue([equipment]);
   vi.spyOn(equipmentApi, 'listDueChecks').mockResolvedValue([]);
-  vi.spyOn(equipmentApi, 'equipmentHistory').mockResolvedValue(historyValue);
+  const historyRequest = vi.spyOn(equipmentApi, 'equipmentHistory').mockResolvedValue(historyValue);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
   let renderer!: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(<QueryClientProvider client={client}><EquipmentPage user={manager} /></QueryClientProvider>, { createNodeMock: () => ({ scrollIntoView: scrolled }) }); await flush(); });
+  await act(async () => { renderer = TestRenderer.create(<QueryClientProvider client={client}><EquipmentPage user={manager} /></QueryClientProvider>, { createNodeMock: () => ({ scrollIntoView: scrolled }) }); });
   let row = renderer.root.findAllByType('button').find(button => text(button).includes(equipment.name));
-  for (let attempt = 0; !row && attempt < 30; attempt += 1) { await act(async () => { await flush(); }); row = renderer.root.findAllByType('button').find(button => text(button).includes(equipment.name)); }
-  await act(async () => { row!.props.onClick(); await flush(); });
+  await waitFor(() => { row = renderer.root.findAllByType('button').find(button => text(button).includes(equipment.name)); return Boolean(row); }, 'equipment row');
+  await act(async () => { row!.props.onClick(); });
+  await waitFor(() => historyRequest.mock.calls.length > 0 && !text(renderer.root).includes('Se încarcă istoricul…'), 'equipment history');
   return renderer;
 }
 const alerts = (renderer: TestRenderer.ReactTestRenderer, needle: string) => renderer.root.findAll(node => typeof node.type === 'string' && node.props.role === 'alert' && text(node).includes(needle));
@@ -51,7 +60,8 @@ describe('equipment: errors next to the form (D1)', () => {
     if (kind === 'dependency') act(() => renderer.root.findByProps({ 'aria-label': 'Tipul dependenței' }).props.onChange({ target: { value: 'room' } }));
     const form = formWith(renderer, heading);
     const target = { reset: vi.fn() };
-    await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
+    await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); });
+    await waitFor(() => alerts(renderer, server).length === 1, `${kind} submit error`);
     const found = alerts(renderer, server);
     expect(found).toHaveLength(1);
     expect(found[0].props.className).toContain('error');
@@ -65,9 +75,11 @@ describe('equipment: errors next to the form (D1)', () => {
     vi.spyOn(equipmentApi, 'addCheck').mockResolvedValue({} as never);
     vi.stubGlobal('FormData', class { get(name: string) { return ({ title: 'T', document_type: 'm', reference: 'r', check_type: 'service', due_at: '2026-12-01T10:00', completed_at: '', result: '' } as Record<string, string>)[name] ?? ''; } });
     const renderer = await render();
-    await act(async () => { formWith(renderer, 'Document (referință)').props.onSubmit({ preventDefault() {}, currentTarget: { reset: vi.fn() } }); await flush(); });
+    await act(async () => { formWith(renderer, 'Document (referință)').props.onSubmit({ preventDefault() {}, currentTarget: { reset: vi.fn() } }); });
+    await waitFor(() => alerts(renderer, 'Titlul este prea lung').length === 1, 'document error');
     expect(alerts(renderer, 'Titlul este prea lung')).toHaveLength(1);
-    await act(async () => { formWith(renderer, 'Service / verificare periodică').props.onSubmit({ preventDefault() {}, currentTarget: { reset: vi.fn() } }); await flush(); });
+    await act(async () => { formWith(renderer, 'Service / verificare periodică').props.onSubmit({ preventDefault() {}, currentTarget: { reset: vi.fn() } }); });
+    await waitFor(() => alerts(renderer, 'Titlul este prea lung').length === 0, 'document error clear');
     expect(alerts(renderer, 'Titlul este prea lung')).toHaveLength(0);
     expect(reject).toHaveBeenCalledTimes(1);
     await act(async () => renderer.unmount());
@@ -80,13 +92,15 @@ describe('equipment: errors next to the form (D1)', () => {
     const check = { id: 'check-1', equipment_id: 'equipment-1', check_type: 'service', due_at: '2026-12-02T10:00:00Z', completed_at: null, result: null, author_id: 'manager-1' };
     const renderer = await render(history({ unavailabilities: [outage], checks: [check] } as never));
     const closeButton = renderer.root.findAllByType('button').find(button => text(button) === 'Închide indisponibilitatea')!;
-    await act(async () => { closeButton.props.onClick(); await flush(); });
+    await act(async () => { closeButton.props.onClick(); });
+    await waitFor(() => alerts(renderer, 'Indisponibilitatea este deja închisă').length === 1, 'outage close error');
     const closeAlert = alerts(renderer, 'Indisponibilitatea este deja închisă');
     expect(closeAlert).toHaveLength(1);
     expect(text(ancestor(closeAlert[0], 'article')!)).toContain('Defect fictiv');
     const completeForm = renderer.root.findAllByType('form').find(form => String(form.props['aria-label'] ?? '').startsWith('Completează verificarea'))!;
     await act(async () => { completeForm.findByType('input').props.onChange({ target: { value: 'ok' } }); });
-    await act(async () => { completeForm.props.onSubmit({ preventDefault() {} }); await flush(); });
+    await act(async () => { completeForm.props.onSubmit({ preventDefault() {} }); });
+    await waitFor(() => alerts(renderer, 'Verificarea este deja efectuată').length === 1, 'check completion error');
     const completeAlert = alerts(renderer, 'Verificarea este deja efectuată');
     expect(completeAlert).toHaveLength(1);
     expect(ancestor(completeAlert[0], 'article')).toBe(ancestor(completeForm, 'article'));
@@ -97,7 +111,8 @@ describe('equipment: errors next to the form (D1)', () => {
     vi.spyOn(equipmentApi, 'addDocument').mockRejectedValue(new Error('Eroare document'));
     vi.stubGlobal('FormData', class { get(name: string) { return ({ title: 'T', document_type: 'm', reference: 'r' } as Record<string, string>)[name] ?? ''; } });
     const renderer = await render();
-    await act(async () => { formWith(renderer, 'Document (referință)').props.onSubmit({ preventDefault() {}, currentTarget: { reset: vi.fn() } }); await flush(); });
+    await act(async () => { formWith(renderer, 'Document (referință)').props.onSubmit({ preventDefault() {}, currentTarget: { reset: vi.fn() } }); });
+    await waitFor(() => alerts(renderer, 'Eroare document').length === 1, 'top error removed');
     const found = alerts(renderer, 'Eroare document');
     expect(found).toHaveLength(1);
     expect(ancestor(found[0], 'form')).not.toBeNull();
@@ -109,7 +124,8 @@ describe('equipment: errors next to the form (D1)', () => {
     vi.stubGlobal('FormData', class { get(name: string) { return ({ title: 'T', document_type: 'm', reference: 'r' } as Record<string, string>)[name] ?? ''; } });
     const renderer = await render();
     scrolled.mockClear();
-    await act(async () => { formWith(renderer, 'Document (referință)').props.onSubmit({ preventDefault() {}, currentTarget: { reset: vi.fn() } }); await flush(); });
+    await act(async () => { formWith(renderer, 'Document (referință)').props.onSubmit({ preventDefault() {}, currentTarget: { reset: vi.fn() } }); });
+    await waitFor(() => scrolled.mock.calls.length === 1, 'error scroll');
     expect(scrolled).toHaveBeenCalledWith({ block: 'nearest' });
     await act(async () => renderer.unmount());
   });

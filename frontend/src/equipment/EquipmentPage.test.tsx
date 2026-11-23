@@ -29,7 +29,15 @@ function newClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
 }
 const user = (role: string): User => ({ id: `${role}-1`, clinic_id: 'clinic-1', full_name: 'Utilizator Fictiv', email: `${role}@example.test`, role });
-async function flush() { await new Promise(resolve => setTimeout(resolve, 10)); }
+async function waitFor(condition: () => boolean, description: string, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let ready = false;
+    await act(async () => { ready = condition(); if (!ready) await new Promise(resolve => setTimeout(resolve, 5)); });
+    if (ready) return;
+  }
+  throw new Error(`Timed out waiting for ${description}`);
+}
 async function render(userValue: User, history: EquipmentHistory = historyWith(), equipmentItems: Equipment[] = [equipment]) {
   vi.spyOn(clientApi, 'getClinic').mockResolvedValue({ timezone: 'Europe/Bucharest' } as never);
   vi.spyOn(clientApi, 'listRooms').mockResolvedValue([]);
@@ -37,16 +45,16 @@ async function render(userValue: User, history: EquipmentHistory = historyWith()
   vi.spyOn(clientApi, 'listProcedures').mockResolvedValue([]);
   vi.spyOn(equipmentApi, 'listEquipment').mockResolvedValue(equipmentItems);
   vi.spyOn(equipmentApi, 'listDueChecks').mockResolvedValue([]);
-  vi.spyOn(equipmentApi, 'equipmentHistory').mockResolvedValue(history);
+  const historyRequest = vi.spyOn(equipmentApi, 'equipmentHistory').mockResolvedValue(history);
   let renderer!: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(tree(userValue, newClient())); await flush(); });
+  await act(async () => { renderer = TestRenderer.create(tree(userValue, newClient())); });
   let row = renderer.root.findAllByType('button').find(button => text(button).includes(equipment.name));
-  for (let attempt = 0; !row && attempt < 30; attempt += 1) {
-    await act(async () => { await flush(); });
+  await waitFor(() => {
     row = renderer.root.findAllByType('button').find(button => text(button).includes(equipment.name));
-  }
-  if (!row) throw new Error(`Equipment row was not rendered: ${text(renderer.root)}`);
-  await act(async () => { row.props.onClick(); await flush(); });
+    return Boolean(row);
+  }, 'equipment row');
+  await act(async () => { row!.props.onClick(); });
+  await waitFor(() => historyRequest.mock.calls.length > 0 && !text(renderer.root).includes('Se încarcă istoricul…'), 'equipment history');
   return renderer;
 }
 
@@ -90,10 +98,12 @@ describe('T21 equipment screen', () => {
     const renderer = await render(user('clinic_manager'), historyWith({ unavailabilities: [oneOutage] }));
     const form = renderer.root.findAllByType('form').find(candidate => text(candidate).includes('Raportează indisponibilitate'))!;
     const target = { reset: vi.fn() };
-    await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
+    await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); });
+    await waitFor(() => text(renderer.root).includes('1 programare afectată'), 'singular mutation notice');
     expect(text(renderer.root)).toContain('1 programare afectată');
     expect(text(renderer.root)).not.toContain('1 programări afectate');
-    await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
+    await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); });
+    await waitFor(() => text(renderer.root).includes('2 programări afectate'), 'plural mutation notice');
     expect(text(renderer.root)).toContain('2 programări afectate');
     expect(report).toHaveBeenCalledTimes(2);
     await act(async () => renderer.unmount());
@@ -130,7 +140,7 @@ describe('T21 equipment screen', () => {
     const form = renderer.root.findByProps({ 'aria-label': 'Completează verificarea check-1' });
     const input = form.findByType('input');
     act(() => input.props.onChange({ target: { value: 'Conform fictiv' } }));
-    await act(async () => { form.props.onSubmit({ preventDefault() {} }); await flush(); });
+    await act(async () => { form.props.onSubmit({ preventDefault() {} }); });
     expect(complete).toHaveBeenCalledWith(equipment.id, 'check-1', 'Conform fictiv');
     await act(async () => renderer.unmount());
   });
@@ -141,7 +151,8 @@ describe('T21 equipment screen', () => {
     const renderer = await render(user('clinic_manager'));
     const state = renderer.root.findAllByType('select').find(select => select.props.value === 'available');
     if (!state) throw new Error('Equipment state selector was not rendered');
-    await act(async () => { state.props.onChange({ target: { value: 'broken' } }); await flush(); });
+    await act(async () => { state.props.onChange({ target: { value: 'broken' } }); });
+    await waitFor(() => text(renderer.root).includes('nu are o indisponibilitate deschisă'), 'broken equipment warning');
     expect(update.mock.calls[0]?.[0]).toEqual({ ...equipment, state: 'broken' });
     expect(text(renderer.root)).toContain('nu are o indisponibilitate deschisă');
     const reason = renderer.root.findAllByType('input').find(input => input.props.name === 'reason');
@@ -189,7 +200,8 @@ describe('T21 equipment screen', () => {
     for (const item of cases) {
       const form = renderer.root.findAllByType('form').find(candidate => text(candidate).includes(item.heading))!;
       const target = { kind: item.kind, reset: vi.fn() };
-      await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
+      await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); });
+      await waitFor(() => text(renderer.root).includes('Rezultatul este obligatoriu pentru o verificare efectuată'), `rejected ${item.heading}`);
       expect(target.reset, item.heading).not.toHaveBeenCalled();
       expect(text(renderer.root)).toContain('Rezultatul este obligatoriu pentru o verificare efectuată');
     }
@@ -201,7 +213,8 @@ describe('T21 equipment screen', () => {
     for (const item of cases) {
       const form = renderer.root.findAllByType('form').find(candidate => text(candidate).includes(item.heading))!;
       const target = { kind: item.kind, reset: vi.fn() };
-      await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); await flush(); });
+      await act(async () => { form.props.onSubmit({ preventDefault() {}, currentTarget: target }); });
+      await waitFor(() => target.reset.mock.calls.length === 1, `successful ${item.heading}`);
       expect(target.reset, item.heading).toHaveBeenCalledTimes(1);
     }
     expect(text(renderer.root)).not.toContain('Rezultatul este obligatoriu pentru o verificare efectuată');
