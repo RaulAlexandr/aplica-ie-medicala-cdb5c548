@@ -38,9 +38,12 @@ describe('shared form controls on narrow screens', () => {
 
 const PANEL = 'section[aria-label="Proceduri planificate"] .inline-form';
 describe('appointment procedures panel on narrow screens', () => {
-  it('lets the catalog select and search input shrink to the card (a long procedure name must not widen the calendar page)', () => {
+  it('lets the catalog select and search input shrink to the card, on narrow screens only', () => {
     // Measured in the browser at 390 px: the page was 502 px wide with the panel open and 390 px without it.
-    expect(bodies(`${PANEL} select,${PANEL} input`).some(body => /width:\s*100%/.test(body) && /min-width:\s*0/.test(body))).toBe(true);
+    // At 1280 px the same rule collapsed the search input (a row of flex items), so it must stay inside a media query.
+    const narrow = css.match(/@media\s*\(max-width:\s*\d+px\)\s*\{\s*([^{}]*\{[^{}]*\}\s*)*\}/g) ?? [];
+    expect(narrow.some(block => block.includes(`${PANEL} select,${PANEL} input{width:100%;min-width:0}`))).toBe(true);
+    expect(css.replace(/@media[^{]*\{([^{}]*\{[^{}]*\}\s*)*\}/g, '')).not.toContain(`${PANEL} select`);
   });
 });
 
