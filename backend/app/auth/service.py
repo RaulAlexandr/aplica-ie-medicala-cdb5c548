@@ -113,6 +113,8 @@ async def get_current_user(credentials=Depends(bearer), db: AsyncSession = Depen
         raise HTTPException(status_code=401, detail="Authentication required")
     try:
         payload = jwt.decode(credentials.credentials, settings.jwt_secret, algorithms=[ALGORITHM])
+        if "typ" in payload or "aud" in payload:
+            raise JWTError("not a staff token")  # T14: portal tokens never open staff routes
         user_id = UUID(payload["sub"])
     except (JWTError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=401, detail="Invalid access token") from exc
