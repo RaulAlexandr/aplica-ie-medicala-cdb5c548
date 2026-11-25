@@ -16,6 +16,9 @@ import { locationLabel, ruleOf } from './catalog/locations';
 import { CatalogProcedureForm } from './catalog/CatalogProcedureForm';
 import { InventoryPage } from './inventory/InventoryPage';
 import { MaterialsPage } from './materials/MaterialsPage';
+import { SterilizationPage } from './sterilization/SterilizationPage';
+import { SterilizationPatientTrace } from './sterilization/TracePanels';
+import { canSeeSterilization } from './sterilization/api';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -56,6 +59,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {staffRoles.includes(user.role) && <Link to="/inventory">Stocuri</Link>}
         {staffRoles.includes(user.role) && <CollabNavLink />}
         {staffRoles.includes(user.role) && <Link to="/materials">Materiale</Link>}
+        {canSeeSterilization(user.role) && <Link to="/sterilization">Sterilizare</Link>}
         {cashRoles.includes(user.role) && <Link to="/finance/daily">Încasări zi</Link>}
         {managementRoles.includes(user.role) && <Link to="/reports">Rapoarte</Link>}
         {managementRoles.includes(user.role) && <><Link to="/setup">Clinic setup</Link><Link to="/staff">Staff</Link></>}
@@ -141,6 +145,7 @@ export function PatientDetail({ user, id, appointmentId }: { user: User; id: str
     </section>
     {staffRoles.includes(user.role) && <PatientAccountPanel key={`${id}:account`} patientId={id} />}
     {staffRoles.includes(user.role) && <PatientFormsPanel key={`${id}:forms`} patientId={id} canReview={clinicalRoles.includes(user.role)} />}
+    <SterilizationPatientTrace key={`${id}:sterilization`} patientId={id} role={user.role} />
     {clinicalRoles.includes(user.role) && <ClinicalPatientRecord key={id} patientId={id} appointmentId={appointmentId} user={user} />}
   </>;
 }
@@ -475,6 +480,7 @@ export default function App() {
       <Route path="/inventory" element={staffRoles.includes(user.role) ? <InventoryPage role={user.role} /> : <Navigate to="/" />} />
       <Route path="/messages" element={staffRoles.includes(user.role) ? <CollabPage user={user} /> : <Navigate to="/" />} />
       <Route path="/materials" element={staffRoles.includes(user.role) ? <MaterialsPage role={user.role} /> : <Navigate to="/" />} />
+      <Route path="/sterilization" element={canSeeSterilization(user.role) ? <SterilizationPage user={user} /> : <Navigate to="/" />} />
       <Route path="/appointments/:appointmentId/visit" element={<VisitPage user={user} />} />
       <Route path="/procedures" element={<Procedures user={user} />} />
       <Route path="/procedures/:id" element={<ProcedureDetail user={user} />} />
