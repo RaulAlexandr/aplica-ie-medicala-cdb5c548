@@ -342,7 +342,7 @@ async def test_templates_are_versioned_validated_and_used_in_the_message(ctx):
     client, sessions, _ = ctx
     e = await env(client, "t15-templates@example.com")
     default = {t["message_type"]: t for t in (await client.get("/api/comms/templates", headers=e["h"])).json()}
-    assert set(default) == {"confirmation", "reminder", "cancellation", "reschedule"} and default["reminder"]["version"] == 0
+    assert set(default) == {"confirmation", "reminder", "cancellation", "reschedule", "feedback_request", "review_invitation", "campaign"} and default["reminder"]["version"] == 0
     for bad in ("Salut {diagnostic}", "Salut {prenume", "Alergie {alergii}", "x}"):
         r = await client.put("/api/comms/templates/reminder", headers=e["h"], json={"subject": "Reminder", "body": bad})
         assert r.status_code == 422, bad

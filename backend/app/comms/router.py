@@ -29,7 +29,7 @@ MANAGERS = ("clinic_manager", "administrator")
 ALL_STAFF = ("clinic_manager", "doctor", "assistant", "reception", "administrator")
 RECORD_CONSENT = ("clinic_manager", "doctor", "reception", "administrator")
 Channel = Literal["sms", "email"]
-MessageType = Literal["confirmation", "reminder", "cancellation", "reschedule"]
+MessageType = Literal["confirmation", "reminder", "cancellation", "reschedule", "feedback_request", "review_invitation", "campaign"]
 ConsentSource = Literal["in_person", "phone", "paper_form", "patient_reply", "other"]
 
 

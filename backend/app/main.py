@@ -14,6 +14,7 @@ from app.comms.router import router as comms_router
 from app.config import settings
 from app.documents.router import router as documents_router
 from app.equipment.router import router as equipment_router
+from app.feedback.router import router as feedback_router
 from app.finance.router import router as finance_router
 from app.forms.router import router as forms_router
 from app.inventory.router import router as inventory_router
@@ -64,6 +65,7 @@ app.include_router(reports_router, prefix="/api")
 app.include_router(team_router, prefix="/api")
 app.include_router(collab_router, prefix="/api")
 app.include_router(comms_router, prefix="/api")
+app.include_router(feedback_router, prefix="/api")
 
 
 @app.get("/health")
