@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     document_max_bytes: int = 20 * 1024 * 1024
     document_max_image_pixels: int = 50_000_000
     document_max_image_side: int = 12_000
+    import_max_bytes: int = 5 * 1024 * 1024
+    import_max_rows: int = 2_000
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @model_validator(mode="after")
@@ -24,7 +26,7 @@ class Settings(BaseSettings):
         forbidden = {"", "development-only-change-me", "change-me", "secret", "test-secret"}
         if self.environment.lower() not in {"development", "test"} and self.jwt_secret in forbidden:
             raise ValueError("JWT_SECRET must be a non-placeholder secret outside development")
-        if self.document_max_bytes < 1 or self.document_max_image_pixels < 1 or self.document_max_image_side < 1:
+        if self.document_max_bytes < 1 or self.document_max_image_pixels < 1 or self.document_max_image_side < 1 or self.import_max_bytes < 1 or self.import_max_rows < 1:
             raise ValueError("Document limits must be positive")
         return self
 
