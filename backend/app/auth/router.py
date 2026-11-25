@@ -14,6 +14,7 @@ from app.auth.service import (
     rotate_refresh_token,
 )
 from app.database import Clinic, RefreshToken, User, get_db, utcnow
+from app.locations.models import ClinicLocation
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -47,7 +48,10 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
     clinic = Clinic(name=payload.clinic_name.strip())
     db.add(clinic)
     await db.flush()
-    user = User(clinic_id=clinic.id, full_name=payload.full_name.strip(), email=payload.email.lower(), password_hash=hash_password(payload.password), role="clinic_manager")
+    location = ClinicLocation(clinic_id=clinic.id, name="Principal")
+    db.add(location)
+    await db.flush()
+    user = User(clinic_id=clinic.id, default_location_id=location.id, full_name=payload.full_name.strip(), email=payload.email.lower(), password_hash=hash_password(payload.password), role="clinic_manager")
     db.add(user)
     await db.flush()
     refresh = await issue_refresh_token(db, user)

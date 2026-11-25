@@ -29,6 +29,7 @@ from app.database import (
     get_db,
 )
 from app.inventory.models import InventoryItem, InventoryLocation, InventoryLot, InventoryMovement
+from app.locations.models import ClinicLocation
 from app.main import app
 from app.materials.models import MaterialConsumptionBatch, MaterialConsumptionLine
 
@@ -59,6 +60,9 @@ async def report_env():
         async with sessions() as session:
             session.add(clinic)
             await session.flush()
+            principal = ClinicLocation(clinic_id=clinic.id, name="Principal")
+            session.add(principal)
+            await session.flush()
             manager = User(clinic_id=clinic.id, full_name="Report Manager", email="manager@reports.test",
                            password_hash=hash_password("password-123456"), role="clinic_manager", is_active=True)
             doctor = User(clinic_id=clinic.id, full_name="Report Doctor", email="doctor@reports.test",
@@ -69,14 +73,14 @@ async def report_env():
                              password_hash=hash_password("password-123456"), role="reception", is_active=True)
             administrator = User(clinic_id=clinic.id, full_name="Report Administrator", email="admin@reports.test",
                                  password_hash=hash_password("password-123456"), role="administrator", is_active=True)
-            room = Room(clinic_id=clinic.id, name="Room 1", is_active=True)
+            room = Room(clinic_id=clinic.id, location_id=principal.id, name="Room 1", is_active=True)
             patient = Patient(clinic_id=clinic.id, first_name="Ana", last_name="Test",
                               allergies="FICTIONAL allergy", notes="FICTIONAL private note")
             session.add_all([manager, doctor, assistant, reception, administrator, room, patient])
             await session.commit()
             ids = {"clinic": clinic.id, "manager": manager.id, "doctor": doctor.id,
                    "assistant": assistant.id, "reception": reception.id, "administrator": administrator.id,
-                   "room": room.id, "patient": patient.id}
+                   "room": room.id, "location": principal.id, "patient": patient.id}
         headers = {"Authorization": f"Bearer {create_test_token(str(ids['manager']), str(ids['clinic']), 'clinic_manager')}"}
         yield client, sessions, ids, headers
     app.dependency_overrides.clear()
@@ -175,7 +179,10 @@ async def test_report_auth_foreign_filters_invalid_period_and_unconfigured_room(
         foreign_clinic = Clinic(name="Foreign", timezone="Europe/Bucharest")
         session.add(foreign_clinic)
         await session.flush()
-        foreign_room = Room(clinic_id=foreign_clinic.id, name="Foreign room")
+        foreign_principal = ClinicLocation(clinic_id=foreign_clinic.id, name="Principal")
+        session.add(foreign_principal)
+        await session.flush()
+        foreign_room = Room(clinic_id=foreign_clinic.id, location_id=foreign_principal.id, name="Foreign room")
         foreign_doctor = User(clinic_id=foreign_clinic.id, full_name="Foreign Doctor", email="foreign@reports.test",
                               password_hash=hash_password("password-123456"), role="doctor", is_active=True)
         session.add_all([foreign_room, foreign_doctor])
@@ -424,7 +431,7 @@ async def test_every_indicator_filter_reconciles_to_its_exact_source_rows(report
     async with sessions() as session:
         other_doctor = User(clinic_id=ids["clinic"], full_name="Other Doctor", email="other-doctor@reports.test",
                             password_hash=hash_password("password-123456"), role="doctor", is_active=True)
-        other_room = Room(clinic_id=ids["clinic"], name="Room 2", is_active=True)
+        other_room = Room(clinic_id=ids["clinic"], location_id=ids["location"], name="Room 2", is_active=True)
         session.add_all([other_doctor, other_room])
         await session.flush()
         appointments = {

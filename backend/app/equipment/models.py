@@ -19,6 +19,7 @@ class Equipment(Base):
     __tablename__ = "equipment"
     id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
     clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
+    location_id: Mapped[UUID | None] = mapped_column(ForeignKey("clinic_locations.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     equipment_type: Mapped[str] = mapped_column(String(100), nullable=False)
     serial_number: Mapped[str | None] = mapped_column(String(120))

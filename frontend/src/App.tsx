@@ -19,7 +19,7 @@ import { MaterialsPage } from './materials/MaterialsPage';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { acceptInvitation, activateProcedure, apiErrorMessage, Clinic, countPatients, countProcedures, createAppointment, createInvitation, createPatient, createRoom, deactivateProcedure, deactivateStaff, Doctor, getClinic, getPatient, getProcedure, Invitation, listAppointments, listDoctors, listInvitations, listPatients, listProcedures, listRooms, listStaff, login, logout, me, Patient, ProcedureCatalog, register, reissueInvitation, revokeInvitation, Room, Staff, updateClinic, updatePatient, updateRoom, User } from './api/client';
+import { acceptInvitation, activateProcedure, apiErrorMessage, Clinic, countPatients, countProcedures, createAppointment, createInvitation, createPatient, createRoom, deactivateProcedure, deactivateStaff, Doctor, getClinic, getLocationPreferences, getPatient, getProcedure, Invitation, listAppointments, listDoctors, listInvitations, listLocations, listPatients, listProcedures, listRooms, listRoomsAtLocation, listStaff, login, logout, me, Patient, ProcedureCatalog, register, reissueInvitation, revokeInvitation, Room, saveLocation, saveLocationPreferences, Staff, updateClinic, updateLocation, updatePatient, updateRoom, User } from './api/client';
 import { clinicHour, greetingForHour } from './timezone';
 
 const managementRoles = ['clinic_manager', 'administrator'];
@@ -306,17 +306,25 @@ export function ClinicSettings() {
 
 export function Rooms() {
   const client = useQueryClient();
-  const query = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
+  const [roomSiteFilter, setRoomSiteFilter] = useState('');
+  const query = useQuery({ queryKey: ['rooms', roomSiteFilter], queryFn: () => roomSiteFilter ? listRoomsAtLocation(roomSiteFilter) : listRooms() });
+  const locations = useQuery({ queryKey: ['locations'], queryFn: listLocations });
+  const preferences = useQuery({ queryKey: ['location-preferences'], queryFn: getLocationPreferences });
   const [name, setName] = useState('');
+  const [locationId, setLocationId] = useState('');
   const [editingId, setEditingId] = useState('');
   const [editingName, setEditingName] = useState('');
+  const [editingLocationId, setEditingLocationId] = useState('');
   const [message, setMessage] = useState('');
-  const create = useMutation({ mutationFn: () => createRoom(name), onSuccess: () => { setName(''); setMessage('Room created.'); client.invalidateQueries({ queryKey: ['rooms'] }); }, onError: error => setMessage(apiErrorMessage(error)) });
-  const update = useMutation({ mutationFn: ({ id, input }: { id: string; input: { name?: string; is_active?: boolean } }) => updateRoom(id, input), onSuccess: data => { if (data.affected_appointments.length) setMessage(`Cannot deactivate this room. Future appointments: ${data.affected_appointments.map(item => `${new Date(item.starts_at).toLocaleString()} (${item.id.slice(0, 8)})`).join(', ')}`); else { setEditingId(''); setMessage('Room updated.'); client.invalidateQueries({ queryKey: ['rooms'] }); } }, onError: error => setMessage(apiErrorMessage(error)) });
+  useEffect(() => { if (preferences.data?.default_location_id) setLocationId(current => current || preferences.data!.default_location_id!); }, [preferences.data]);
+  const create = useMutation({ mutationFn: () => createRoom(name, locationId || undefined), onSuccess: () => { setName(''); setMessage('Cabinetul a fost creat.'); client.invalidateQueries({ queryKey: ['rooms'] }); }, onError: error => setMessage(apiErrorMessage(error)) });
+  const update = useMutation({ mutationFn: ({ id, input }: { id: string; input: { name?: string; is_active?: boolean; location_id?: string } }) => updateRoom(id, input), onSuccess: data => { if (data.affected_appointments.length) setMessage(`Mutarea este refuzată: cabinetul are programări viitoare (${data.affected_appointments.map(item => `${new Date(item.starts_at).toLocaleString()} · ${item.id.slice(0, 8)}`).join(', ')}).`); else { setEditingId(''); setMessage('Cabinetul a fost actualizat.'); client.invalidateQueries({ queryKey: ['rooms'] }); } }, onError: error => setMessage(apiErrorMessage(error)) });
   return <section className="card">
     <h2>Treatment rooms</h2>
+    <label>Filtru sediu<select aria-label="Filtru sediu cabinete" value={roomSiteFilter} onChange={e => setRoomSiteFilter(e.target.value)}><option value="">Toate sediile</option>{locations.data?.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
     <form className="inline-form" onSubmit={e => { e.preventDefault(); create.mutate(); }}>
       <input required placeholder="New room name" value={name} onChange={e => setName(e.target.value)} />
+      <select aria-label="Sediul cabinetului" required value={locationId} onChange={e => setLocationId(e.target.value)}><option value="">Alege sediul</option>{locations.data?.filter(site => site.is_active).map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select>
       <button disabled={create.isPending}>Create room</button>
     </form>
     {message && <p className="notice-text" role="alert">{message}</p>}
@@ -326,13 +334,14 @@ export function Rooms() {
         {editingId === room.id ?
           <>
             <input value={editingName} onChange={e => setEditingName(e.target.value)} />
-            <button className="secondary" onClick={() => update.mutate({ id: room.id, input: { name: editingName } })}>Save name</button>
-            <button className="secondary" onClick={() => setEditingId('')}>Cancel</button>
+            <select aria-label={`Sediul pentru ${room.name}`} value={editingLocationId} onChange={e => setEditingLocationId(e.target.value)}>{locations.data?.filter(site => site.is_active).map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select>
+            <button className="secondary" onClick={() => update.mutate({ id: room.id, input: { name: editingName, location_id: editingLocationId } })}>Salvează cabinetul</button>
+            <button className="secondary" onClick={() => setEditingId('')}>Renunță</button>
           </> :
           <>
-            <span><strong>{room.name}</strong> · {room.is_active ? 'Active' : 'Inactive'}</span>
+            <span><strong>{room.name}</strong> · {locations.data?.find(site => site.id === room.location_id)?.name ?? 'Sediu indisponibil'} · {room.is_active ? 'Activ' : 'Inactiv'}</span>
             <span>
-              <button className="secondary" onClick={() => { setEditingId(room.id); setEditingName(room.name); }}>Rename</button>
+              <button className="secondary" onClick={() => { setEditingId(room.id); setEditingName(room.name); setEditingLocationId(room.location_id ?? ''); }}>Editează</button>
               <button className="secondary" onClick={() => update.mutate({ id: room.id, input: { is_active: !room.is_active } })}>{room.is_active ? 'Deactivate' : 'Activate'}</button>
             </span>
           </>}
@@ -342,11 +351,57 @@ export function Rooms() {
   </section>;
 }
 
+function ClinicLocations() {
+  const client = useQueryClient();
+  const query = useQuery({ queryKey: ['locations'], queryFn: listLocations });
+  const [name, setName] = useState('');
+  const [address, setAddress] = useState('');
+  const [phone, setPhone] = useState('');
+  const [timezone, setTimezone] = useState('');
+  const [message, setMessage] = useState('');
+  const [editingId, setEditingId] = useState('');
+  const [editingName, setEditingName] = useState('');
+  const [editingAddress, setEditingAddress] = useState('');
+  const [editingPhone, setEditingPhone] = useState('');
+  const [editingTimezone, setEditingTimezone] = useState('');
+  const refresh = () => { void client.invalidateQueries({ queryKey: ['locations'] }); };
+  const create = useMutation({ mutationFn: () => saveLocation({ name, address: address || undefined, phone: phone || undefined, timezone: timezone || undefined }), onSuccess: () => { setName(''); setAddress(''); setPhone(''); setTimezone(''); setMessage('Sediul a fost creat.'); refresh(); }, onError: error => setMessage(apiErrorMessage(error)) });
+  const toggle = useMutation({ mutationFn: (site: NonNullable<typeof query.data>[number]) => updateLocation(site.id, { name: site.name, address: site.address ?? undefined, phone: site.phone ?? undefined, timezone: site.timezone ?? undefined, is_active: !site.is_active }), onSuccess: refresh, onError: error => setMessage(apiErrorMessage(error)) });
+  const update = useMutation({ mutationFn: () => updateLocation(editingId, { name: editingName, address: editingAddress || undefined, phone: editingPhone || undefined, timezone: editingTimezone || undefined }), onSuccess: () => { setEditingId(''); setMessage('Datele sediului au fost actualizate.'); refresh(); }, onError: error => setMessage(apiErrorMessage(error)) });
+  return <section className="card"><h2>Sedii</h2><p className="muted">Sediul este un filtru și un context de lucru. În versiunea 1 nu schimbă permisiunile existente. Toate sediile folosesc fusul orar al clinicii.</p>
+    <form className="inline-form" onSubmit={event => { event.preventDefault(); create.mutate(); }}><input required aria-label="Numele sediului" placeholder="Numele sediului" value={name} onChange={event => setName(event.target.value)} /><input aria-label="Adresa sediului" placeholder="Adresă" value={address} onChange={event => setAddress(event.target.value)} /><input aria-label="Telefonul sediului" placeholder="Telefon" value={phone} onChange={event => setPhone(event.target.value)} /><input aria-label="Fusul orar al sediului" placeholder="Fus orar opțional" value={timezone} onChange={event => setTimezone(event.target.value)} /><button disabled={create.isPending}>Adaugă sediu</button></form>
+    {message && <p role="alert" className="notice-text">{message}</p>}{query.isError && <ErrorState error={query.error} />}
+    <div className="list">{query.data?.map(site => <article key={site.id}>{editingId === site.id ? <><input aria-label="Numele sediului" value={editingName} onChange={event => setEditingName(event.target.value)} /><input aria-label="Adresa sediului" value={editingAddress} onChange={event => setEditingAddress(event.target.value)} /><input aria-label="Telefonul sediului" value={editingPhone} onChange={event => setEditingPhone(event.target.value)} /><input aria-label="Fusul orar al sediului" placeholder="Fusul clinicii dacă rămâne gol" value={editingTimezone} onChange={event => setEditingTimezone(event.target.value)} /><button className="secondary" disabled={update.isPending} onClick={() => update.mutate()}>Salvează</button><button className="secondary" onClick={() => setEditingId('')}>Renunță</button></> : <><span><strong>{site.name}</strong>{site.address ? ` · ${site.address}` : ''} · {site.is_active ? 'Activ' : 'Arhivat'}</span><span><button className="secondary" onClick={() => { setEditingId(site.id); setEditingName(site.name); setEditingAddress(site.address ?? ''); setEditingPhone(site.phone ?? ''); setEditingTimezone(site.timezone ?? ''); }}>Editează</button><button className="secondary" disabled={toggle.isPending} onClick={() => toggle.mutate(site)}>{site.is_active ? 'Arhivează' : 'Reactivează'}</button></span></>}</article>)}</div>
+    <MyLocationSettings />
+  </section>;
+}
+
+function MyLocationSettings() {
+  const client = useQueryClient();
+  const locations = useQuery({ queryKey: ['locations'], queryFn: listLocations });
+  const preferences = useQuery({ queryKey: ['location-preferences'], queryFn: getLocationPreferences });
+  const [allLocations, setAllLocations] = useState(true);
+  const [locationIds, setLocationIds] = useState<string[]>([]);
+  const [defaultLocationId, setDefaultLocationId] = useState('');
+  useEffect(() => { if (preferences.data) { setAllLocations(preferences.data.all_locations); setLocationIds(preferences.data.location_ids); setDefaultLocationId(preferences.data.default_location_id ?? ''); } }, [preferences.data]);
+  const save = useMutation({ mutationFn: () => saveLocationPreferences({ all_locations: allLocations, location_ids: allLocations ? [] : locationIds, default_location_id: defaultLocationId }), onSuccess: value => client.setQueryData(['location-preferences'], value) });
+  const active = locations.data?.filter(site => site.is_active) ?? [];
+  const options = allLocations ? active : active.filter(site => locationIds.includes(site.id));
+  return <section className="card"><h3>Sediile mele de lucru</h3><p className="muted">Aceste preferințe controlează contextul inițial și filtrele afișate, nu permisiunile asupra datelor.</p>
+    <label><input type="checkbox" checked={allLocations} onChange={event => { const enabled = event.target.checked; setAllLocations(enabled); if (!enabled && !locationIds.length && active[0]) { setLocationIds([active[0].id]); setDefaultLocationId(active[0].id); } }} />Lucrez în toate sediile</label>
+    {!allLocations && active.map(site => <label key={site.id}><input type="checkbox" checked={locationIds.includes(site.id)} onChange={event => setLocationIds(current => event.target.checked ? [...new Set([...current, site.id])] : current.filter(id => id !== site.id))} />{site.name}</label>)}
+    <label>Sediu implicit<select value={defaultLocationId} onChange={event => setDefaultLocationId(event.target.value)}>{options.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
+    <button disabled={save.isPending || !defaultLocationId || (!allLocations && !locationIds.includes(defaultLocationId))} onClick={() => save.mutate()}>Salvează preferințele</button>
+    {save.isError && <ErrorState error={save.error} />}
+  </section>;
+}
+
 function Setup({ user }: { user: User }) {
   const rooms = useQuery({ queryKey: ['rooms'], queryFn: listRooms });
   return <>
     <header><div><p className="eyebrow">FIRST-RUN SETUP</p><h1>Clinic setup</h1></div></header>
     <ClinicSettings />
+    <ClinicLocations />
     <AvailabilitySettings />
     <Rooms />
     <FormTemplateEditor />

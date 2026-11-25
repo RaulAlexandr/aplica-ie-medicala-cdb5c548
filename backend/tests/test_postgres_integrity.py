@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth.service import hash_password
 from app.database import Appointment, Room, User, get_db
+from app.locations.models import ClinicLocation
 from app.main import app
 from tests.alembic_helpers import configured_alembic_head
 
@@ -61,7 +62,8 @@ async def create_resources(client: AsyncClient, sessions: async_sessionmaker):
             User(clinic_id=manager["clinic_id"], full_name=f"Assistant {index}", email=f"assistant-{uuid4().hex}@example.com", password_hash=hash_password("correct horse battery staple"), role="assistant", is_active=True)
             for index in range(2)
         ]
-        rooms = [Room(clinic_id=manager["clinic_id"], name=f"Room {index}", is_active=True) for index in range(6)]
+        location = await session.scalar(select(ClinicLocation).where(ClinicLocation.clinic_id == manager["clinic_id"]).order_by(ClinicLocation.created_at).limit(1))
+        rooms = [Room(clinic_id=manager["clinic_id"], location_id=location.id, name=f"Room {index}", is_active=True) for index in range(6)]
         session.add_all(users + assistants + rooms)
         await session.commit()
         for entity in users + assistants + rooms:

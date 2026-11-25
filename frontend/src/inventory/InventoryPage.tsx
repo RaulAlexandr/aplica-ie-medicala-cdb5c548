@@ -1,6 +1,7 @@
-import { FormEvent, useRef, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiErrorMessage, getClinic } from '../api/client';
+import * as clientApi from '../api/client';
+import * as inventoryApi from './api';
 import { addInventoryItem, addInventoryLocation, addInventoryLot, addInventoryMovement, inventoryHistory, inventoryOverview, reverseInventoryMovement, updateInventoryItem, updateInventoryLocation } from './api';
 
 const managers=['clinic_manager','administrator'];
@@ -9,16 +10,23 @@ const newId=()=>crypto.randomUUID();
 // A new error can land below the fold (the form is often at the bottom of the screen), so bring it into view.
 const revealError=(el:HTMLElement|null)=>el?.scrollIntoView?.({block:'nearest'});
 const movementLabels:Record<string,string>={receipt:'Recepție',consumption:'Consum',transfer_in:'Transfer primit',transfer_out:'Transfer expediat',adjustment_in:'Ajustare — adăugare',adjustment_out:'Ajustare — scădere',reversal_in:'Corecție — adăugare',reversal_out:'Corecție — scădere'};
+const listClinicLocations=()=>clientApi.listLocations?.()??Promise.resolve([]);
+const getLocationPreferences=()=>clientApi.getLocationPreferences?.()??Promise.resolve({default_location_id:null,all_locations:true,location_ids:[]});
 export function InventoryPage({role}:{role:string}) {
-  const client=useQueryClient(), view=useQuery({queryKey:['inventory'],queryFn:inventoryOverview}), clinic=useQuery({queryKey:['clinic'],queryFn:getClinic});
+  const client=useQueryClient();
+  const [siteId,setSiteId]=useState('');
+  const clinicSites=useQuery({queryKey:['locations'],queryFn:listClinicLocations});
+  const sitePreferences=useQuery({queryKey:['location-preferences'],queryFn:getLocationPreferences});
+  const view=useQuery({queryKey:['inventory',siteId],queryFn:()=>siteId?(inventoryApi.inventoryOverviewAtSite?.(siteId)??inventoryOverview()):inventoryOverview()}), clinic=useQuery({queryKey:['clinic'],queryFn:clientApi.getClinic});
+  useEffect(()=>{if(sitePreferences.data?.default_location_id)setSiteId(current=>current||sitePreferences.data!.default_location_id!);},[sitePreferences.data]);
   const [message,setMessage]=useState(''),[messageScope,setMessageScope]=useState(''),[formError,setFormError]=useState<{scope:string;text:string}|null>(null),[itemName,setItemName]=useState(''),[unit,setUnit]=useState(''),[minimum,setMinimum]=useState('0'),[locationName,setLocationName]=useState(''),[lotItem,setLotItem]=useState(''),[lotCode,setLotCode]=useState(''),[expiry,setExpiry]=useState(''),[kind,setKind]=useState('consumption'),[itemId,setItemId]=useState(''),[lotId,setLotId]=useState(''),[locationId,setLocationId]=useState(''),[destination,setDestination]=useState(''),[quantity,setQuantity]=useState('1'),[reason,setReason]=useState(''),[direction,setDirection]=useState('increase'),[filter,setFilter]=useState('all'),[historyItem,setHistoryItem]=useState(''),[historyLot,setHistoryLot]=useState(''),[historyLocation,setHistoryLocation]=useState(''),[historyKind,setHistoryKind]=useState('');
   const history=useQuery({queryKey:['inventory-history',historyItem,historyLot,historyLocation,historyKind],queryFn:()=>inventoryHistory({item_id:historyItem||undefined,lot_id:historyLot||undefined,location_id:historyLocation||undefined,kind:historyKind||undefined})});
   const movementRequestId=useRef(newId()),movementBusy=useRef(false),reverseRequests=useRef(new Map<string,{requestId:string;reason:string}>()),reverseBusy=useRef(new Set<string>());
   const changed=(success='Mișcarea a fost salvată.',scope='global')=>{setFormError(null);void client.invalidateQueries({queryKey:['inventory']});void client.invalidateQueries({queryKey:['inventory-history']});setMessage(success);setMessageScope(scope);};
-  const fail=(scope:string)=>(e:unknown)=>{setMessage('');setMessageScope('');setFormError({scope,text:apiErrorMessage(e)});};
+  const fail=(scope:string)=>(e:unknown)=>{setMessage('');setMessageScope('');setFormError({scope,text:clientApi.apiErrorMessage(e)});};
   const errorAt=(scope:string)=>formError?.scope===scope?<p role="alert" className="error" ref={revealError}>{formError.text}</p>:null;
   const itemMutation=useMutation({mutationFn:()=>addInventoryItem({name:itemName,unit,minimum_quantity:minimum}),onSuccess:()=>{changed('Articolul a fost adăugat.');setItemName('');setUnit('');},onError:fail('item')});
-  const locationMutation=useMutation({mutationFn:()=>addInventoryLocation({name:locationName}),onSuccess:()=>{changed('Locația a fost adăugată.');setLocationName('');},onError:fail('location')});
+  const locationMutation=useMutation({mutationFn:()=>addInventoryLocation({name:locationName,site_id:siteId||null}),onSuccess:()=>{changed('Locația a fost adăugată.');setLocationName('');},onError:fail('location')});
   const lotMutation=useMutation({mutationFn:()=>addInventoryLot({item_id:lotItem,code:lotCode,expires_on:expiry||null}),onSuccess:()=>{changed('Lotul a fost adăugat.');setLotCode('');},onError:fail('lot')});
   const toggleItem=useMutation({mutationFn:(x:{id:string;name:string;unit:string;minimum_quantity:string;is_active:boolean})=>updateInventoryItem(x.id,{name:x.name,unit:x.unit,minimum_quantity:x.minimum_quantity,is_active:!x.is_active}),onSuccess:()=>changed('Articolul a fost actualizat.'),onError:fail('list')});
   const toggleLocation=useMutation({mutationFn:(x:{id:string;name:string;is_active:boolean})=>updateInventoryLocation(x.id,{name:x.name,is_active:!x.is_active}),onSuccess:()=>changed('Locația a fost actualizată.'),onError:fail('list')});
@@ -31,7 +39,7 @@ export function InventoryPage({role}:{role:string}) {
   function submit(e:FormEvent,fn:()=>void){e.preventDefault();setMessage('');setMessageScope('');setFormError(null);fn();}
   function movementField<T>(setter:(value:T)=>void,value:T){setter(value);movementRequestId.current=newId();}
   return <section className="inventory-page">
-    <header><div><p className="eyebrow">GESTIONAREA MATERIALELOR</p><h1>Stocuri</h1></div><button className="secondary" onClick={()=>{void view.refetch();void history.refetch();}}>Reîmprospătează</button></header>
+    <header><div><p className="eyebrow">GESTIONAREA MATERIALELOR</p><h1>Stocuri</h1></div><label>Sediu<select aria-label="Sediu stocuri" value={siteId} onChange={e=>setSiteId(e.target.value)}><option value="">Toate sediile</option>{clinicSites.data?.filter(site=>site.is_active&&(sitePreferences.data?.all_locations!==false||sitePreferences.data.location_ids.includes(site.id))).map(site=><option key={site.id} value={site.id}>{site.name}</option>)}</select></label><button className="secondary" onClick={()=>{void view.refetch();void history.refetch();}}>Reîmprospătează</button></header>
     {message&&messageScope!=='movement'&&<p role="status" className="notice-text">{message}</p>}{(view.isError||history.isError)&&<p className="error" role="alert">Nu s-au putut încărca stocurile.</p>}
     <section className="card"><h2>Solduri</h2><label>Filtru<select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">Toate</option><option value="low">Sub prag</option><option value="expired">Loturi expirate</option><option value="soon">Expiră în 30 de zile</option></select></label>
       {isManager&&view.data?.items.map(x=><article className="list-row" key={x.id}><span>{x.name} · {x.unit} · prag {x.minimum_quantity} · sold total {x.quantity_total} · {x.is_active?'Activ':'Inactiv'}</span><span></span><span></span><button className="secondary" onClick={()=>toggleItem.mutate(x)}>{x.is_active?'Dezactivează':'Activează'}</button></article>)}
@@ -43,7 +51,7 @@ export function InventoryPage({role}:{role:string}) {
     </section>
     {isManager&&<section className="grid two">
       <form className="card" onSubmit={e=>submit(e,()=>itemMutation.mutate())}><h2>Articol nou</h2><label>Denumire<input required value={itemName} onChange={e=>setItemName(e.target.value)}/></label><label>Unitate<input required value={unit} onChange={e=>setUnit(e.target.value)}/></label><label>Prag minim<input type="number" min="0" step="0.001" required value={minimum} onChange={e=>setMinimum(e.target.value)}/></label>{errorAt('item')}<button>Adaugă articol</button></form>
-      <form className="card" onSubmit={e=>submit(e,()=>locationMutation.mutate())}><h2>Locație nouă</h2><label>Denumire<input required value={locationName} onChange={e=>setLocationName(e.target.value)}/></label>{errorAt('location')}<button>Adaugă locație</button></form>
+      <form className="card" onSubmit={e=>submit(e,()=>locationMutation.mutate())}><h2>Locație nouă</h2><label>Denumire<input required value={locationName} onChange={e=>setLocationName(e.target.value)}/></label><label>Sediu opțional<select value={siteId} onChange={e=>setSiteId(e.target.value)}><option value="">Fără sediu</option>{clinicSites.data?.filter(site=>site.is_active).map(site=><option key={site.id} value={site.id}>{site.name}</option>)}</select></label>{errorAt('location')}<button>Adaugă locație</button></form>
       <form className="card" onSubmit={e=>submit(e,()=>lotMutation.mutate())}><h2>Lot nou</h2><label>Articol<select required value={lotItem} onChange={e=>setLotItem(e.target.value)}><option value="">Alege articolul</option>{view.data?.items.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></label><label>Cod lot<input required value={lotCode} onChange={e=>setLotCode(e.target.value)}/></label><label>Data expirării<input type="date" value={expiry} onChange={e=>setExpiry(e.target.value)}/></label>{errorAt('lot')}<button>Adaugă lot</button></form>
     </section>}
     {canWork&&<form className="card" onSubmit={e=>submit(e,()=>{if(movementBusy.current||!quantity||Number(quantity)<=0)return;movementBusy.current=true;movement.mutate({kind,payload:{item_id:itemId,lot_id:lotId,location_id:locationId,destination_location_id:kind==='transfer'?destination:null,quantity,reason,direction},requestId:movementRequestId.current});})}><h2>Înregistrează mișcare</h2><div className="grid two"><label>Operație<select value={kind} onChange={e=>movementField(setKind,e.target.value)}>{(isManager?['consumption','receipt','transfer','adjustment']:['consumption']).map(x=><option key={x} value={x}>{({consumption:'Consum',receipt:'Recepție',transfer:'Transfer',adjustment:'Ajustare'})[x]}</option>)}</select></label>

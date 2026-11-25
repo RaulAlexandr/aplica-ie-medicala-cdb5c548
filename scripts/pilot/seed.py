@@ -37,6 +37,8 @@ from app.database import (
     Room,
     SessionLocal,
 )
+from app.locations.models import ClinicLocation
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.compiler import compiles
@@ -128,12 +130,23 @@ async def seed_records(clinic_id: UUID, doctor_id: UUID) -> None:
         if clinic is None:
             raise RuntimeError("Clinica managerului nu există în baza indicată.")
         clinic.timezone = "Europe/Bucharest"
+        principal_id = await session.scalar(
+            select(ClinicLocation.id)
+            .where(ClinicLocation.clinic_id == clinic_id, ClinicLocation.is_active.is_(True))
+            .order_by(ClinicLocation.created_at)
+            .limit(1)
+        )
+        if principal_id is None:
+            principal = ClinicLocation(clinic_id=clinic_id, name="Principal")
+            session.add(principal)
+            await session.flush()
+            principal_id = principal.id
 
         for name in ("Cabinet Demo 1", "Cabinet Demo 2"):
             room_id = stable_id("room:" + name)
             if await session.get(Room, room_id) is None:
                 session.add(
-                    Room(id=room_id, clinic_id=clinic_id, name=name, is_active=True)
+                    Room(id=room_id, clinic_id=clinic_id, location_id=principal_id, name=name, is_active=True)
                 )
 
         patient_specs = [

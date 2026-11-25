@@ -107,6 +107,8 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
     clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    default_location_id: Mapped[UUID | None] = mapped_column(ForeignKey("clinic_locations.id", ondelete="RESTRICT"))
+    all_locations: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -149,6 +151,7 @@ class Room(Base):
     __tablename__ = "rooms"
     id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
     clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    location_id: Mapped[UUID] = mapped_column(ForeignKey("clinic_locations.id", ondelete="RESTRICT"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     clinic: Mapped[Clinic] = relationship(back_populates="rooms")

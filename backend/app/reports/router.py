@@ -9,7 +9,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, exists, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -53,8 +53,8 @@ def _local_time(value: datetime, zone: ZoneInfo) -> str:
 
 async def _scope(
     db: AsyncSession, clinic_id: UUID, start: date, end: date,
-    doctor_id: UUID | None, room_id: UUID | None,
-) -> tuple[Clinic, ZoneInfo, datetime, datetime]:
+    doctor_id: UUID | None, room_id: UUID | None, site_id: UUID | None,
+) -> tuple[Clinic, ZoneInfo, datetime, datetime, list[UUID] | None]:
     if end < start or (end - start).days + 1 > 366:
         raise HTTPException(422, "Period must be 1 to 366 inclusive calendar days")
     clinic = await db.get(Clinic, clinic_id)
@@ -69,9 +69,16 @@ async def _scope(
         room = await db.scalar(select(Room).where(Room.id == room_id, Room.clinic_id == clinic_id))
         if room is None:
             raise HTTPException(404, "Room not found")
+    site_room_ids = None
+    if site_id is not None:
+        from app.locations.models import ClinicLocation
+        site = await db.scalar(select(ClinicLocation.id).where(ClinicLocation.id == site_id, ClinicLocation.clinic_id == clinic_id))
+        if site is None:
+            raise HTTPException(404, "Location not found")
+        site_room_ids = list((await db.scalars(select(Room.id).where(Room.clinic_id == clinic_id, Room.location_id == site_id))).all())
     lower = datetime.combine(start, time.min, zone).astimezone(ZoneInfo("UTC"))
     upper = datetime.combine(end + timedelta(days=1), time.min, zone).astimezone(ZoneInfo("UTC"))
-    return clinic, zone, lower, upper
+    return clinic, zone, lower, upper, site_room_ids
 
 
 def _metric_definition(key: str) -> tuple[str, str, str]:
@@ -102,6 +109,7 @@ def _metric_definition(key: str) -> tuple[str, str, str]:
 async def _records(
     key: str, db: AsyncSession, clinic_id: UUID, lower: datetime, upper: datetime,
     zone: ZoneInfo, doctor_id: UUID | None, room_id: UUID | None,
+    site_id: UUID | None = None, site_room_ids: list[UUID] | None = None,
 ) -> tuple[list[dict[str, Any]], Any, str | None]:
     if key == "consumptions":
         correction = aliased(InventoryMovement)
@@ -143,6 +151,8 @@ async def _records(
             query = query.where(MaterialConsumptionLine.id.is_not(None), Appointment.doctor_id == doctor_id)
         if room_id is not None:
             query = query.where(MaterialConsumptionLine.id.is_not(None), Appointment.room_id == room_id)
+        if site_id is not None:
+            query = query.where(or_(InventoryLocation.site_id == site_id, Appointment.room_id.in_(site_room_ids or [])))
         rows = list((await db.execute(query.order_by(InventoryMovement.created_at, InventoryMovement.id))).all())
         records: list[dict[str, Any]] = []
         grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
@@ -194,6 +204,8 @@ async def _records(
             query = query.where(Appointment.doctor_id == doctor_id)
         if room_id:
             query = query.where(Appointment.room_id == room_id)
+        if site_id is not None:
+            query = query.where(Appointment.room_id.in_(site_room_ids or []))
         rows = list((await db.execute(query.order_by(Appointment.starts_at, Appointment.id))).all())
         records = [{"id": str(a.id), "entity": "appointment", "date": _local_time(a.starts_at, zone), "status": a.status,
                     "amount": None, "patient_name": f"{p.first_name} {p.last_name}"} for a, p in rows]
@@ -266,6 +278,7 @@ async def _records(
         )
         if doctor_id: query = query.where(Appointment.doctor_id == doctor_id)
         if room_id: query = query.where(Appointment.room_id == room_id)
+        if site_id is not None: query = query.where(Appointment.room_id.in_(site_room_ids or []))
         rows = list((await db.execute(query.order_by(Appointment.starts_at, PerformedProcedure.id))).all())
         records = []
         for procedure, appointment, patient in rows:
@@ -298,10 +311,11 @@ async def _records(
             PatientFinancialEntry.clinic_id == clinic_id, PatientFinancialEntry.created_at >= lower,
             PatientFinancialEntry.created_at < upper,
         )
-        if doctor_id or room_id:
+        if doctor_id or room_id or site_id:
             appointment_query = select(Appointment.id).where(Appointment.clinic_id == clinic_id)
             if doctor_id: appointment_query = appointment_query.where(Appointment.doctor_id == doctor_id)
             if room_id: appointment_query = appointment_query.where(Appointment.room_id == room_id)
+            if site_id is not None: appointment_query = appointment_query.where(Appointment.room_id.in_(site_room_ids or []))
             query = query.where(PatientFinancialEntry.appointment_id.in_(appointment_query))
         rows = list((await db.execute(query.order_by(PatientFinancialEntry.created_at, PatientFinancialEntry.id))).all())
         records = [{"id": str(e.id), "entity": "patient_financial_entry", "date": _local_time(e.created_at, zone), "status": e.kind,
@@ -379,7 +393,8 @@ async def _records(
         ))).all())
         rows = [(item, plan, patient, appointment) for item, plan, patient, appointment in rows if plan.id in accepted
                 and (doctor_id is None or plan.created_by_id == doctor_id)
-                and (room_id is None or (appointment is not None and appointment.room_id == room_id))]
+                and (room_id is None or (appointment is not None and appointment.room_id == room_id))
+                and (site_id is None or (appointment is not None and appointment.room_id in (site_room_ids or [])))]
         cutoff = upper.astimezone(zone).date() - timedelta(days=1)
         records = [{"id": str(item.id), "entity": "treatment_plan_item", "date": _local_time(item.created_at, zone), "status": item.status,
                     "amount": None, "patient_name": f"{patient.first_name} {patient.last_name}",
@@ -392,45 +407,47 @@ async def _records(
 
 async def _report(
     indicator: str, start: date, end: date, doctor_id: UUID | None,
-    room_id: UUID | None, db: AsyncSession, user: User,
+    room_id: UUID | None, site_id: UUID | None, db: AsyncSession, user: User,
 ) -> dict[str, Any]:
     if indicator not in INDICATORS:
         raise HTTPException(404, "Report indicator not found")
-    clinic, zone, lower, upper = await _scope(db, user.clinic_id, start, end, doctor_id, room_id)
-    _records_result, value, reason = await _records(indicator, db, user.clinic_id, lower, upper, zone, doctor_id, room_id)
+    clinic, zone, lower, upper, site_room_ids = await _scope(db, user.clinic_id, start, end, doctor_id, room_id, site_id)
+    _records_result, value, reason = await _records(indicator, db, user.clinic_id, lower, upper, zone, doctor_id, room_id, site_id, site_room_ids)
     definition, unit, source = _metric_definition(indicator)
-    if indicator == "consumptions" and (doctor_id is not None or room_id is not None):
+    if indicator == "consumptions" and (doctor_id is not None or room_id is not None or site_id is not None):
         definition += " Consumul direct nu poate fi atribuit; cu filtre de medic sau cabinet este exclus."
     return {"indicator": indicator, "value": value, "unit": unit, "definition": definition,
             "period": {"from": start.isoformat(), "to": end.isoformat(), "timezone": clinic.timezone,
                        "semantics": "local calendar days, inclusive"},
-            "filters": {"doctor_id": str(doctor_id) if doctor_id else None, "room_id": str(room_id) if room_id else None},
+            "filters": {"doctor_id": str(doctor_id) if doctor_id else None, "room_id": str(room_id) if room_id else None,
+                        **({"site_id": str(site_id)} if site_id else {})},
             "source": source, "undefined_reason": reason,
             "records_url": f"/api/reports/{indicator}/records?from={start.isoformat()}&to={end.isoformat()}"
                 + (f"&doctor_id={doctor_id}" if doctor_id else "")
-                + (f"&room_id={room_id}" if room_id else "")}
+                + (f"&room_id={room_id}" if room_id else "")
+                + (f"&site_id={site_id}" if site_id else "")}
 
 
 @router.get("/{indicator}")
 async def get_report(
     indicator: str, start: date = Query(alias="from"), end: date = Query(alias="to"),
-    doctor_id: UUID | None = None, room_id: UUID | None = None,
+    doctor_id: UUID | None = None, room_id: UUID | None = None, site_id: UUID | None = None,
     db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*REPORT_ROLES)),
 ) -> dict[str, Any]:
-    return await _report(indicator, start, end, doctor_id, room_id, db, user)
+    return await _report(indicator, start, end, doctor_id, room_id, site_id, db, user)
 
 
 @router.get("/{indicator}/records")
 async def get_report_records(
     indicator: str, start: date = Query(alias="from"), end: date = Query(alias="to"),
-    doctor_id: UUID | None = None, room_id: UUID | None = None,
+    doctor_id: UUID | None = None, room_id: UUID | None = None, site_id: UUID | None = None,
     limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*REPORT_ROLES)),
 ) -> dict[str, Any]:
     if indicator not in INDICATORS:
         raise HTTPException(404, "Report indicator not found")
-    clinic, zone, lower, upper = await _scope(db, user.clinic_id, start, end, doctor_id, room_id)
-    records, _value, _reason = await _records(indicator, db, user.clinic_id, lower, upper, zone, doctor_id, room_id)
+    clinic, zone, lower, upper, site_room_ids = await _scope(db, user.clinic_id, start, end, doctor_id, room_id, site_id)
+    records, _value, _reason = await _records(indicator, db, user.clinic_id, lower, upper, zone, doctor_id, room_id, site_id, site_room_ids)
     return {"indicator": indicator, "period": {"from": start.isoformat(), "to": end.isoformat(),
             "timezone": clinic.timezone, "semantics": "local calendar days, inclusive"}, "total": len(records),
             "limit": limit, "offset": offset, "records": records[offset:offset + limit]}

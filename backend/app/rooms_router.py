@@ -16,11 +16,13 @@ ACTIVE_APPOINTMENT_STATUSES = ("scheduled", "confirmed", "arrived", "in_progress
 
 class RoomCreate(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+    location_id: UUID | None = None
 
 
 class RoomUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=80)
     is_active: bool | None = None
+    location_id: UUID | None = None
 
 
 class RoomResponse(BaseModel):
@@ -28,6 +30,7 @@ class RoomResponse(BaseModel):
     clinic_id: UUID
     name: str
     is_active: bool
+    location_id: UUID
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -48,7 +51,14 @@ async def create_room(payload: RoomCreate, db: AsyncSession = Depends(get_db), u
         raise HTTPException(422, "Room name cannot be empty")
     if await db.scalar(select(Room.id).where(Room.clinic_id == user.clinic_id, func.lower(Room.name) == name.lower())):
         raise HTTPException(409, "Room name already exists")
-    room = Room(clinic_id=user.clinic_id, name=name)
+    from app.locations.models import ClinicLocation
+    active_locations = list((await db.scalars(select(ClinicLocation.id).where(ClinicLocation.clinic_id == user.clinic_id, ClinicLocation.is_active.is_(True)).order_by(ClinicLocation.created_at))).all())
+    if payload.location_id is None and len(active_locations) > 1:
+        raise HTTPException(422, "Alege sediul cabinetului")
+    location_id = payload.location_id or (active_locations[0] if active_locations else None)
+    if not location_id or not await db.scalar(select(ClinicLocation.id).where(ClinicLocation.id == location_id, ClinicLocation.clinic_id == user.clinic_id, ClinicLocation.is_active.is_(True))):
+        raise HTTPException(422, "Alege un sediu activ al clinicii")
+    room = Room(clinic_id=user.clinic_id, name=name, location_id=location_id)
     db.add(room)
     try:
         await db.flush()
@@ -66,6 +76,14 @@ async def update_room(room_id: UUID, payload: RoomUpdate, db: AsyncSession = Dep
     room = await db.scalar(select(Room).where(Room.id == room_id, Room.clinic_id == user.clinic_id).with_for_update())
     if not room:
         raise HTTPException(404, "Room not found")
+    if payload.location_id is not None and payload.location_id != room.location_id:
+        future = await db.scalar(select(Appointment.id).where(Appointment.clinic_id == user.clinic_id, Appointment.room_id == room.id, Appointment.starts_at > utcnow(), Appointment.status.in_(ACTIVE_APPOINTMENT_STATUSES)).limit(1))
+        if future:
+            raise HTTPException(409, "Cabinetul nu poate fi mutat deoarece are programări viitoare")
+        from app.locations.models import ClinicLocation
+        if not await db.scalar(select(ClinicLocation.id).where(ClinicLocation.id == payload.location_id, ClinicLocation.clinic_id == user.clinic_id, ClinicLocation.is_active.is_(True))):
+            raise HTTPException(422, "Sediul nu este activ sau nu aparține clinicii")
+        room.location_id = payload.location_id
     if payload.name is not None:
         name = payload.name.strip()
         if not name:

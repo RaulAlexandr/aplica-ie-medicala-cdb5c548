@@ -8,6 +8,7 @@ export type Movement = { id:string; item_id:string; item:string; lot_id:string; 
 export type MovementFilters = { item_id?:string; lot_id?:string; location_id?:string; kind?:string };
 export type Overview = { items:StockItem[]; locations:StockLocation[]; lots:StockLot[]; balances:Balance[] };
 export const inventoryOverview = async () => (await api.get<Overview>('/inventory')).data;
+export const inventoryOverviewAtSite = async (site_id:string) => (await api.get<Overview>('/inventory',{params:{site_id}})).data;
 export const inventoryHistory = async (filters:MovementFilters={}) => (await api.get<Movement[]>('/inventory/movements',{params:filters})).data;
 export const addInventoryItem = async (body:unknown) => api.post('/inventory/items',body);
 export const addInventoryLocation = async (body:unknown) => api.post('/inventory/locations',body);

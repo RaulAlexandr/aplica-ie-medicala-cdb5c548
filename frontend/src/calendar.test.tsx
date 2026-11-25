@@ -56,8 +56,12 @@ async function renderCalendar(): Promise<TestRenderer.ReactTestRenderer> {
   vi.spyOn(appointmentProceduresApi, 'getAppointmentProcedures').mockResolvedValue({ appointment_id: 'appointment-1', revision: 0, procedures: [] });
   vi.spyOn(client, 'listProcedures').mockResolvedValue([]);
   vi.spyOn(client, 'getClinic').mockResolvedValue({ timezone: 'Europe/Bucharest' } as never);
+  vi.spyOn(client, 'listLocations').mockResolvedValue([{ id: 'site-principal', clinic_id: 'clinic', name: 'Principal', address: null, phone: null, timezone: null, is_active: true }]);
+  vi.spyOn(client, 'getLocationPreferences').mockResolvedValue({ default_location_id: 'site-principal', all_locations: true, location_ids: [] });
+  vi.spyOn(client, 'saveLocationPreferences').mockImplementation(async input => input);
   vi.spyOn(client, 'listAppointments').mockResolvedValue([appointment, appointmentB]);
-  vi.spyOn(client, 'listRooms').mockResolvedValue([{ id: 'room', clinic_id: 'clinic', name: 'Room', is_active: true }]);
+  vi.spyOn(client, 'listRooms').mockResolvedValue([{ id: 'room', clinic_id: 'clinic', name: 'Room', is_active: true, location_id: 'site-principal' }]);
+  vi.spyOn(client, 'listRoomsAtLocation').mockResolvedValue([{ id: 'room', clinic_id: 'clinic', name: 'Room', is_active: true, location_id: 'site-principal' }]);
   vi.spyOn(client, 'listDoctors').mockResolvedValue([{ id: 'doctor', full_name: 'Doctor', role: 'doctor' }]);
   vi.spyOn(client, 'listStaff').mockResolvedValue([]);
   vi.spyOn(client, 'listPatients').mockResolvedValue([patient, patientB]);
@@ -75,6 +79,15 @@ async function renderCalendar(): Promise<TestRenderer.ReactTestRenderer> {
 }
 
 describe('calendar selection state', () => {
+  it("starts on the user's default site and exposes the all-sites choice", async () => {
+    const renderer = await renderCalendar();
+    const selector = renderer.root.findByProps({ 'aria-label': 'Sediu' });
+    expect(selector.props.value).toBe('site-principal');
+    expect(selector.findAllByType('option').map(option => text(option))).toContain('Toate sediile');
+    expect(vi.mocked(client.listAppointments).mock.calls.some(([filters]) => filters?.location_id === 'site-principal')).toBe(true);
+    renderer.unmount();
+  });
+
   it('does not carry unsaved edit values from appointment A into B', async () => {
     const update = vi.spyOn(client, 'updateAppointment').mockResolvedValue(appointmentB);
     const renderer = await renderCalendar();

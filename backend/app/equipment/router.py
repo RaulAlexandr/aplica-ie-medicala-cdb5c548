@@ -29,6 +29,7 @@ from app.equipment.models import (
     EquipmentDocument,
     EquipmentUnavailability,
 )
+from app.locations.models import ClinicLocation
 
 router = APIRouter(prefix="/equipment", tags=["equipment"])
 MANAGERS = ("clinic_manager", "administrator")
@@ -51,6 +52,7 @@ class EquipmentInput(BaseModel):
     equipment_type: str = Field(min_length=1, max_length=100)
     serial_number: str | None = Field(default=None, max_length=120)
     room_id: UUID | None = None
+    location_id: UUID | None = None
     responsible_id: UUID
     state: str = "available"
     is_active: bool = True
@@ -210,9 +212,14 @@ async def create_equipment(payload: EquipmentInput, db: AsyncSession = Depends(g
         raise HTTPException(422, "Stare neacceptată")
     if payload.room_id and not await db.scalar(select(Room.id).where(Room.id == payload.room_id, Room.clinic_id == user.clinic_id)):
         raise HTTPException(404, "Cabinet inexistent")
+    location_id = payload.location_id
+    if location_id is not None and not await db.scalar(select(ClinicLocation.id).where(ClinicLocation.id == location_id, ClinicLocation.clinic_id == user.clinic_id, ClinicLocation.is_active.is_(True))):
+        raise HTTPException(404, "Sediu inexistent")
+    if location_id is None and payload.room_id:
+        location_id = await db.scalar(select(Room.location_id).where(Room.id == payload.room_id, Room.clinic_id == user.clinic_id))
     if not await db.scalar(select(User.id).where(User.id == payload.responsible_id, User.clinic_id == user.clinic_id)):
         raise HTTPException(404, "Responsabil inexistent")
-    value = Equipment(clinic_id=user.clinic_id, created_by_id=user.id, **payload.model_dump())
+    value = Equipment(clinic_id=user.clinic_id, created_by_id=user.id, **(payload.model_dump() | {"location_id": location_id}))
     db.add(value); await db.commit(); await db.refresh(value)
     return _json(value)
 
@@ -224,10 +231,14 @@ async def update_equipment(equipment_id: UUID, payload: EquipmentInput, db: Asyn
         raise HTTPException(422, "Stare neacceptată")
     if payload.room_id and not await db.scalar(select(Room.id).where(Room.id == payload.room_id, Room.clinic_id == user.clinic_id)):
         raise HTTPException(404, "Cabinet inexistent")
+    if payload.location_id is not None and not await db.scalar(select(ClinicLocation.id).where(ClinicLocation.id == payload.location_id, ClinicLocation.clinic_id == user.clinic_id, ClinicLocation.is_active.is_(True))):
+        raise HTTPException(404, "Sediu inexistent")
     if not await db.scalar(select(User.id).where(User.id == payload.responsible_id, User.clinic_id == user.clinic_id)):
         raise HTTPException(404, "Responsabil inexistent")
     for key, item in payload.model_dump().items():
         setattr(value, key, item)
+    if payload.location_id is None and payload.room_id:
+        value.location_id = await db.scalar(select(Room.location_id).where(Room.id == payload.room_id, Room.clinic_id == user.clinic_id))
     value.updated_at = utcnow(); await db.commit(); await db.refresh(value)
     now = utcnow()
     open_outage_id = await db.scalar(select(EquipmentUnavailability.id).where(

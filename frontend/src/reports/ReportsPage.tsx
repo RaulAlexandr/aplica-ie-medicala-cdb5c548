@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { apiErrorMessage } from '../api/client';
+import { useEffect, useState } from 'react';
+import { apiErrorMessage, ClinicLocation, getLocationPreferences, LocationPreferences, listLocations } from '../api/client';
 import { getReport, getReportRecords, ReportResult } from './api';
 import './reports.css';
 
@@ -30,10 +30,22 @@ export function ReportsPage() {
   const [to, setTo] = useState(today());
   const [doctorId, setDoctorId] = useState('');
   const [roomId, setRoomId] = useState('');
+  const [siteId, setSiteId] = useState('');
+  const [sites, setSites] = useState<ClinicLocation[]>([]);
+  const [sitePreferences, setSitePreferences] = useState<LocationPreferences | null>(null);
   const [results, setResults] = useState<ReportResult[]>([]);
   const [records, setRecords] = useState<Record<string, Awaited<ReturnType<typeof getReportRecords>>>>({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void Promise.all([listLocations(), getLocationPreferences()]).then(([locations, preferences]) => {
+      if (!live) return;
+      setSites(locations); setSitePreferences(preferences);
+      if (preferences.default_location_id) setSiteId(current => current || preferences.default_location_id!);
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, []);
 
   async function loadReports() {
     const start = Date.parse(`${from}T00:00:00Z`);
@@ -44,7 +56,7 @@ export function ReportsPage() {
     if (calendarDays > 366) { setError('Perioada trebuie să aibă între 1 și 366 de zile calendaristice.'); return; }
     setLoading(true); setError(''); setRecords({});
     try {
-      const filters = { ...(doctorId ? { doctor_id: doctorId } : {}), ...(roomId ? { room_id: roomId } : {}) };
+      const filters = { ...(doctorId ? { doctor_id: doctorId } : {}), ...(roomId ? { room_id: roomId } : {}), ...(siteId ? { site_id: siteId } : {}) };
       const next = await Promise.all(indicators.filter(key => key !== 'room_occupancy' || Boolean(roomId))
         .map(key => getReport(key, from, to, filters)));
       if (!roomId) {
@@ -53,7 +65,7 @@ export function ReportsPage() {
         next.splice(occupancyIndex, 0, {
           indicator: 'room_occupancy', value: { status: 'undefined', reason }, unit: 'minute și %',
           definition: 'Minute active programate / minute disponibile din WorkingHours pentru cabinet.',
-          period: next[0].period, filters: { doctor_id: doctorId || null, room_id: null },
+          period: next[0].period, filters: { doctor_id: doctorId || null, room_id: null, site_id: siteId || null },
           source: 'appointments, working_hours', undefined_reason: reason, records_url: '',
         });
       }
@@ -66,7 +78,7 @@ export function ReportsPage() {
     const indicator = report.indicator;
     if (records[indicator]) { setRecords(current => { const next = { ...current }; delete next[indicator]; return next; }); return; }
     try {
-      const filters = { ...(report.filters.doctor_id ? { doctor_id: report.filters.doctor_id } : {}), ...(report.filters.room_id ? { room_id: report.filters.room_id } : {}) };
+      const filters = { ...(report.filters.doctor_id ? { doctor_id: report.filters.doctor_id } : {}), ...(report.filters.room_id ? { room_id: report.filters.room_id } : {}), ...(report.filters.site_id ? { site_id: report.filters.site_id } : {}) };
       const result = await getReportRecords(indicator, report.period.from, report.period.to, filters);
       setRecords(current => ({ ...current, [indicator]: result }));
     }
@@ -80,6 +92,7 @@ export function ReportsPage() {
       <label>Până la<input type="date" aria-label="Până la" value={to} onChange={e => setTo(e.target.value)} /></label>
       <label>Medic (UUID opțional)<input aria-label="Medic" value={doctorId} onChange={e => setDoctorId(e.target.value)} /></label>
       <label>Cabinet (UUID; necesar pentru ocupare)<input aria-label="Cabinet" value={roomId} onChange={e => setRoomId(e.target.value)} /></label>
+      <label>Sediu<select aria-label="Sediu rapoarte" value={siteId} onChange={e => setSiteId(e.target.value)}><option value="">Toate sediile</option>{sites.filter(site => site.is_active && (sitePreferences?.all_locations !== false || sitePreferences?.location_ids.includes(site.id))).map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
       <button type="button" onClick={loadReports} disabled={loading || !from || !to}>{loading ? 'Se încarcă…' : 'Generează raportul'}</button>
     </div>
     <p className="reports-financial-note">Evidență internă, nu raport fiscal.</p>

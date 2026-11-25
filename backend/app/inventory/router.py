@@ -15,6 +15,7 @@ from sqlalchemy.orm import aliased
 from app.auth.service import require_roles
 from app.database import Clinic, User, get_db, utcnow
 from app.inventory.models import InventoryItem, InventoryLocation, InventoryLot, InventoryMovement
+from app.locations.models import ClinicLocation
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 READ = ("clinic_manager", "administrator", "doctor", "assistant", "reception")
@@ -38,6 +39,7 @@ class ItemIn(BaseModel):
 class LocationIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     is_active: bool = True
+    site_id: UUID | None = None
 
     @field_validator("name", mode="before")
     @classmethod
@@ -125,16 +127,22 @@ def _movement(clinic_id, user, item, lot, location, kind, quantity, req, signatu
         created_by_id=user.id,created_at=utcnow())
 
 @router.get("")
-async def overview(user: User=Depends(require_roles(*READ)),db: AsyncSession=Depends(get_db)):
+async def overview(site_id: UUID | None = None, user: User=Depends(require_roles(*READ)),db: AsyncSession=Depends(get_db)):
+    if site_id is not None and not await db.scalar(select(ClinicLocation.id).where(ClinicLocation.id==site_id,ClinicLocation.clinic_id==user.clinic_id)):
+        raise HTTPException(404,"Sediul nu există")
     items=(await db.scalars(select(InventoryItem).where(InventoryItem.clinic_id==user.clinic_id).order_by(InventoryItem.name))).all()
-    locations=(await db.scalars(select(InventoryLocation).where(InventoryLocation.clinic_id==user.clinic_id).order_by(InventoryLocation.name))).all()
+    location_query=select(InventoryLocation).where(InventoryLocation.clinic_id==user.clinic_id)
+    if site_id is not None: location_query=location_query.where(InventoryLocation.site_id==site_id)
+    locations=(await db.scalars(location_query.order_by(InventoryLocation.name))).all()
     all_lots=(await db.scalars(select(InventoryLot).where(InventoryLot.clinic_id==user.clinic_id).order_by(InventoryLot.code))).all()
     lots_by_item={}
     for lot in all_lots:lots_by_item.setdefault(lot.item_id,[]).append(lot)
     incoming=InventoryMovement.kind.in_(["receipt","transfer_in","adjustment_in","reversal_in"])
     outgoing=InventoryMovement.kind.in_(["consumption","transfer_out","adjustment_out","reversal_out"])
     stock_expr=func.coalesce(func.sum(case((incoming,InventoryMovement.quantity),else_=0)),0)-func.coalesce(func.sum(case((outgoing,InventoryMovement.quantity),else_=0)),0)
-    stock_rows=(await db.execute(select(InventoryMovement.lot_id,InventoryMovement.location_id,stock_expr).where(InventoryMovement.clinic_id==user.clinic_id).group_by(InventoryMovement.lot_id,InventoryMovement.location_id))).all()
+    stock_query=select(InventoryMovement.lot_id,InventoryMovement.location_id,stock_expr).where(InventoryMovement.clinic_id==user.clinic_id)
+    if site_id is not None: stock_query=stock_query.where(InventoryMovement.location_id.in_(select(InventoryLocation.id).where(InventoryLocation.clinic_id==user.clinic_id,InventoryLocation.site_id==site_id)))
+    stock_rows=(await db.execute(stock_query.group_by(InventoryMovement.lot_id,InventoryMovement.location_id))).all()
     balances={(lot_id,location_id):Decimal(quantity or 0) for lot_id,location_id,quantity in stock_rows}
     result=[]; as_of=await _clinic_today(db,user.clinic_id);summaries=[]
     for item in items:
@@ -154,7 +162,7 @@ async def overview(user: User=Depends(require_roles(*READ)),db: AsyncSession=Dep
             row["item_total"] = format(item_total,".3f")
             row["below_minimum"] = below_minimum
     return {"items":summaries,
-        "locations":[{"id":str(x.id),"name":x.name,"is_active":x.is_active} for x in locations],
+        "locations":[{"id":str(x.id),"name":x.name,"is_active":x.is_active,"site_id":str(x.site_id) if x.site_id else None} for x in locations],
         "lots":[{"id":str(lot.id),"item_id":str(lot.item_id),"item":next((x.name for x in items if x.id==lot.item_id),""),"code":lot.code,"expires_on":lot.expires_on.isoformat() if lot.expires_on else None,"expired":bool(lot.expires_on and lot.expires_on<as_of)} for lot in all_lots],
         "balances":result}
 
@@ -182,6 +190,7 @@ async def update_item(item_id: UUID,p: ItemIn,user: User=Depends(require_roles(*
 
 @router.post("/locations",status_code=201)
 async def create_location(p: LocationIn,user: User=Depends(require_roles(*MANAGE)),db: AsyncSession=Depends(get_db)):
+    if p.site_id and not await db.scalar(select(ClinicLocation.id).where(ClinicLocation.id==p.site_id,ClinicLocation.clinic_id==user.clinic_id,ClinicLocation.is_active.is_(True))):raise HTTPException(404,"Sediul nu există sau nu este activ")
     x=InventoryLocation(clinic_id=user.clinic_id,**p.model_dump());db.add(x);await _commit_unique(db,"O locație cu acest nume există deja.");return {"id":str(x.id)}
 
 @router.patch("/locations/{location_id}")
@@ -189,7 +198,10 @@ async def update_location(location_id: UUID,p: LocationIn,user: User=Depends(req
     x=await db.scalar(select(InventoryLocation).where(InventoryLocation.id==location_id,InventoryLocation.clinic_id==user.clinic_id).with_for_update())
     if not x:raise HTTPException(404,"Resursă inexistentă")
     if x.is_active and not p.is_active and await _stock_total(db,user.clinic_id,location_id=x.id)!=0:raise HTTPException(409,"Locația are stoc disponibil; consumă sau transferă stocul înainte de dezactivare.")
-    x.name=p.name;x.is_active=p.is_active;await _commit_unique(db,"O locație cu acest nume există deja.");return {"id":str(x.id)}
+    if p.site_id and not await db.scalar(select(ClinicLocation.id).where(ClinicLocation.id==p.site_id,ClinicLocation.clinic_id==user.clinic_id,ClinicLocation.is_active.is_(True))):raise HTTPException(404,"Sediul nu există sau nu este activ")
+    x.name=p.name;x.is_active=p.is_active
+    if p.site_id is not None:x.site_id=p.site_id
+    await _commit_unique(db,"O locație cu acest nume există deja.");return {"id":str(x.id)}
 
 @router.post("/lots",status_code=201)
 async def create_lot(p: LotIn,user: User=Depends(require_roles(*MANAGE)),db: AsyncSession=Depends(get_db)):

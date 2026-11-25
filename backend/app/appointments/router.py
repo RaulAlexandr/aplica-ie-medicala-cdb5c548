@@ -182,7 +182,7 @@ async def create_appointment(payload: AppointmentCreate, db: AsyncSession = Depe
     except IntegrityError as exc: await db.rollback(); raise HTTPException(409, "The selected doctor, room, or assistant is already booked") from exc
     await db.refresh(item); return await appointment_with_names(db, item)
 @router.get("", response_model=list[AppointmentResponse])
-async def list_appointments(start: datetime | None = None, end: datetime | None = None, day: date | None = None, week_start: date | None = None, room_id: UUID | None = None, doctor_id: UUID | None = None, assistant_id: UUID | None = None, status_filter: str | None = Query(default=None, alias="status"), appointment_type: str | None = None, patient_search: str | None = None, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*ALL_STAFF))):
+async def list_appointments(start: datetime | None = None, end: datetime | None = None, day: date | None = None, week_start: date | None = None, room_id: UUID | None = None, location_id: UUID | None = None, doctor_id: UUID | None = None, assistant_id: UUID | None = None, status_filter: str | None = Query(default=None, alias="status"), appointment_type: str | None = None, patient_search: str | None = None, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*ALL_STAFF))):
     clinic, _ = await clinic_timezone(db, user.clinic_id)
     if day: start, end = local_bounds(day, clinic.timezone)
     elif week_start: start, end = local_bounds(week_start, clinic.timezone)[0], local_bounds(week_start + timedelta(days=7), clinic.timezone)[0]
@@ -191,6 +191,7 @@ async def list_appointments(start: datetime | None = None, end: datetime | None 
     if start: query = query.where(Appointment.starts_at < end if end else True, Appointment.ends_at > start)
     elif end: query = query.where(Appointment.starts_at < end)
     if room_id: query = query.where(Appointment.room_id == room_id)
+    if location_id: query = query.join(Room, Room.id == Appointment.room_id).where(Room.location_id == location_id, Room.clinic_id == user.clinic_id)
     if doctor_id: query = query.where(Appointment.doctor_id == doctor_id)
     if assistant_id: query = query.where(Appointment.assistant_id == assistant_id)
     if status_filter:
@@ -304,7 +305,14 @@ async def appointment_history(appointment_id: UUID, db: AsyncSession = Depends(g
     if not await db.scalar(select(Appointment.id).where(Appointment.id == appointment_id, Appointment.clinic_id == user.clinic_id)): raise HTTPException(404, "Appointment not found")
     return list((await db.scalars(select(AppointmentHistory).where(AppointmentHistory.appointment_id == appointment_id, AppointmentHistory.clinic_id == user.clinic_id).order_by(AppointmentHistory.occurred_at.desc()))).all())
 @rooms_router.get("", response_model=list[RoomResponse])
-async def list_rooms(db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*ALL_STAFF))): return (await db.scalars(select(Room).where(Room.clinic_id == user.clinic_id).order_by(Room.is_active.desc(), Room.name))).all()
+async def list_rooms(location_id: UUID | None = None, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*ALL_STAFF))):
+    query = select(Room).where(Room.clinic_id == user.clinic_id)
+    if location_id:
+        from app.locations.models import ClinicLocation
+        if not await db.scalar(select(ClinicLocation.id).where(ClinicLocation.id == location_id, ClinicLocation.clinic_id == user.clinic_id)):
+            raise HTTPException(404, "Location not found")
+        query = query.where(Room.location_id == location_id)
+    return (await db.scalars(query.order_by(Room.is_active.desc(), Room.name))).all()
 @staff_router.get("/doctors", response_model=list[DoctorResponse])
 async def list_doctors(db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*ALL_STAFF))): return (await db.scalars(select(User).where(User.clinic_id == user.clinic_id, User.role.in_(["doctor", "clinic_manager", "administrator"]), User.is_active.is_(True)).order_by(User.full_name))).all()
 @availability_router.get("/working-hours", response_model=list[WorkingHoursResponse])

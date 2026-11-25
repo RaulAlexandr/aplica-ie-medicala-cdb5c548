@@ -33,6 +33,7 @@ class InventoryLocation(Base):
     __tablename__ = "inventory_locations"
     id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
     clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False)
+    site_id: Mapped[UUID | None] = mapped_column(ForeignKey("clinic_locations.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     __table_args__ = (UniqueConstraint("clinic_id", "name", name="uq_inventory_location_name"),)
