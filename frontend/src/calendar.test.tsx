@@ -1,6 +1,7 @@
 import TestRenderer, { act } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AxiosError } from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AvailabilitySettings } from './AvailabilitySettings';
 import { Calendar, clinicDate, clinicTime, Details, Form } from './Calendar';
@@ -141,6 +142,14 @@ async function renderNewForm(onSaved = vi.fn(), queryClient = new QueryClient({ 
   return { renderer, onSaved };
 }
 const createdAppointment = { ...appointment, id: 'appointment-created' };
+
+async function waitForCondition(predicate: () => boolean, message: string) {
+  const deadline = Date.now() + 1000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+  }
+}
 
 describe('planned procedures on appointment creation', () => {
   it('posts once and does not put when no procedure was selected', async () => {
@@ -283,6 +292,50 @@ describe('planned procedures on appointment creation', () => {
     const submit = () => renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
     await act(async () => { submit(); submit(); await new Promise(resolve => setTimeout(resolve, 5)); });
     expect(create).toHaveBeenCalledTimes(1); expect(put).toHaveBeenCalledTimes(1);
+    renderer.unmount();
+  });
+
+  it('blocks a delayed duplicate appointment POST, shows a real 409, and retries once', async () => {
+    let rejectCreate!: (error: unknown) => void;
+    const conflict = new AxiosError('Request failed with status code 409');
+    conflict.response = { status: 409, statusText: 'Conflict', headers: {}, config: {} as never, data: { detail: 'Doctorul are deja o programare în acel interval.' } };
+    const create = vi.spyOn(client, 'createAppointment')
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectCreate = reject; }))
+      .mockResolvedValue(createdAppointment);
+    const onSaved = vi.fn();
+    const { renderer } = await renderNewForm(onSaved);
+    const submit = () => renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+    await act(async () => { submit(); submit(); });
+    expect(create).toHaveBeenCalledTimes(1);
+    await waitForCondition(() => renderer.root.findAllByType('button').some(button => text(button) === 'Saving…' && button.props.disabled),
+      'Calendar did not show the busy state while the appointment POST was pending.');
+    await act(async () => { rejectCreate(conflict); });
+    await waitForCondition(() => renderer.root.findAllByProps({ role: 'alert' }).length > 0,
+      'Calendar did not display the appointment conflict.');
+    expect(renderer.root.findByProps({ role: 'alert' }).children.join('')).toContain('Doctorul are deja o programare în acel interval.');
+    expect(renderer.root.findAllByType('select')[0].props.value).toBe(patient.id);
+    await act(async () => { submit(); });
+    await waitForCondition(() => onSaved.mock.calls.length === 1, 'The appointment retry did not finish.');
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(onSaved).toHaveBeenCalledTimes(1);
+    renderer.unmount();
+  });
+
+  it('allows a deliberate new appointment after the previous form closes on success', async () => {
+    const create = vi.spyOn(client, 'createAppointment').mockResolvedValueOnce(createdAppointment).mockResolvedValueOnce({ ...createdAppointment, id: 'appointment-created-2' });
+    const renderer = await renderCalendar();
+    const newAppointment = () => renderer.root.findAllByType('button').find(button => text(button) === 'New appointment')!;
+    const createForm = () => renderer.root.findByType('form');
+    await act(async () => { newAppointment().props.onClick(); });
+    await act(async () => { const form = createForm(); form.props.onSubmit({ preventDefault() {} }); form.props.onSubmit({ preventDefault() {} }); });
+    await waitForCondition(() => create.mock.calls.length === 1 && renderer.root.findAllByType('button').some(button => text(button) === 'New appointment'),
+      'The first appointment form did not close after its successful save.');
+    expect(create).toHaveBeenCalledTimes(1);
+    await act(async () => { newAppointment().props.onClick(); });
+    await act(async () => { createForm().props.onSubmit({ preventDefault() {} }); });
+    await waitForCondition(() => create.mock.calls.length === 2 && renderer.root.findAllByType('button').some(button => text(button) === 'New appointment'),
+      'A deliberate second appointment action did not complete.');
+    expect(create).toHaveBeenCalledTimes(2);
     renderer.unmount();
   });
 

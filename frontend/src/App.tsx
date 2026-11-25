@@ -25,7 +25,7 @@ import { canSeeSterilization } from './sterilization/api';
 import { AccessLogPage } from './security/AccessLogPage';
 import { SessionsPage } from './security/SessionsPage';
 import { AutomationsPage } from './automations/AutomationsPage';
-import { FormEvent, ReactNode, useEffect, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { acceptInvitation, activateProcedure, apiErrorMessage, Clinic, countPatients, countProcedures, createAppointment, createInvitation, createPatient, createRoom, deactivateProcedure, deactivateStaff, Doctor, exportPatientData, getClinic, getPatient, getProcedure, Invitation, listAppointments, listDoctors, listInvitations, listPatients, listProcedures, listRooms, listStaff, login, logout, me, Patient, ProcedureCatalog, register, reissueInvitation, revokeInvitation, Room, Staff, updateClinic, updatePatient, updateRoom, User } from './api/client';
@@ -81,11 +81,17 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
   </div>;
 }
 
-function PatientForm({ initial, onSaved }: { initial?: Patient; onSaved: (patient: Patient) => void }) {
+export function PatientForm({ initial, onSaved }: { initial?: Patient; onSaved: (patient: Patient) => void }) {
   const [form, setForm] = useState<Partial<Patient>>({ first_name: initial?.first_name ?? '', last_name: initial?.last_name ?? '', phone: initial?.phone ?? '', email: initial?.email ?? '', allergies: initial?.allergies ?? '', medications: initial?.medications ?? '', medical_alerts: initial?.medical_alerts ?? '', notes: initial?.notes ?? '' });
+  const submitLocked = useRef(false);
   const mutation = useMutation({ mutationFn: async () => { const payload = { ...form }; if (!payload.email?.trim()) { if (initial) payload.email = null; else delete payload.email; } return initial ? updatePatient(initial.id, payload) : createPatient(payload as Pick<Patient, 'first_name' | 'last_name'>); }, onSuccess: onSaved });
+  const submit = () => {
+    if (submitLocked.current) return;
+    submitLocked.current = true;
+    mutation.mutate(undefined, { onSettled: () => { submitLocked.current = false; } });
+  };
   const set = (key: keyof Patient, value: string) => setForm(current => ({ ...current, [key]: value }));
-  return <form className="card" onSubmit={e => { e.preventDefault(); mutation.mutate(); }}>
+  return <form className="card" onSubmit={e => { e.preventDefault(); submit(); }}>
     <h2>{initial ? 'Edit patient' : 'New patient'}</h2>
     <div className="grid two">
       <label>First name<input required value={form.first_name ?? ''} onChange={e => set('first_name', e.target.value)} /></label>
@@ -342,11 +348,17 @@ export function Rooms() {
   const [editingId, setEditingId] = useState('');
   const [editingName, setEditingName] = useState('');
   const [message, setMessage] = useState('');
+  const createLocked = useRef(false);
   const create = useMutation({ mutationFn: () => createRoom(name), onSuccess: () => { setName(''); setMessage('Room created.'); client.invalidateQueries({ queryKey: ['rooms'] }); }, onError: error => setMessage(apiErrorMessage(error)) });
+  const submitCreate = () => {
+    if (createLocked.current) return;
+    createLocked.current = true;
+    create.mutate(undefined, { onSettled: () => { createLocked.current = false; } });
+  };
   const update = useMutation({ mutationFn: ({ id, input }: { id: string; input: { name?: string; is_active?: boolean } }) => updateRoom(id, input), onSuccess: data => { if (data.affected_appointments.length) setMessage(`Cannot deactivate this room. Future appointments: ${data.affected_appointments.map(item => `${new Date(item.starts_at).toLocaleString()} (${item.id.slice(0, 8)})`).join(', ')}`); else { setEditingId(''); setMessage('Room updated.'); client.invalidateQueries({ queryKey: ['rooms'] }); } }, onError: error => setMessage(apiErrorMessage(error)) });
   return <section className="card">
     <h2>Treatment rooms</h2>
-    <form className="inline-form" onSubmit={e => { e.preventDefault(); create.mutate(); }}>
+    <form className="inline-form" onSubmit={e => { e.preventDefault(); submitCreate(); }}>
       <input required placeholder="New room name" value={name} onChange={e => setName(e.target.value)} />
       <button disabled={create.isPending}>Create room</button>
     </form>
@@ -403,7 +415,16 @@ export function StaffOnboarding() {
   const [form, setForm] = useState({ email: '', full_name: '', role: 'doctor' });
   const [latestInvitation, setLatestInvitation] = useState<Invitation | null>(null);
   const [message, setMessage] = useState('');
-  const invite = useMutation({ mutationFn: () => createInvitation(form), onSuccess: data => { setLatestInvitation(data); setForm({ email: '', full_name: '', role: 'doctor' }); setMessage('Invitation created. The secret is shown only now; copy it before leaving this page.'); client.invalidateQueries({ queryKey: ['invitations'] }); }, onError: error => setMessage(apiErrorMessage(error)) });
+  const [inviteError, setInviteError] = useState('');
+  const inviteLocked = useRef(false);
+  const invite = useMutation({ mutationFn: () => createInvitation(form), onSuccess: data => { setLatestInvitation(data); setForm({ email: '', full_name: '', role: 'doctor' }); setInviteError(''); setMessage('Invitation created. The secret is shown only now; copy it before leaving this page.'); client.invalidateQueries({ queryKey: ['invitations'] }); }, onError: error => { setInviteError(apiErrorMessage(error)); setMessage(''); } });
+  const submitInvite = () => {
+    if (inviteLocked.current) return;
+    inviteLocked.current = true;
+    setInviteError('');
+    setMessage('');
+    invite.mutate(undefined, { onSettled: () => { inviteLocked.current = false; } });
+  };
   const reissue = useMutation({ mutationFn: reissueInvitation, onSuccess: data => { setLatestInvitation(data); setMessage('Invitation reissued. The previous link is revoked; copy this new link now.'); client.invalidateQueries({ queryKey: ['invitations'] }); }, onError: error => setMessage(apiErrorMessage(error)) });
   const revoke = useMutation({ mutationFn: revokeInvitation, onSuccess: () => { setMessage('Invitation revoked.'); client.invalidateQueries({ queryKey: ['invitations'] }); }, onError: error => setMessage(apiErrorMessage(error)) });
   const deactivate = useMutation({ mutationFn: deactivateStaff, onSuccess: data => { if (data.affected_appointments.length) setMessage(`Cannot deactivate ${data.staff.full_name}. Future appointments: ${data.affected_appointments.map(item => `${new Date(item.starts_at).toLocaleString()} (${item.id.slice(0, 8)})`).join(', ')}`); else { setMessage('Staff member deactivated.'); client.invalidateQueries({ queryKey: ['staff'] }); } }, onError: error => setMessage(apiErrorMessage(error)) });
@@ -418,7 +439,7 @@ export function StaffOnboarding() {
     <section className="card">
       <h2>Invite staff</h2>
       <p className="muted">The link is single-use and expires after three days. The recipient chooses their own password.</p>
-      <form className="grid two" onSubmit={e => { e.preventDefault(); invite.mutate(); }}>
+      <form className="grid two" onSubmit={e => { e.preventDefault(); submitInvite(); }}>
         <label>Full name<input required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></label>
         <label>Email<input required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label>
         <label>Role<select value={form.role} onChange={e => setForm({ ...form, role: e.target.value })}>
@@ -426,7 +447,7 @@ export function StaffOnboarding() {
           <option value="assistant">Assistant</option>
           <option value="reception">Receptionist</option>
         </select></label>
-        <div><button disabled={invite.isPending}>Create invitation link</button></div>
+        <div>{inviteError && <p className="error" role="alert">{inviteError}</p>}<button disabled={invite.isPending}>{invite.isPending ? 'Creating invitation…' : 'Create invitation link'}</button></div>
       </form>
       {latestInvitation?.invitation_url && <InvitationLinkNotice link={`${window.location.origin}${latestInvitation.invitation_url}`} onCopy={() => void copyLink(latestInvitation)} />}
       <p className="muted">After reload, original invitation links cannot be retrieved. Use Reissue to generate a new link.</p>
