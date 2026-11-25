@@ -180,9 +180,10 @@ describe('planned procedures on appointment creation', () => {
 
   it('keeps the created appointment after PUT failure and retries only the PUT', async () => {
     const create = vi.spyOn(client, 'createAppointment').mockResolvedValue(createdAppointment);
-    vi.spyOn(appointmentProceduresApi, 'getAppointmentProcedures').mockResolvedValue({ appointment_id: createdAppointment.id, revision: 3, procedures: [] });
+    const getSet = vi.spyOn(appointmentProceduresApi, 'getAppointmentProcedures').mockResolvedValueOnce({ appointment_id: createdAppointment.id, revision: 3, procedures: [] }).mockResolvedValueOnce({ appointment_id: createdAppointment.id, revision: 4, procedures: [] });
     const put = vi.spyOn(appointmentProceduresApi, 'replaceAppointmentProcedures').mockRejectedValueOnce(new Error('network')).mockResolvedValue({ appointment_id: createdAppointment.id, revision: 4, procedures: [] });
-    const { renderer, onSaved } = await renderNewForm();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }); const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    const { renderer, onSaved } = await renderNewForm(vi.fn(), queryClient);
     const active = renderer.root.findAllByType('select').find(item => item.props['aria-label'] === 'Procedură activă')!;
     await act(async () => { active.props.onChange({ target: { value: catalogProcedure.id } }); });
     await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === 'Adaugă')!.props.onClick(); });
@@ -190,9 +191,54 @@ describe('planned procedures on appointment creation', () => {
     await act(async () => { submit(); await new Promise(resolve => setTimeout(resolve, 5)); });
     expect(renderer.root.findByProps({ role: 'alert' }).children.join('')).toContain('Programarea a fost creată, dar procedurile nu s-au salvat.');
     expect(create).toHaveBeenCalledTimes(1); expect(onSaved).not.toHaveBeenCalled();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['appointments'] });
+    const fields = renderer.root.findByType('form').findAll(node => ['input', 'select', 'textarea'].includes(node.type as string));
+    for (const field of fields.filter(node => node.props['aria-label'] !== 'Cantitate Consultație' && node.props['aria-label'] !== 'Procedură activă' && node.props['aria-label'] !== 'Caută în catalog')) expect(field.props.disabled).toBe(true);
+    expect(renderer.root.findByProps({ 'aria-label': 'Cantitate Consultație' }).props.disabled).toBeFalsy();
     expect(renderer.root.findAllByType('button').some(button => text(button) === 'Reîncearcă salvarea procedurilor')).toBe(true);
     await act(async () => { submit(); await new Promise(resolve => setTimeout(resolve, 5)); });
     expect(create).toHaveBeenCalledTimes(1); expect(put).toHaveBeenCalledTimes(2); expect(onSaved).toHaveBeenCalledTimes(1);
+    expect(getSet).toHaveBeenCalledTimes(2);
+    expect(put).toHaveBeenNthCalledWith(1, createdAppointment.id, 3, [{ procedure_catalog_id: catalogProcedure.id, quantity: 1 }]);
+    expect(put).toHaveBeenNthCalledWith(2, createdAppointment.id, 4, [{ procedure_catalog_id: catalogProcedure.id, quantity: 1 }]);
+    renderer.unmount();
+  });
+
+  it('refreshes the procedure revision after a real 409 before retrying', async () => {
+    vi.spyOn(client, 'createAppointment').mockResolvedValue(createdAppointment);
+    vi.spyOn(appointmentProceduresApi, 'getAppointmentProcedures').mockResolvedValueOnce({ appointment_id: createdAppointment.id, revision: 3, procedures: [] }).mockResolvedValueOnce({ appointment_id: createdAppointment.id, revision: 4, procedures: [] });
+    const put = vi.spyOn(appointmentProceduresApi, 'replaceAppointmentProcedures').mockRejectedValueOnce(new Error('409 Conflict')).mockResolvedValue({ appointment_id: createdAppointment.id, revision: 5, procedures: [] });
+    const { renderer } = await renderNewForm();
+    await act(async () => { renderer.root.findAllByType('select').find(item => item.props['aria-label'] === 'Procedură activă')!.props.onChange({ target: { value: catalogProcedure.id } }); });
+    await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === 'Adaugă')!.props.onClick(); });
+    const submit = () => renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
+    await act(async () => { submit(); await new Promise(resolve => setTimeout(resolve, 5)); });
+    await act(async () => { submit(); await new Promise(resolve => setTimeout(resolve, 5)); });
+    expect(put).toHaveBeenNthCalledWith(2, createdAppointment.id, 4, [{ procedure_catalog_id: catalogProcedure.id, quantity: 1 }]);
+    expect(vi.mocked(client.createAppointment)).toHaveBeenCalledTimes(1);
+    renderer.unmount();
+  });
+
+  it('keeps the walkthrough button labels and includes Romanian DST guidance on POST errors', async () => {
+    vi.spyOn(client, 'createAppointment').mockRejectedValue(new Error('server detail'));
+    const { renderer } = await renderNewForm();
+    const button = () => renderer.root.findAllByType('button').find(item => item.props.type !== 'button' && !['Adaugă'].includes(text(item)))!;
+    expect(text(button())).toBe('Create appointment');
+    const submit = renderer.root.findByType('form').props.onSubmit;
+    await act(async () => { submit({ preventDefault() {} }); await new Promise(resolve => setTimeout(resolve, 5)); });
+    expect(renderer.root.findByProps({ role: 'alert' }).children.join('')).toContain('server detail');
+    expect(renderer.root.findByProps({ role: 'alert' }).children.join('')).toContain('Dacă ora locală se repetă, alege prima sau a doua apariție. Orele care nu există la schimbarea orei trebuie modificate.');
+    renderer.unmount();
+  });
+
+  it('shows the walkthrough saving label while POST is pending', async () => {
+    let resolveCreate!: (value: typeof createdAppointment) => void;
+    vi.spyOn(client, 'createAppointment').mockImplementation(() => new Promise(resolve => { resolveCreate = resolve; }));
+    const { renderer } = await renderNewForm();
+    const submit = renderer.root.findByType('form').props.onSubmit;
+    await act(async () => { submit({ preventDefault() {} }); await Promise.resolve(); });
+    expect(renderer.root.findAllByType('button').some(button => text(button) === 'Saving…' && button.props.disabled)).toBe(true);
+    await act(async () => { resolveCreate(createdAppointment); await new Promise(resolve => setTimeout(resolve, 5)); });
     renderer.unmount();
   });
 
@@ -232,7 +278,7 @@ describe('planned procedures on appointment creation', () => {
     await act(async () => { active.props.onChange({ target: { value: catalogProcedure.id } }); });
     await act(async () => { renderer.root.findAllByType('button').find(button => text(button) === 'Adaugă')!.props.onClick(); });
     await act(async () => { renderer.root.findByProps({ 'aria-label': 'Cantitate Consultație' }).props.onChange({ target: { value: '33' } }); });
-    expect(renderer.root.findAllByType('button').some(button => text(button) === 'Creează programarea' && button.props.disabled)).toBe(true);
+    expect(renderer.root.findAllByType('button').some(button => text(button) === 'Create appointment' && button.props.disabled)).toBe(true);
     await act(async () => { renderer.root.findByProps({ 'aria-label': 'Cantitate Consultație' }).props.onChange({ target: { value: '2' } }); });
     const submit = () => renderer.root.findByType('form').props.onSubmit({ preventDefault() {} });
     await act(async () => { submit(); submit(); await new Promise(resolve => setTimeout(resolve, 5)); });
