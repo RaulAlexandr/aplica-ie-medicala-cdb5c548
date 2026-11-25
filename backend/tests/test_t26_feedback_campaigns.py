@@ -106,6 +106,12 @@ async def test_public_feedback_token_is_scoped_limited_and_creates_one_task(ctx)
     async with sessions() as db:
         assert await db.scalar(select(func.count()).select_from(PatientFeedback)) == 1
         assert await db.scalar(select(func.count()).select_from(FeedbackRequest).where(FeedbackRequest.used_at.is_not(None))) == 1
+        request = await db.scalar(select(FeedbackRequest))
+        request.used_at = None
+        request.expires_at = datetime.now(UTC) - timedelta(days=1)
+        await db.commit()
+    expired = await client.get(f"/api/feedback/public/{token}")
+    assert expired.json() == invalid.json()
 
 
 @pytest.mark.asyncio
