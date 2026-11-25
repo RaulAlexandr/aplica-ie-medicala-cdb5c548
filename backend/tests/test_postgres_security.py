@@ -1,6 +1,7 @@
 import asyncio
 import os
 import subprocess
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse, urlunparse
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import get_db
 from app.main import app
+from app.operations.retention import cleanup_security_history
 
 pytestmark = pytest.mark.postgres
 
@@ -77,3 +79,19 @@ async def test_concurrent_failed_logins_are_serialized_and_access_log_is_immutab
                 await connection.execute("DELETE FROM patient_access_log")
     finally:
         await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_bounded_retention_is_the_only_security_history_delete_path(pg_security_client):
+    _, url = pg_security_client
+    engine = create_async_engine(url)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessions() as db:
+        old = datetime.now(UTC) - timedelta(days=400)
+        from app.database import LoginAttempt
+
+        db.add(LoginAttempt(email=f"expired-{uuid4().hex}@example.test", attempted_at=old, succeeded=False))
+        await db.commit()
+        result = await cleanup_security_history(db, now=datetime.now(UTC), login_days=90, access_days=365, dry_run=False)
+        assert result["deleted"]["login_attempts"] == 1
+    await engine.dispose()
