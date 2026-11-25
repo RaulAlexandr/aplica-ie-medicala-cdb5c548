@@ -490,3 +490,33 @@ async def test_list_endpoints_use_constant_query_count(env):
     await seed(5)
     large = {path: await count_queries(path) for path in paths}
     assert large == small, (small, large)
+
+
+@pytest.mark.asyncio
+async def test_use_race_lost_at_commit_answers_idempotently_not_500(env, monkeypatch):
+    """Two double-click requests both pass the state check; the unique index rejects the second at commit."""
+    from app.sterilization import router as ster_router
+
+    client, sessions, _ = env
+    ctx, assistant, _, equipment_id, set_type = await setup_world(client, sessions)
+    pack = await add_pack(client, ctx["auth"], set_type["id"])
+    await approved_cycle(client, ctx, assistant, equipment_id, [pack["id"]])
+    appointment_id = await add_appointment(client, ctx)
+    other_appointment = await add_appointment(client, ctx, "2026-12-03T09:00:00+00:00")
+    async with sessions() as session:
+        stale = (await ster_router._events_by_pack(session, __import__("uuid").UUID(ctx["me"]["clinic_id"]), [__import__("uuid").UUID(pack["id"])]))
+    first = await client.post(f"{API}/packs/{pack['id']}/use", headers=ctx["auth"], json={"appointment_id": appointment_id})
+    assert first.status_code == 201
+    real = ster_router._events_by_pack
+    calls = {"n": 0}
+
+    async def stale_once(db, clinic_id, pack_ids):
+        calls["n"] += 1
+        return stale if calls["n"] == 1 else await real(db, clinic_id, pack_ids)
+
+    monkeypatch.setattr(ster_router, "_events_by_pack", stale_once)
+    same = await client.post(f"{API}/packs/{pack['id']}/use", headers=ctx["auth"], json={"appointment_id": appointment_id})
+    assert same.status_code == 200 and same.json()["event_id"] == first.json()["event_id"]
+    calls["n"] = 0
+    other = await client.post(f"{API}/packs/{pack['id']}/use", headers=ctx["auth"], json={"appointment_id": other_appointment})
+    assert other.status_code == 409 and "folosit" in other.json()["detail"].lower()

@@ -355,6 +355,7 @@ async def use_pack(pack_id: UUID, payload: UseIn, response: Response, db: AsyncS
     pack = await db.scalar(select(SterilizationPack).where(SterilizationPack.id == pack_id, SterilizationPack.clinic_id == user.clinic_id).with_for_update())
     if pack is None:
         raise HTTPException(404, "Pachet inexistent")
+    pack_code, clinic_id, appointment_id = pack.code, user.clinic_id, payload.appointment_id  # plain values survive a rollback
     appointment = await db.scalar(select(Appointment).where(Appointment.id == payload.appointment_id, Appointment.clinic_id == user.clinic_id))
     if appointment is None:
         raise HTTPException(404, "Programare inexistentă")
@@ -374,7 +375,7 @@ async def use_pack(pack_id: UUID, payload: UseIn, response: Response, db: AsyncS
     last = history[-1] if history else None
     if state == "used" and last.appointment_id == appointment.id and (payload.performed_procedure_id in (None, last.performed_procedure_id)):
         response.status_code = 200  # double click / retry: same single link
-        return _use_json(pack, last)
+        return _use_json(pack_id, pack_code, last)
     if state != "sterile":
         raise HTTPException(409, REFUSAL[state])
     cycle = await db.scalar(select(SterilizationCycle).where(SterilizationCycle.id == last.cycle_id, SterilizationCycle.clinic_id == user.clinic_id))
@@ -387,17 +388,17 @@ async def use_pack(pack_id: UUID, payload: UseIn, response: Response, db: AsyncS
         await db.commit()
     except IntegrityError:
         await db.rollback()
-        again = (await _events_by_pack(db, user.clinic_id, [pack.id])).get(pack.id, [])
-        if again and again[-1].event_type == "used" and again[-1].appointment_id == appointment.id:
+        again = (await _events_by_pack(db, clinic_id, [pack_id])).get(pack_id, [])
+        if again and again[-1].event_type == "used" and again[-1].appointment_id == appointment_id:
             response.status_code = 200
-            return _use_json(pack, again[-1])
+            return _use_json(pack_id, pack_code, again[-1])
         raise HTTPException(409, REFUSAL["used"])
     response.status_code = 201
-    return _use_json(pack, event)
+    return _use_json(pack_id, pack_code, event)
 
 
-def _use_json(pack: SterilizationPack, event: SterilizationPackEvent) -> dict:
-    return {"event_id": str(event.id), "pack_id": str(pack.id), "code": pack.code, "state": "used",
+def _use_json(pack_id: UUID, code: str, event: SterilizationPackEvent) -> dict:
+    return {"event_id": str(event.id), "pack_id": str(pack_id), "code": code, "state": "used",
             "appointment_id": str(event.appointment_id), "performed_procedure_id": str(event.performed_procedure_id) if event.performed_procedure_id else None,
             "cycle_id": str(event.cycle_id), "used_at": _iso(event.created_at)}
 
