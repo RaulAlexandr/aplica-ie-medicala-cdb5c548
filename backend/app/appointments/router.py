@@ -23,6 +23,7 @@ from app.appointments.service import (
     validate_availability,
 )
 from app.auth.service import require_roles
+from app.comms.service import sync_appointment
 from app.database import (
     Appointment,
     AppointmentHistory,
@@ -178,7 +179,7 @@ async def create_appointment(payload: AppointmentCreate, db: AsyncSession = Depe
     clinic, _ = await clinic_timezone(db, user.clinic_id); start = resolve_start(payload, clinic.timezone); await refs(db, user.clinic_id, payload.patient_id, payload.doctor_id, payload.assistant_id, payload.room_id); await validate_slot(db, user.clinic_id, start, payload.duration_minutes, payload.doctor_id, payload.room_id, payload.assistant_id)
     item = Appointment(clinic_id=user.clinic_id, patient_id=payload.patient_id, doctor_id=payload.doctor_id, assistant_id=payload.assistant_id, room_id=payload.room_id, starts_at=start, duration_minutes=payload.duration_minutes, status="scheduled", appointment_type=payload.appointment_type, notes=payload.notes, ends_at=appointment_end(start, payload.duration_minutes)); db.add(item)
     try:
-        await db.flush(); add_history(db, item, user.id, "created"); db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="appointment", entity_id=item.id, action="created")); await db.commit()
+        await db.flush(); add_history(db, item, user.id, "created"); await sync_appointment(db, item, user.id); db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="appointment", entity_id=item.id, action="created")); await db.commit()
     except IntegrityError as exc: await db.rollback(); raise HTTPException(409, "The selected doctor, room, or assistant is already booked") from exc
     await db.refresh(item); return await appointment_with_names(db, item)
 @router.get("", response_model=list[AppointmentResponse])
@@ -238,6 +239,7 @@ async def update_appointment(appointment_id: UUID, payload: AppointmentUpdate, d
     for key in ("patient_id", "doctor_id", "assistant_id", "room_id", "duration_minutes", "appointment_type", "notes"):
         if key in data: setattr(item, key, data[key])
     item.starts_at = start; item.ends_at = appointment_end(start, duration); item.updated_at = utcnow(); add_history(db, item, user.id, "updated", previous); db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="appointment", entity_id=item.id, action="updated"))
+    await sync_appointment(db, item, user.id, previous)
     try: await db.commit()
     except IntegrityError as exc: await db.rollback(); raise HTTPException(409, "The selected doctor, room, or assistant is already booked") from exc
     await db.refresh(item); return await appointment_with_names(db, item)
@@ -282,6 +284,7 @@ async def update_status(appointment_id: UUID, payload: AppointmentStatus, db: As
     item.status = payload.status
     add_history(db, item, user.id, "status_changed", previous)
     db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="appointment", entity_id=item.id, action="status_changed"))
+    await sync_appointment(db, item, user.id, previous)
     try:
         await db.commit()
     except IntegrityError as exc:
@@ -296,6 +299,7 @@ async def reschedule(appointment_id: UUID, payload: RescheduleRequest, db: Async
     if item.status not in ACTIVE_STATUSES: raise HTTPException(409, "Only active appointments can be rescheduled")
     clinic, _ = await clinic_timezone(db, user.clinic_id); previous = history_payload(item); start = resolve_start(payload, clinic.timezone, item.starts_at); duration = payload.duration_minutes or item.duration_minutes; doctor_id = payload.doctor_id or item.doctor_id; room_id = payload.room_id or item.room_id; assistant_id = payload.assistant_id if payload.assistant_id is not None else item.assistant_id
     await refs(db, user.clinic_id, item.patient_id, doctor_id, assistant_id, room_id); await validate_slot(db, user.clinic_id, start, duration, doctor_id, room_id, assistant_id, item.id); item.starts_at = start; item.ends_at = appointment_end(start, duration); item.duration_minutes = duration; item.doctor_id = doctor_id; item.room_id = room_id; item.assistant_id = assistant_id; item.updated_at = utcnow(); add_history(db, item, user.id, "rescheduled", previous, payload.reason); db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="appointment", entity_id=item.id, action="rescheduled"))
+    await sync_appointment(db, item, user.id, previous)
     try: await db.commit()
     except IntegrityError as exc: await db.rollback(); raise HTTPException(409, "The new appointment slot is unavailable") from exc
     await db.refresh(item); return await appointment_with_names(db, item)

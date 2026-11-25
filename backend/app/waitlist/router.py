@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.appointments.router import appointment_with_names, refs, validate_slot
 from app.appointments.service import add_history, appointment_end, utc
 from app.auth.service import require_roles
+from app.comms.service import sync_appointment
 from app.database import (
     Appointment,
     AuditEvent,
@@ -153,7 +154,7 @@ async def confirm_offer(offer_id:UUID,db:AsyncSession=Depends(get_db),user:User=
     appt=Appointment(clinic_id=user.clinic_id,patient_id=e.patient_id,doctor_id=offer.doctor_id,room_id=offer.room_id,starts_at=start,ends_at=appointment_end(start,offer.duration_minutes),duration_minutes=offer.duration_minutes,status="scheduled",appointment_type=e.desired_service or "Waitlist offer")
     db.add(appt)
     try:
-        await db.flush();add_history(db,appt,user.id,"created");db.add(AuditEvent(clinic_id=user.clinic_id,actor_id=user.id,entity_type="appointment",entity_id=appt.id,action="created"));offer.status="confirmed";offer.appointment_id=appt.id;e.status="booked";await db.commit()
+        await db.flush();add_history(db,appt,user.id,"created");await sync_appointment(db,appt,user.id);db.add(AuditEvent(clinic_id=user.clinic_id,actor_id=user.id,entity_type="appointment",entity_id=appt.id,action="created"));offer.status="confirmed";offer.appointment_id=appt.id;e.status="booked";await db.commit()
     except IntegrityError as exc: await db.rollback();raise HTTPException(409,"Slot was booked by another request") from exc
     return await appointment_with_names(db,appt)
 
