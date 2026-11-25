@@ -66,8 +66,11 @@ export default function StlViewer({ document }: { document: ClinicalDocument }) 
           const p = view.position;
           setCamera(`${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}`);
         };
-        const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(draw); };
-        controls.addEventListener('change', schedule);
+        let dirty = false;
+        const schedule = () => { dirty = true; };
+        // OrbitControls only moves the camera when update() runs; it returns true when the view changed.
+        const tick = () => { frame = requestAnimationFrame(tick); if (controls.update() || dirty) { dirty = false; draw(); } };
+        frame = requestAnimationFrame(tick);
         const observer = new ResizeObserver(resize); observer.observe(element);
         const spherical = new Spherical();
         api.current = {
