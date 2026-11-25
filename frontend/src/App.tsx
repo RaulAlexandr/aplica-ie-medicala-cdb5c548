@@ -25,6 +25,9 @@ import { canSeeSterilization } from './sterilization/api';
 import { AccessLogPage } from './security/AccessLogPage';
 import { SessionsPage } from './security/SessionsPage';
 import { AutomationsPage } from './automations/AutomationsPage';
+import { PortalApp } from './portal/PortalApp';
+import { PatientPortalSection } from './portal/PatientPortalSection';
+import { RescheduleRequestsPage } from './portal/RescheduleRequestsPage';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -35,6 +38,7 @@ const managementRoles = ['clinic_manager', 'administrator'];
 const staffRoles = ['clinic_manager', 'doctor', 'assistant', 'reception', 'administrator'];
 const clinicalRoles = ['doctor', 'clinic_manager', 'administrator'];
 const cashRoles = ['reception', 'clinic_manager', 'administrator'];
+const portalRequestRoles = ['reception', 'clinic_manager', 'administrator'];
 const canEditPatients = (role: string) => managementRoles.includes(role) || role === 'doctor';
 function ErrorState({ error }: { error: unknown }) { return <p className="error" role="alert">{apiErrorMessage(error)}</p>; }
 function QueryState({ loading, empty, error }: { loading: boolean; empty: boolean; error: unknown }) { if (loading) return <p className="muted">Loading…</p>; if (error) return <ErrorState error={error} />; if (empty) return <p className="muted">Nothing to display yet.</p>; return null; }
@@ -69,6 +73,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {staffRoles.includes(user.role) && <Link to="/cabinet-ready">Cabinet Ready</Link>}
         {canSeeSterilization(user.role) && <Link to="/sterilization">Sterilizare</Link>}
         {cashRoles.includes(user.role) && <Link to="/finance/daily">Încasări zi</Link>}
+        {portalRequestRoles.includes(user.role) && <Link to="/portal-requests">Cereri portal</Link>}
         {managementRoles.includes(user.role) && <Link to="/reports">Rapoarte</Link>}
         {managementRoles.includes(user.role) && <Link to="/comms">Comunicare</Link>}
         {managementRoles.includes(user.role) && <Link to="/security/access-log">Jurnal de acces</Link>}
@@ -172,6 +177,7 @@ export function PatientDetail({ user, id, appointmentId }: { user: User; id: str
     {staffRoles.includes(user.role) && <PatientCommsPanel key={`${id}:comms`} patientId={id} canRecord={['clinic_manager', 'doctor', 'reception', 'administrator'].includes(user.role)} />}
     {staffRoles.includes(user.role) && <PatientFormsPanel key={`${id}:forms`} patientId={id} canReview={clinicalRoles.includes(user.role)} />}
     <SterilizationPatientTrace key={`${id}:sterilization`} patientId={id} role={user.role} />
+    {staffRoles.includes(user.role) && <PatientPortalSection key={`${id}:portal`} patient={p} canClinical={clinicalRoles.includes(user.role)} />}
     {clinicalRoles.includes(user.role) && <ClinicalPatientRecord key={id} patientId={id} appointmentId={appointmentId} user={user} />}
   </>;
 }
@@ -491,6 +497,7 @@ export default function App() {
   useEffect(() => { const handler = () => { setUser(null); navigate('/'); }; window.addEventListener('dentacare:session-cleared', handler); return () => window.removeEventListener('dentacare:session-cleared', handler); }, [navigate]);
   useEffect(() => { if (localStorage.getItem('access_token')) me().then(setUser).catch(() => setUser(null)).finally(() => setLoading(false)); else setLoading(false); }, []);
   if (location.pathname === '/staff/invitations/accept') return <InvitationAccept />;
+  if (/^\/portal(\/|$)/.test(location.pathname)) return <PortalApp />;
   if (loading) return <main className="auth"><p>Loading session\u2026</p></main>;
   if (!user) return <Auth onDone={() => me().then(setUser).catch(() => setUser(null))} />;
   const signOut = async () => { try { await logout(); } catch (error) { console.error('Server-side logout failed; local session was cleared.', error); } finally { setUser(null); navigate('/'); } };
@@ -513,6 +520,7 @@ export default function App() {
       <Route path="/procedures/:id" element={<ProcedureDetail user={user} />} />
       <Route path="/finance/daily" element={cashRoles.includes(user.role) ? <DailyReportPage /> : <Navigate to="/" />} />
       <Route path="/comms" element={managementRoles.includes(user.role) ? <CommsPage /> : <Navigate to="/" />} />
+      <Route path="/portal-requests" element={portalRequestRoles.includes(user.role) ? <RescheduleRequestsPage /> : <Navigate to="/" />} />
       <Route path="/reports" element={managementRoles.includes(user.role) ? <ReportsPage /> : <Navigate to="/" />} />
       <Route path="/security/access-log" element={managementRoles.includes(user.role) ? <AccessLogPage /> : <Navigate to="/" />} />
       <Route path="/security/sessions" element={staffRoles.includes(user.role) ? <SessionsPage /> : <Navigate to="/" />} />
