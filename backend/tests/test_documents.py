@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.auth.service import create_access_token
 from app.config import settings
 from app.database import (
+    AccessLog,
     AuditEvent,
     Base,
     ClinicalDocument,
@@ -197,7 +198,9 @@ async def test_doctor_uploads_image_with_visit_and_tooth_and_reads_it_back(env):
     assert [row["id"] for row in listed.json()] == [doc["id"]]
     async with sessions() as session:
         actions = sorted(await session.scalars(select(AuditEvent.action).where(AuditEvent.entity_type == "clinical_document")))
-    assert actions == ["downloaded", "uploaded", "viewed"]
+        access_actions = sorted(await session.scalars(select(AccessLog.action).where(AccessLog.patient_id == pid)))
+    assert actions == ["uploaded"]
+    assert access_actions == ["document.download", "document.read", "documents.read"]
 
 
 async def test_manager_admin_allowed_reception_assistant_denied_including_direct_content(env):

@@ -150,7 +150,7 @@ async def test_export_is_clinic_scoped_complete_and_audited(security_client):
     foreign_headers = {"Authorization": f"Bearer {foreign.json()['access_token']}"}
     assert (await security_client.get(f"/api/security/patients/{patient_id}/export", headers=foreign_headers)).status_code == 404
     async with security_client.sessions() as db:
-        assert await db.scalar(select(AuditEvent).where(AuditEvent.action == "exported"))
+        assert await db.scalar(select(AccessLog).where(AccessLog.patient_id == patient_id, AccessLog.action == "patient.export"))
 
 
 @pytest.mark.asyncio

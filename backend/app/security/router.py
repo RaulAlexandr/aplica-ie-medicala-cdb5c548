@@ -93,8 +93,6 @@ async def export_patient(patient_id: UUID, user: User = Depends(require_roles("c
         ClinicalDocument.clinic_id == user.clinic_id))).all()
     data["documents_index"] = [{"id": str(doc.id), "file_name": doc.file_name, "sha256": doc.sha256,
         "size_bytes": doc.size_bytes, "content_type": doc.content_type} for doc in docs]
-    db.add(AuditEvent(clinic_id=user.clinic_id, actor_id=user.id, entity_type="patient", entity_id=patient_id, action="exported"))
-    await db.commit()
     return {"schema": "dentacare.patient-export.v1", "exported_at": utcnow().isoformat(),
         "patient_id": str(patient_id), "data": data}
 

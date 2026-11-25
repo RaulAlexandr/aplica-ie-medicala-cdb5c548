@@ -334,8 +334,6 @@ async def document_content(
         raise HTTPException(503, str(exc)) from exc
     if not path.is_file():
         raise HTTPException(404, "Document content unavailable")
-    _audit(db, document, user.id, "downloaded" if download else "viewed")
-    await db.commit()
     # PDFs are always an attachment: the app does not render PDFs inline.
     disposition = "attachment" if download or document.content_type == "application/pdf" else "inline"
     ascii_name = "".join(ch if ch.isascii() and (ch.isalnum() or ch in "._- ") else "_" for ch in document.original_filename)
