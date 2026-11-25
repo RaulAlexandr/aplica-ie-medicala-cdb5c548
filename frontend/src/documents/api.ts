@@ -1,10 +1,22 @@
 import { api } from '../api/client';
 
-export type DocumentCategory = 'photo' | 'radiograph' | 'document' | 'other';
+export type DocumentCategory = 'photo' | 'radiograph' | 'document' | 'other' | 'imaging';
+
+export type StlMetadata = { kind: 'stl'; format: 'binary' | 'ascii'; triangles: number };
+export type DicomMetadata = {
+  kind: 'dicom'; modality: string | null; study_date: string | null; body_part: string | null; study_description: string | null;
+  rows: number | null; columns: number | null; frames: number; bits_allocated: number | null; bits_stored: number | null;
+  samples_per_pixel: number; photometric: string | null; pixel_representation: number;
+  transfer_syntax_uid: string; transfer_syntax_name: string; window_center: number | null; window_width: number | null;
+  rescale_slope: number | null; rescale_intercept: number | null; pixel_spacing: number[] | null;
+  pixel_offset: number | null; pixel_length: number | null; viewable: boolean; viewer_message: string | null;
+};
+export type ImagingMetadata = StlMetadata | DicomMetadata;
 
 export type ClinicalDocument = {
   id: string; patient_id: string; category: DocumentCategory; description: string | null;
-  original_filename: string; content_type: 'image/jpeg' | 'image/png' | 'application/pdf';
+  original_filename: string; content_type: 'image/jpeg' | 'image/png' | 'application/pdf' | 'model/stl' | 'application/dicom';
+  imaging?: ImagingMetadata | null;
   size_bytes: number; width: number | null; height: number | null; is_image: boolean; tooth_fdi: string | null;
   appointment: null | { id: string; starts_at: string; appointment_type: string; status: string };
   clinical_date: string | null; uploaded_at: string; uploaded_by: { id: string; name: string };
@@ -16,6 +28,7 @@ export type DocumentLimits = {
   accepted_types: string[]; accepted_extensions: string[]; max_bytes: number; max_image_side: number;
   max_image_pixels: number; categories: DocumentCategory[]; image_only_categories: DocumentCategory[];
   not_supported: string[]; antivirus_scan: boolean;
+  imaging_types?: string[]; imaging_extensions?: string[]; imaging_max_bytes?: number;
 };
 
 export type VisitOption = { id: string; starts_at: string; appointment_type: string; status: string };

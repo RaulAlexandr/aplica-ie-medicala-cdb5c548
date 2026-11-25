@@ -6,17 +6,23 @@ import {
   archiveDocument, fetchDocumentContent, getDocumentLimits, listPatientDocuments, listVisitOptions, uploadDocument,
   type ClinicalDocument, type DocumentCategory, type DocumentLimits,
 } from './api';
+import { ImagingViewer } from './ImagingViewer';
 import './documents.css';
 
 export const CATEGORY_LABELS: Record<DocumentCategory, string> = {
-  photo: 'Fotografie clinică', radiograph: 'Radiografie', document: 'Document', other: 'Altele',
+  photo: 'Fotografie clinică', radiograph: 'Radiografie', document: 'Document', other: 'Altele', imaging: 'Imagistică (STL / DICOM)',
 };
 const EXTENSIONS: Record<string, string[]> = {
   'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'], 'application/pdf': ['.pdf'],
 };
-const ACCEPT = '.jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf';
+const ACCEPT = '.jpg,.jpeg,.png,.pdf,.stl,.dcm,image/jpeg,image/png,application/pdf';
+const IMAGING_EXTENSIONS = ['.stl', '.dcm'];
+const DEFAULT_IMAGING_MAX = 100 * 1024 * 1024;
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 8;
+
+const BADGES: Record<string, string> = { 'application/pdf': 'PDF', 'image/png': 'PNG', 'image/jpeg': 'JPEG', 'model/stl': 'STL', 'application/dicom': 'DICOM' };
+const isImagingDocument = (row: ClinicalDocument) => row.content_type === 'model/stl' || row.content_type === 'application/dicom';
 
 function newKey() { return crypto.randomUUID(); }
 export function formatBytes(value: number) {
@@ -35,6 +41,15 @@ function extensionOf(name: string) {
 /** Client-side pre-check only; the server is authoritative on type, size and dimensions. */
 export function precheckFile(file: { name: string; size: number }, category: DocumentCategory, limits: DocumentLimits | undefined): string | null {
   const ext = extensionOf(file.name);
+  const imagingExtensions = limits?.imaging_extensions ?? IMAGING_EXTENSIONS;
+  if (category === 'imaging') {
+    if (!imagingExtensions.includes(ext)) return 'Categoria Imagistică acceptă numai fișiere STL (.stl) și DICOM (.dcm).';
+    const imagingMax = limits?.imaging_max_bytes ?? DEFAULT_IMAGING_MAX;
+    if (file.size > imagingMax) return `Fișierul depășește limita de ${formatBytes(imagingMax)} pentru imagistică.`;
+    if (file.size === 0) return 'Fișierul este gol.';
+    return null;
+  }
+  if (imagingExtensions.includes(ext)) return 'Fișierele STL și DICOM se încarcă în categoria Imagistică.';
   const acceptedExtensions = limits?.accepted_extensions ?? Object.values(EXTENSIONS).flat();
   if (!acceptedExtensions.includes(ext)) return 'Format neacceptat. Sunt acceptate doar JPEG, PNG și PDF.';
   if (limits && file.size > limits.max_bytes) return `Fișierul depășește limita de ${formatBytes(limits.max_bytes)}.`;
@@ -141,13 +156,15 @@ export function DocumentsPanel({ patientId, timezone }: { patientId: string; tim
     && (!filterTooth || row.tooth_fdi === filterTooth));
   const compareDocs = compare.map(id => documents.data?.find(row => row.id === id)).filter((row): row is ClinicalDocument => Boolean(row?.is_image));
   const maxLabel = limits.data ? formatBytes(limits.data.max_bytes) : '20.0 MiB';
+  const imagingLabel = formatBytes(limits.data?.imaging_max_bytes ?? DEFAULT_IMAGING_MAX);
   const sideLabel = limits.data ? `${limits.data.max_image_side} px` : '';
 
   return <section className="card clinical-record-section doc-panel" aria-label="Documente și imagini">
     <div className="detail-heading"><div><p className="eyebrow">ACCES PROTEJAT</p><h2>Documente și imagini</h2></div></div>
     <p className="muted doc-rules" data-testid="document-rules">
       Formate acceptate: JPEG și PNG (fotografii, radiografii) și PDF (documente). Maximum {maxLabel} per fișier{sideLabel ? `; imagini de cel mult ${sideLabel} pe latură` : ''}.
-      DICOM, SVG, HTML și PDF-uri cu JavaScript sau fișiere atașate sunt respinse. Nu se face scanare antivirus.
+      Categoria Imagistică: modele 3D STL (binar sau ASCII) și fișiere DICOM (.dcm, un fișier, inclusiv multi-cadru), până la {imagingLabel} per fișier; se vizualizează în aplicație.
+      SVG, HTML și PDF-uri cu JavaScript sau fișiere atașate sunt respinse. Nu se face scanare antivirus.
       PDF-urile se descarcă, nu sunt afișate în aplicație. Vizualizarea nu este interpretare diagnostică; pilot cu date fictive.
     </p>
 
@@ -205,11 +222,11 @@ export function DocumentsPanel({ patientId, timezone }: { patientId: string; tim
           <p className="eyebrow">{CATEGORY_LABELS[row.category]}{row.status === 'archived' ? ' · ARHIVAT' : ''}</p>
           <h3 className="doc-name">{row.original_filename}</h3>
         </div>
-        <span className="tp-badge">{row.content_type === 'application/pdf' ? 'PDF' : row.content_type === 'image/png' ? 'PNG' : 'JPEG'}</span>
+        <span className="tp-badge">{BADGES[row.content_type] ?? 'JPEG'}</span>
       </div>
       {row.description && <p className="clinical-note-text">{row.description}</p>}
       <p className="muted">
-        {formatBytes(row.size_bytes)}{row.width && row.height ? ` · ${row.width}×${row.height} px` : ''}
+        {formatBytes(row.size_bytes)}{row.imaging?.kind === 'stl' ? ` · ${row.imaging.triangles} triunghiuri (${row.imaging.format === 'binary' ? 'binar' : 'ASCII'})` : ''}{row.imaging?.kind === 'dicom' ? ` · ${row.imaging.modality ?? 'DICOM'}${row.imaging.frames > 1 ? ` · ${row.imaging.frames} cadre` : ''}` : ''}{row.width && row.height && !isImagingDocument(row) ? ` · ${row.width}×${row.height} px` : ''}
         {' · '}{row.tooth_fdi ? `Dinte ${row.tooth_fdi}` : 'Fără dinte'}
         {' · '}{row.appointment ? `Vizita ${formatDateTime(row.appointment.starts_at, timezone)} (${row.appointment.appointment_type})` : 'Fără vizită'}
       </p>
@@ -218,7 +235,7 @@ export function DocumentsPanel({ patientId, timezone }: { patientId: string; tim
       </p>
       {row.status === 'archived' && <p className="muted">Arhivat {formatDateTime(row.archived_at, timezone)} de {row.archived_by ?? '—'}: {row.archive_reason}</p>}
       <div className="clinical-actions">
-        {row.is_image && <button type="button" className="secondary" onClick={() => { setViewing(row); setComparing(false); }}>Vizualizează</button>}
+        {(row.is_image || isImagingDocument(row)) && <button type="button" className="secondary" onClick={() => { setViewing(row); setComparing(false); }}>Vizualizează</button>}
         <button type="button" className="secondary" onClick={() => void download(row)}>Descarcă</button>
         {row.is_image && <label className="clinical-checkbox"><input type="checkbox" aria-label={`Compară ${row.original_filename}`} checked={compare.includes(row.id)} onChange={() => toggleCompare(row.id)} />Compară</label>}
         {row.status === 'active' && archiving !== row.id && <button type="button" className="secondary" onClick={() => { setArchiving(row.id); setArchiveReason(''); setArchiveError(''); }}>Arhivează</button>}
@@ -233,7 +250,7 @@ export function DocumentsPanel({ patientId, timezone }: { patientId: string; tim
 
     {viewing && !comparing && <div className="doc-viewer" aria-label="Vizualizare imagine">
       <div className="detail-heading"><h3>{viewing.original_filename}</h3><button type="button" className="secondary" onClick={() => setViewing(null)}>Închide</button></div>
-      <ZoomableImage document={viewing} />
+      {isImagingDocument(viewing) ? <ImagingViewer document={viewing} /> : <ZoomableImage document={viewing} />}
     </div>}
     {comparing && compareDocs.length === 2 && <CompareView documents={compareDocs} timezone={timezone} onClose={() => setComparing(false)} />}
   </section>;
