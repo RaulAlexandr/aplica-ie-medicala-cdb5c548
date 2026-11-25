@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     document_max_bytes: int = 20 * 1024 * 1024
     document_max_image_pixels: int = 50_000_000
     document_max_image_side: int = 12_000
+    # T15 patient communication: the adapter is picked here; only "simulated" (sends nothing outside) ships.
+    comms_adapter: str = "simulated"
+    comms_max_attempts: int = 3
+    comms_retry_minutes: int = 15
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @model_validator(mode="after")
@@ -26,6 +30,8 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET must be a non-placeholder secret outside development")
         if self.document_max_bytes < 1 or self.document_max_image_pixels < 1 or self.document_max_image_side < 1:
             raise ValueError("Document limits must be positive")
+        if self.comms_max_attempts < 1 or self.comms_retry_minutes < 1:
+            raise ValueError("Communication retry limits must be positive")
         return self
 
 @lru_cache

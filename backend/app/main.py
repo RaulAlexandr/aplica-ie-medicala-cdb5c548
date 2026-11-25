@@ -11,6 +11,7 @@ from app.cabinet_ready.router import router as cabinet_ready_router
 from app.clinic.router import router as clinic_router
 from app.clinical_notes.router import router as clinical_notes_router
 from app.collab.router import router as collab_router
+from app.comms.router import router as comms_router
 from app.config import settings
 from app.documents.router import router as documents_router
 from app.equipment.router import router as equipment_router
@@ -64,6 +65,7 @@ app.include_router(reports_router, prefix="/api")
 app.include_router(team_router, prefix="/api")
 app.include_router(collab_router, prefix="/api")
 app.include_router(cabinet_ready_router, prefix="/api")
+app.include_router(comms_router, prefix="/api")
 
 
 @app.get("/health")

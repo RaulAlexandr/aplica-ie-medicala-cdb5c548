@@ -8,6 +8,8 @@ import { DailyReportPage } from './finance/DailyReportPage';
 import { FormTemplateEditor, PatientFormsPanel } from './forms/Forms';
 import { WaitlistPanel } from './waitlist/Waitlist';
 import { EquipmentPage } from './equipment/EquipmentPage';
+import { PatientCommsPanel } from './comms/PatientComms';
+import { CommsPage } from './comms/CommsPage';
 import { ReportsPage } from './reports/ReportsPage';
 import { StaffDetail } from './staff/StaffDetail';
 import { TeamPage } from './team/TeamPage';
@@ -60,6 +62,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {staffRoles.includes(user.role) && <Link to="/cabinet-ready">Cabinet Ready</Link>}
         {cashRoles.includes(user.role) && <Link to="/finance/daily">Încasări zi</Link>}
         {managementRoles.includes(user.role) && <Link to="/reports">Rapoarte</Link>}
+        {managementRoles.includes(user.role) && <Link to="/comms">Comunicare</Link>}
         {managementRoles.includes(user.role) && <><Link to="/setup">Clinic setup</Link><Link to="/staff">Staff</Link></>}
       </nav>
       <button className="link logout" onClick={() => void onLogout()}>Sign out</button>
@@ -142,6 +145,7 @@ export function PatientDetail({ user, id, appointmentId }: { user: User; id: str
       <p>{p.notes || 'No notes recorded.'}</p>
     </section>
     {staffRoles.includes(user.role) && <PatientAccountPanel key={`${id}:account`} patientId={id} />}
+    {staffRoles.includes(user.role) && <PatientCommsPanel key={`${id}:comms`} patientId={id} canRecord={['clinic_manager', 'doctor', 'reception', 'administrator'].includes(user.role)} />}
     {staffRoles.includes(user.role) && <PatientFormsPanel key={`${id}:forms`} patientId={id} canReview={clinicalRoles.includes(user.role)} />}
     {clinicalRoles.includes(user.role) && <ClinicalPatientRecord key={id} patientId={id} appointmentId={appointmentId} user={user} />}
   </>;
@@ -482,6 +486,7 @@ export default function App() {
       <Route path="/procedures" element={<Procedures user={user} />} />
       <Route path="/procedures/:id" element={<ProcedureDetail user={user} />} />
       <Route path="/finance/daily" element={cashRoles.includes(user.role) ? <DailyReportPage /> : <Navigate to="/" />} />
+      <Route path="/comms" element={managementRoles.includes(user.role) ? <CommsPage /> : <Navigate to="/" />} />
       <Route path="/reports" element={managementRoles.includes(user.role) ? <ReportsPage /> : <Navigate to="/" />} />
       <Route path="/setup" element={managementRoles.includes(user.role) ? <Setup user={user} /> : <Navigate to="/" />} />
       <Route path="/staff" element={managementRoles.includes(user.role) ? <StaffOnboarding /> : <Navigate to="/" />} />
