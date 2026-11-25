@@ -16,6 +16,9 @@ import { locationLabel, ruleOf } from './catalog/locations';
 import { CatalogProcedureForm } from './catalog/CatalogProcedureForm';
 import { InventoryPage } from './inventory/InventoryPage';
 import { MaterialsPage } from './materials/MaterialsPage';
+import { PortalApp } from './portal/PortalApp';
+import { PatientPortalSection } from './portal/PatientPortalSection';
+import { RescheduleRequestsPage } from './portal/RescheduleRequestsPage';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -26,6 +29,7 @@ const managementRoles = ['clinic_manager', 'administrator'];
 const staffRoles = ['clinic_manager', 'doctor', 'assistant', 'reception', 'administrator'];
 const clinicalRoles = ['doctor', 'clinic_manager', 'administrator'];
 const cashRoles = ['reception', 'clinic_manager', 'administrator'];
+const portalRequestRoles = ['reception', 'clinic_manager', 'administrator'];
 const canEditPatients = (role: string) => managementRoles.includes(role) || role === 'doctor';
 function ErrorState({ error }: { error: unknown }) { return <p className="error" role="alert">{apiErrorMessage(error)}</p>; }
 function QueryState({ loading, empty, error }: { loading: boolean; empty: boolean; error: unknown }) { if (loading) return <p className="muted">Loading…</p>; if (error) return <ErrorState error={error} />; if (empty) return <p className="muted">Nothing to display yet.</p>; return null; }
@@ -57,6 +61,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {staffRoles.includes(user.role) && <CollabNavLink />}
         {staffRoles.includes(user.role) && <Link to="/materials">Materiale</Link>}
         {cashRoles.includes(user.role) && <Link to="/finance/daily">Încasări zi</Link>}
+        {portalRequestRoles.includes(user.role) && <Link to="/portal-requests">Cereri portal</Link>}
         {managementRoles.includes(user.role) && <Link to="/reports">Rapoarte</Link>}
         {managementRoles.includes(user.role) && <><Link to="/setup">Clinic setup</Link><Link to="/staff">Staff</Link></>}
       </nav>
@@ -141,6 +146,7 @@ export function PatientDetail({ user, id, appointmentId }: { user: User; id: str
     </section>
     {staffRoles.includes(user.role) && <PatientAccountPanel key={`${id}:account`} patientId={id} />}
     {staffRoles.includes(user.role) && <PatientFormsPanel key={`${id}:forms`} patientId={id} canReview={clinicalRoles.includes(user.role)} />}
+    {staffRoles.includes(user.role) && <PatientPortalSection key={`${id}:portal`} patient={p} canClinical={clinicalRoles.includes(user.role)} />}
     {clinicalRoles.includes(user.role) && <ClinicalPatientRecord key={id} patientId={id} appointmentId={appointmentId} user={user} />}
   </>;
 }
@@ -460,6 +466,7 @@ export default function App() {
   useEffect(() => { const handler = () => { setUser(null); navigate('/'); }; window.addEventListener('dentacare:session-cleared', handler); return () => window.removeEventListener('dentacare:session-cleared', handler); }, [navigate]);
   useEffect(() => { if (localStorage.getItem('access_token')) me().then(setUser).catch(() => setUser(null)).finally(() => setLoading(false)); else setLoading(false); }, []);
   if (location.pathname === '/staff/invitations/accept') return <InvitationAccept />;
+  if (/^\/portal(\/|$)/.test(location.pathname)) return <PortalApp />;
   if (loading) return <main className="auth"><p>Loading session\u2026</p></main>;
   if (!user) return <Auth onDone={() => me().then(setUser).catch(() => setUser(null))} />;
   const signOut = async () => { try { await logout(); } catch (error) { console.error('Server-side logout failed; local session was cleared.', error); } finally { setUser(null); navigate('/'); } };
@@ -479,6 +486,7 @@ export default function App() {
       <Route path="/procedures" element={<Procedures user={user} />} />
       <Route path="/procedures/:id" element={<ProcedureDetail user={user} />} />
       <Route path="/finance/daily" element={cashRoles.includes(user.role) ? <DailyReportPage /> : <Navigate to="/" />} />
+      <Route path="/portal-requests" element={portalRequestRoles.includes(user.role) ? <RescheduleRequestsPage /> : <Navigate to="/" />} />
       <Route path="/reports" element={managementRoles.includes(user.role) ? <ReportsPage /> : <Navigate to="/" />} />
       <Route path="/setup" element={managementRoles.includes(user.role) ? <Setup user={user} /> : <Navigate to="/" />} />
       <Route path="/staff" element={managementRoles.includes(user.role) ? <StaffOnboarding /> : <Navigate to="/" />} />

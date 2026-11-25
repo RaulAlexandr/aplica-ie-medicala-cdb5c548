@@ -1,0 +1,27 @@
+/* T14 staff side of the patient portal. */
+.pp-section h3{font-size:16px;margin:22px 0 10px}
+.pp-list{display:grid;gap:0}
+.pp-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid #edf0f1;flex-wrap:wrap;min-width:0}
+.pp-row>div:first-child{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1 1 240px}
+.pp-row span{color:#4f5f66;font-size:14px;overflow-wrap:anywhere}
+.pp-column{flex-direction:column;align-items:stretch}
+.pp-actions{display:flex;gap:8px;flex-wrap:wrap}
+.pp-filter{margin:6px 0 10px}
+.pp-inline{display:flex;gap:10px;align-items:end;flex-wrap:wrap;width:100%;margin:6px 0}
+.pp-inline label{flex:1 1 220px;margin:0}
+.pp-invite{margin-top:18px;padding-top:6px;border-top:1px solid #edf0f1}
+.pp-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.pp-link{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:10px 0}
+.pp-link label{flex:1 1 260px;margin:0}
+.pp-link input{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.pp-break{word-break:break-all}
+.pp-badge{display:inline-block;background:#e6f0ee;color:#1d4f4a;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:800;margin-right:6px}
+.pp-submission{margin:6px 0;padding:8px 10px;background:#f5f7f9;border-radius:7px}
+.pp-submission summary{cursor:pointer;font-size:14px;color:#2e3d44}
+.pp-submission dl{margin:8px 0 0;display:grid;gap:6px}
+.pp-submission dt{font-weight:700;font-size:13px;color:#3f4f56}
+.pp-submission dd{margin:0;overflow-wrap:anywhere}
+.pp-message{margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere;color:#17212b}
+.pp-resolve{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
+.pp-resolve label{flex:1 1 220px;margin:0}
+@media(max-width:800px){.pp-grid{grid-template-columns:1fr}}
