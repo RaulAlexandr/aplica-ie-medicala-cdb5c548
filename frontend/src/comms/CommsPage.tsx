@@ -34,7 +34,7 @@ function Templates() {
   return <div>
     <p className="muted">Variabile permise: {allowedVariables.map(v => <code key={v}>{`{${v}}`}</code>)}. Fără conținut clinic. Fiecare salvare creează o versiune nouă; mesajele deja trimise își păstrează textul.</p>
     {templates.isError && <p className="error" role="alert">{apiErrorMessage(templates.error)}</p>}
-    <div className="comms-templates">{templates.data && messageTypes.map(type => { const t = templates.data.find(x => x.message_type === type); return t && <TemplateForm key={`${type}:${t.version}`} type={type} version={t.version} subject={t.subject} body={t.body} />; })}</div>
+    <div className="comms-templates">{templates.data && messageTypes.map(type => { const t = templates.data.find(x => x.message_type === type); return t && <TemplateForm key={type} type={type} version={t.version} subject={t.subject} body={t.body} />; })}</div>
   </div>;
 }
 
