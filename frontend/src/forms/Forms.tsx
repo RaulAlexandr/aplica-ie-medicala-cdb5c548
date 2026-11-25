@@ -88,7 +88,7 @@ export function PatientFormsPanel({ patientId, canReview = false }: { patientId:
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
-  const [revisions, setRevisions] = useState<Array<{ revision_number: number; reason: string; created_at: string }>>([]);
+  const [revisions, setRevisions] = useState<Array<{ revision_number: number; reason: string; actor_name: string; created_at: string }>>([]);
   async function refresh() { const [items, available] = await Promise.all([listPatientForms(patientId), listPublishedForms()]); setForms(items); setTemplates(available); }
   useEffect(() => { void refresh(); }, [patientId]);
   async function startForm() { if (!selectedVersion) return; const created = await createPatientForm(patientId, selectedVersion); await refresh(); await open(created.id); }
@@ -121,7 +121,12 @@ export function PatientFormsPanel({ patientId, canReview = false }: { patientId:
     {current?.definition && <article><h3>{current.template_name} v{current.version_number}</h3>{current.definition.sections.map(section => <section key={section.id}><h4>{section.title}</h4>{section.questions.filter(question => visible(question, answers)).map(question => <label key={question.id}>{question.label}{question.required ? ' *' : ''}{answerControl(question, answers[question.id], value => setAnswer(question.id, value))}</label>)}</section>)}
       {(current.status === 'draft' || current.status === 'needs_clarification') && <><button type="button" onClick={() => void persist()}>Salvează răspunsurile</button><button type="button" onClick={() => void submit()}>Trimite</button></>}
       {canReview && current.status === 'submitted' && <><label>Motiv clarificare <input value={reason} onChange={event => setReason(event.target.value)} /></label><button type="button" onClick={() => void review('validated')}>Validează</button><button type="button" onClick={() => void review('needs_clarification')}>Cere clarificări</button></>}
-      {current.clarification_reason && <p>{current.clarification_reason}</p>}{canReview && revisions.length > 0 && <aside aria-label="Istoricul corecțiilor"><h4>Istoricul corecțiilor</h4><ol>{revisions.map(revision => <li key={revision.revision_number}>Revizia {revision.revision_number}: {revision.reason} · {revision.created_at}</li>)}</ol></aside>}</article>}
+      {current.clarification_reason && <p>{current.clarification_reason}</p>}
+      {canReview && current.portal_submissions && <aside aria-label="Trimiterile pacientului"><h4>Trimiterile pacientului</h4><ol>{current.portal_submissions.map(submission => <li key={`portal-${submission.revision_number}`}><strong>Completat de pacient · trimiterea #{submission.revision_number}</strong> · {submission.author} · {submission.submitted_at}<dl>{Object.entries(submission.answers).map(([id, value]) => {
+        const question = current.definition?.sections.flatMap(section => section.questions).find(item => item.id === id);
+        return <div key={id}><dt>{question?.label || id}</dt><dd>{Array.isArray(value) ? value.join(', ') : String(value)}</dd></div>;
+      })}</dl></li>)}</ol></aside>}
+      {canReview && revisions.length > 0 && <aside aria-label="Istoricul corecțiilor personalului"><h4>Corecțiile personalului</h4><ol>{revisions.map(revision => <li key={`staff-${revision.revision_number}`}><strong>Corecția personalului #{revision.revision_number}</strong> · {revision.actor_name}: {revision.reason} · {revision.created_at}</li>)}</ol></aside>}</article>}
     <p role="alert">{error}</p>
   </section>;
 }

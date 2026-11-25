@@ -593,6 +593,21 @@ async def test_patient_fills_form_and_staff_sees_a_patient_revision(env):
     assert review.status_code == 200
     resubmitted = await client.post(f"{base}/submit", headers=session["auth"], json={"answers": {"alergii": True, "detalii": "Penicilină, urticarie"}})
     assert resubmitted.status_code == 200 and resubmitted.json()["revision_number"] == 2
+    t12_after_resubmit = (await client.get(f"/api/forms/{sent.json()['id']}", headers=ctx["auth"])).json()
+    assert [(row["revision_number"], row["author"], row["answers"]["detalii"], row["source"]) for row in t12_after_resubmit["portal_submissions"]] == [
+        (1, "Ana Fictivă", "Penicilină", "patient"),
+        (2, "Ana Fictivă", "Penicilină, urticarie", "patient"),
+    ]
+    assert {row["template_version_id"] for row in t12_after_resubmit["portal_submissions"]} == {version_id}
+    assert "portal_submissions" not in (await client.get(f"/api/forms/{sent.json()['id']}", headers=(await staff(sessions, ctx, "reception")))).json()
+    assert (await client.post(f"/api/forms/{sent.json()['id']}/review", headers=ctx["auth"], json={"decision": "validated"})).status_code == 200
+    correction = await client.post(f"/api/forms/{sent.json()['id']}/corrections", headers=ctx["auth"], json={"answers": {"alergii": True, "detalii": "Corectat de medic"}, "reason": "Corectare clinică"})
+    assert correction.status_code == 200 and correction.json()["revision_number"] == 1
+    staff_history = (await client.get(f"/api/forms/{sent.json()['id']}/revisions", headers=ctx["auth"])).json()
+    assert len(staff_history) == 1 and staff_history[0]["revision_number"] == 1 and staff_history[0]["actor_name"] == "Manager Fictiv"
+    t12_after_correction = (await client.get(f"/api/forms/{sent.json()['id']}", headers=ctx["auth"])).json()
+    assert [row["revision_number"] for row in t12_after_correction["portal_submissions"]] == [1, 2]
+    assert t12_after_correction["answers"]["detalii"] == "Corectat de medic"
     section = (await client.get(f"/api/portal-staff/patients/{patient_id}", headers=ctx["auth"])).json()
     form = next(row for row in section["forms"] if row["id"] == sent.json()["id"])
     assert [row["revision_number"] for row in form["submissions"]] == [1, 2]

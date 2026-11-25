@@ -22,6 +22,7 @@ from app.database import (
     get_db,
     utcnow,
 )
+from app.portal.models import PortalAccount, PortalFormSubmission
 
 router = APIRouter(prefix="/forms", tags=["forms"])
 MANAGERS = ("clinic_manager", "administrator")
@@ -287,7 +288,23 @@ async def get_patient_form(form_id: UUID, db: AsyncSession = Depends(get_db), us
     form = await _form(db, user, form_id)
     version = await _version(db, user, form.template_version_id)
     template = await db.scalar(select(FormTemplate).where(FormTemplate.id == version.template_id, FormTemplate.clinic_id == user.clinic_id))
-    return {**_form_payload(form, version, include_definition=True, include_answers=user.role in DOCTORS), "template_name": template.name if template else None}
+    payload = {**_form_payload(form, version, include_definition=True, include_answers=user.role in DOCTORS), "template_name": template.name if template else None}
+    if user.role in DOCTORS and form.source == "patient":
+        rows = (await db.execute(
+            select(PortalFormSubmission, PortalAccount.full_name)
+            .join(PortalAccount, PortalAccount.id == PortalFormSubmission.account_id)
+            .where(PortalFormSubmission.patient_form_id == form.id, PortalFormSubmission.clinic_id == user.clinic_id)
+            .order_by(PortalFormSubmission.revision_number)
+        )).all()
+        payload["portal_submissions"] = [{
+            "revision_number": submission.revision_number,
+            "submitted_at": submission.submitted_at.isoformat(),
+            "author": author,
+            "source": "patient",
+            "template_version_id": str(form.template_version_id),
+            "answers": submission.answers,
+        } for submission, author in rows]
+    return payload
 
 
 @router.put("/{form_id}/answers")
@@ -348,7 +365,9 @@ async def correct_validated_form(form_id: UUID, data: CorrectionInput, db: Async
 @router.get("/{form_id}/revisions")
 async def form_revisions(form_id: UUID, db: AsyncSession = Depends(get_db), user: User = Depends(require_roles(*DOCTORS))):
     form = await _form(db, user, form_id)
-    revisions = (await db.scalars(select(PatientFormRevision).where(
+    revisions = (await db.execute(select(PatientFormRevision, User.full_name).join(
+        User, User.id == PatientFormRevision.actor_id
+    ).where(
         PatientFormRevision.patient_form_id == form.id,
         PatientFormRevision.clinic_id == user.clinic_id,
     ).order_by(PatientFormRevision.revision_number))).all()
@@ -358,7 +377,8 @@ async def form_revisions(form_id: UUID, db: AsyncSession = Depends(get_db), user
         "status": revision.status,
         "reason": revision.reason,
         "actor_id": str(revision.actor_id),
+        "actor_name": actor_name,
         "validated_by": str(revision.validated_by_id) if revision.validated_by_id else None,
         "validated_at": revision.validated_at.isoformat() if revision.validated_at else None,
         "created_at": revision.created_at.isoformat(),
-    } for revision in revisions]
+    } for revision, actor_name in revisions]

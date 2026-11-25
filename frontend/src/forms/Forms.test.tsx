@@ -77,6 +77,29 @@ describe('T12 form UI', () => {
     await act(async () => { renderer.unmount(); });
   });
 
+  it('shows portal submissions and staff corrections as separate histories in T12', async () => {
+    vi.spyOn(formsApi, 'listPatientForms').mockResolvedValue([{ id: 'portal-form', patient_id: 'p6', template_version_id: 'v6', template_name: 'Istoric portal', version_number: 2, source: 'patient', status: 'submitted', validated_at: null, clarification_reason: null }]);
+    vi.spyOn(formsApi, 'listPublishedForms').mockResolvedValue([]);
+    vi.spyOn(formsApi, 'getPatientForm').mockResolvedValue({ id: 'portal-form', patient_id: 'p6', template_version_id: 'v6', template_name: 'Istoric portal', version_number: 2, source: 'patient', status: 'submitted', validated_at: null, clarification_reason: null, answers: { detail: 'Răspuns curent' }, portal_submissions: [
+      { revision_number: 1, submitted_at: '2026-11-25T10:00:00Z', author: 'Ana Fictivă', source: 'patient', template_version_id: 'v6', answers: { detail: 'Prima trimitere' } },
+      { revision_number: 2, submitted_at: '2026-11-25T11:00:00Z', author: 'Ana Fictivă', source: 'patient', template_version_id: 'v6', answers: { detail: 'A doua trimitere' } },
+    ], definition: { sections: [{ id: 's', title: 'Section', questions: [{ id: 'detail', label: 'Detaliu', type: 'long_text', required: true }] }] } });
+    vi.spyOn(formsApi, 'getFormRevisions').mockResolvedValue([{ revision_number: 1, answers: { detail: 'Răspuns curent' }, status: 'validated', reason: 'Corectare clinică', actor_id: 'staff-id', actor_name: 'Dr. Fictiv', created_at: '2026-11-25T12:00:00Z' }]);
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<PatientFormsPanel patientId="p6" canReview />); });
+    const open = renderer.root.findAllByType('button').find(button => button.children.join('').includes('Istoric portal v2'))!;
+    await act(async () => { open.props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)); });
+    const text = renderer.root.findAllByType('strong').map(item => item.children.join('')).join(' ');
+    expect(text).toContain('Completat de pacient · trimiterea #1');
+    expect(text).toContain('Completat de pacient · trimiterea #2');
+    expect(renderer.root.findAllByType('dd').map(item => item.children.join(''))).toEqual(['Prima trimitere', 'A doua trimitere']);
+    expect(text).toContain('Corecția personalului #1');
+    expect(JSON.stringify(renderer.toJSON())).toContain('Dr. Fictiv');
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Trimiterile pacientului' })).toHaveLength(1);
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Istoricul corecțiilor personalului' })).toHaveLength(1);
+    await act(async () => { renderer.unmount(); });
+  });
+
   it('shows reception status without loading answers or clinical revision history', async () => {
     vi.spyOn(formsApi, 'listPatientForms').mockResolvedValue([{ id: 'reception-form', patient_id: 'p5', template_version_id: 'v5', template_name: 'Reception view', version_number: 2, source: 'staff', status: 'draft', validated_at: null, clarification_reason: null }]);
     vi.spyOn(formsApi, 'listPublishedForms').mockResolvedValue([]);
