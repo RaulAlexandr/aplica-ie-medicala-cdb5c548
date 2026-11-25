@@ -262,7 +262,7 @@ async def reissue_invitation(account_id: UUID, user: User = Depends(require_role
     if account.status != "invited":
         raise HTTPException(409, "Invitația se poate retrimite numai unui cont fără parolă.")
     invitation, raw = await _new_invitation(db, user, account)
-    audit(db, user.clinic_id, "invitation_created", staff_actor_id=user.id, entity_type="portal_invitation", entity_id=invitation.id)
+    audit(db, user.clinic_id, "invitation_created", staff_actor_id=user.id, entity_type="portal_account", entity_id=account.id)
     await db.commit()
     return {"account_id": str(account.id), "invitation_url": _invitation_url(raw), "invitation_expires_at": _iso(invitation.expires_at)}
 
@@ -511,7 +511,9 @@ async def portal_audit(patient_id: UUID, user: User = Depends(require_roles(*MAN
         PortalAccount, PortalAccount.id == PortalAuditEvent.account_id,
     ).outerjoin(User, User.id == PortalAuditEvent.staff_actor_id).where(
         PortalAuditEvent.clinic_id == user.clinic_id,
-        (PortalAuditEvent.patient_id == patient.id) | (PortalAuditEvent.patient_id.is_(None) & PortalAuditEvent.account_id.in_(account_ids)),
+        (PortalAuditEvent.patient_id == patient.id)
+        | (PortalAuditEvent.patient_id.is_(None) & PortalAuditEvent.account_id.in_(account_ids))
+        | (PortalAuditEvent.patient_id.is_(None) & (PortalAuditEvent.entity_type == "portal_account") & PortalAuditEvent.entity_id.in_(account_ids)),
     ).order_by(PortalAuditEvent.occurred_at.desc()).limit(500))).all()
     return [{"action": event.action, "occurred_at": _iso(event.occurred_at), "account": account_name, "staff": staff_name,
              "patient_id": str(event.patient_id) if event.patient_id else None, "entity_type": event.entity_type,

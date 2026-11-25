@@ -652,8 +652,10 @@ async def test_audit_records_login_document_confirmation_and_request(env):
     for action in ("document_downloaded", "appointment_confirmed", "reschedule_requested"):
         assert str(by_action[action].patient_id) == patient_id
     assert {"access_granted", "invitation_created", "document_published"} <= set(by_action)
+    reissued = await client.post(f"/api/portal-staff/accounts/{session['account_id']}/revoke", headers=ctx["auth"], json={"reason": "Probă"})
+    assert reissued.status_code == 200
     listed = (await client.get(f"/api/portal-staff/patients/{patient_id}/audit", headers=ctx["auth"])).json()
-    assert {"login", "document_downloaded", "appointment_confirmed", "reschedule_requested"} <= {row["action"] for row in listed}
+    assert {"login", "document_downloaded", "appointment_confirmed", "reschedule_requested", "account_revoked"} <= {row["action"] for row in listed}
     assert any(row["account"] == "Ana Fictivă" for row in listed)
 
 
