@@ -476,6 +476,164 @@ def seed_clinical(credentials: dict, ids: dict[str, UUID], manager_token: str) -
     return summary
 
 
+def seed_new_modules(credentials: dict, ids: dict[str, UUID], manager_token: str) -> dict[str, int]:
+    """Populate the newer pilot modules through their public, role-checked APIs."""
+    reception = login_token(credentials["reception"])
+    doctor = login_token(credentials["doctor"])
+    today = datetime.now(ZoneInfo("Europe/Bucharest")).date()
+    tomorrow = today + timedelta(days=1)
+    ioana, elena = str(stable_id("pacient:ioana")), str(stable_id("pacient:elena"))
+    room = str(stable_id("room:Cabinet Demo 1"))
+    catalog = {code: str(stable_id("procedure:" + code)) for code in ("CONS-DEMO", "PROF-DEMO", "REST-DEMO")}
+    made: dict[str, int] = {}
+
+    def once(name: str) -> None:
+        made[name] = made.get(name, 0) + 1
+
+    # T12 form template and a submitted patient form.
+    templates = request("GET", "/api/forms/templates", token=manager_token)
+    template = next((x for x in templates if x["name"] == "Anamneză demo fictivă"), None)
+    if template is None:
+        template = request("POST", "/api/forms/templates", {"name": "Anamneză demo fictivă"}, manager_token)
+        template["status"] = "draft"
+        once("șabloane T12")
+    if template["status"] != "published":
+        definition = {"sections": [{"id": "general", "title": "Date demonstrative", "questions": [
+            {"id": "motiv", "type": "short_text", "label": "Motivul vizitei", "required": True},
+            {"id": "alergii", "type": "yes_no", "label": "Există alergii cunoscute?", "required": True},
+            {"id": "detalii", "type": "long_text", "label": "Detalii fictive despre alergii", "required": False,
+             "condition": {"question_id": "alergii", "operator": "equals", "value": "yes"}},
+        ]}]}
+        version = request("PUT", f"/api/forms/versions/{template['version_id']}", {"definition": definition}, manager_token)
+        request("POST", f"/api/forms/versions/{version['id']}/publish", token=manager_token)
+        template["version_id"] = version["id"]
+        template["status"] = "published"
+    existing_forms = request("GET", f"/api/forms/patients/{elena}", token=doctor)
+    form = next((x for x in existing_forms if x.get("template_name") == "Anamneză demo fictivă"), None)
+    if form is None:
+        form = request("POST", f"/api/forms/patients/{elena}/{template['version_id']}", token=doctor)
+        once("formulare completate T12")
+    if form["status"] == "draft":
+        request("PUT", f"/api/forms/{form['id']}/answers", {"answers": {"motiv": "Control demonstrativ", "alergii": True, "detalii": "Alergie fictivă, fără date reale."}}, doctor)
+        request("POST", f"/api/forms/{form['id']}/submit", token=doctor)
+
+    # T17 stock and T18 recipes; stable client_request_id protects receipts and recipe writes.
+    inventory = request("GET", "/api/inventory", token=manager_token)
+    loc = next((x for x in inventory["locations"] if x["name"] == "Depozit demo"), None)
+    if loc is None:
+        loc = request("POST", "/api/inventory/locations", {"name": "Depozit demo"}, manager_token)
+    article_specs = [("Mănuși demo fictive", "cutie", "10", "LOT-MANUSI-01", "40", 21),
+                     ("Rășină demo fictivă", "seringă", "3", "LOT-RASINA-01", "1", 400)]
+    item_ids = {}
+    inventory = request("GET", "/api/inventory", token=manager_token)
+    for name, unit, minimum, lot_code, quantity, expire_days in article_specs:
+        found = next((x for x in inventory["items"] if x["name"] == name), None)
+        if found is None:
+            found = request("POST", "/api/inventory/items", {"name": name, "unit": unit, "minimum_quantity": minimum}, manager_token)
+            once("articole T17")
+            inventory = request("GET", "/api/inventory", token=manager_token)
+            found = next(x for x in inventory["items"] if x["name"] == name)
+        item_ids[name] = found["id"]
+        lot = next((x for x in inventory["lots"] if x["code"] == lot_code), None)
+        if lot is None:
+            lot = request("POST", "/api/inventory/lots", {"item_id": found["id"], "code": lot_code,
+                "expires_on": (today + timedelta(days=expire_days)).isoformat()}, manager_token)
+            once("loturi T17")
+        movements = request("GET", "/api/inventory/movements?limit=500", token=manager_token)
+        marker = str(stable_id("stock-receipt:" + lot_code))
+        # The API enforces idempotence by client_request_id; repeating an identical receipt is safe.
+        if not any(x["reason"] == "Recepție inițială demo fictivă " + lot_code for x in movements):
+            request("POST", "/api/inventory/movements/receipt", {"item_id": found["id"], "lot_id": lot["id"],
+                "location_id": loc["id"], "quantity": quantity, "client_request_id": marker,
+                "reason": "Recepție inițială demo fictivă " + lot_code}, manager_token)
+            once("recepții T17")
+
+    # T18 recipes for each service, with one current recipe per code.
+    for index, code in enumerate(("CONS-DEMO", "PROF-DEMO", "REST-DEMO")):
+        recipe = request("GET", f"/api/materials/recipes/{catalog[code]}", token=manager_token)
+        if not recipe.get("lines"):
+            request("PUT", f"/api/materials/recipes/{catalog[code]}", {"expected_version": recipe.get("version", 0),
+                "client_request_id": str(stable_id("recipe:" + code)), "lines": [
+                    {"item_id": item_ids["Mănuși demo fictive"], "estimated_quantity": "1"},
+                    {"item_id": item_ids["Rășină demo fictivă"], "estimated_quantity": str(index + 1)}]}, manager_token)
+            once("rețete T18")
+
+    # A1 planned procedures on today's three existing demo appointments.
+    for key, code in (("appointment:today-ioana", "REST-DEMO"), ("appointment:today-andrei", "CONS-DEMO"), ("appointment:today-elena", "PROF-DEMO")):
+        appt = str(stable_id(key))
+        current = request("GET", f"/api/appointment-procedures/{appt}", token=doctor)
+        if not current["procedures"]:
+            request("PUT", f"/api/appointment-procedures/{appt}", {"expected_revision": current["revision"],
+                "procedures": [{"procedure_catalog_id": catalog[code], "quantity": 1}]}, doctor)
+            once("planificări A1")
+
+    # T16 waitlist entry and recall use explicit marker fields for resume safety.
+    entries = request("GET", "/api/waitlist/entries", token=reception)
+    if not any(x.get("notes") == "T16 demo-seed fictiv" for x in entries):
+        day = today + timedelta(days=7)
+        request("POST", "/api/waitlist/entries", {"patient_id": str(stable_id("pacient:elena")),
+            "desired_service": "Igienizare demonstrativă", "desired_duration_minutes": 45,
+            "preferred_doctor_id": str(ids["doctor"]), "windows": [{"weekday": day.weekday(), "start": "09:00", "end": "12:00"}],
+            "valid_from": day.isoformat(), "valid_until": (day + timedelta(days=30)).isoformat(), "priority": 5,
+            "notes": "T16 demo-seed fictiv"}, reception)
+        once("înscrieri T16")
+    recalls = request("GET", "/api/waitlist/recalls", token=reception)
+    if not any(x.get("reason") == "Rechemare demo fictivă" for x in recalls):
+        request("POST", "/api/waitlist/recalls", {"patient_id": ioana, "due_date": (today + timedelta(days=14)).isoformat(),
+            "reason": "Rechemare demo fictivă", "service": "Control demonstrativ"}, doctor)
+        once("rechemări T16")
+
+    # T19 shifts and an approved future leave request.
+    shift_days = [today + timedelta(days=n) for n in range(1, 8) if (today + timedelta(days=n)).weekday() < 5][:5]
+    for shift_day in shift_days:
+        schedule = request("GET", f"/api/team/schedule?day={shift_day.isoformat()}", token=manager_token)
+        if not any(x.get("user_id") == str(ids["doctor"]) for x in schedule["shifts"]):
+            request("POST", "/api/team/shifts", {"user_id": str(ids["doctor"]), "room_id": room,
+                "local_start": f"{shift_day.isoformat()}T09:00:00", "local_end": f"{shift_day.isoformat()}T17:00:00"}, manager_token)
+            once("ture T19")
+    leave = request("GET", "/api/team/leave", token=manager_token)
+    if not any(x.get("reason") == "Concediu demo fictiv" for x in leave):
+        leave = request("POST", "/api/team/leave", {"user_id": str(ids["reception"]), "leave_type": "annual",
+            "starts_on": (today + timedelta(days=30)).isoformat(), "ends_on": (today + timedelta(days=31)).isoformat(),
+            "reason": "Concediu demo fictiv"}, manager_token)
+        request("POST", f"/api/team/leave/{leave['id']}/approve", token=manager_token)
+        once("concedii aprobate T19")
+
+    # T20 direct conversation/message and an open task.
+    conversations = request("GET", "/api/collab/conversations", token=manager_token)
+    convo = next((x for x in conversations if x.get("title") == "Conversație demo fictivă"), None)
+    if convo is None:
+        convo = request("POST", "/api/collab/conversations", {"kind": "group", "title": "Conversație demo fictivă",
+            "member_ids": [str(ids["doctor"]), str(ids["reception"])]}, manager_token)
+        once("conversații T20")
+    messages = request("GET", f"/api/collab/conversations/{convo['id']}/messages", token=manager_token)
+    if not any(x.get("body") == "Mesaj demonstrativ fictiv pentru echipă." for x in messages["messages"]):
+        request("POST", f"/api/collab/conversations/{convo['id']}/messages", {"body": "Mesaj demonstrativ fictiv pentru echipă.",
+            "client_request_id": str(stable_id("collab-message:seed"))}, manager_token)
+        once("mesaje T20")
+    tasks = request("GET", "/api/collab/tasks", token=manager_token)
+    if not any(x.get("title") == "Pregătește cabinetul pentru demo" for x in tasks):
+        request("POST", "/api/collab/tasks", {"title": "Pregătește cabinetul pentru demo",
+            "description": "Verifică materialele fictive și pregătește sala.", "assignee_id": str(ids["reception"]),
+            "local_due": f"{tomorrow.isoformat()}T08:30:00"}, manager_token)
+        once("sarcini T20")
+
+    # T21 equipment with an upcoming maintenance window.
+    equipment = request("GET", "/api/equipment", token=manager_token)
+    item = next((x for x in equipment if x.get("serial_number") == "DEMO-T21-001"), None)
+    if item is None:
+        item = request("POST", "/api/equipment", {"name": "Unit dentar demo fictiv", "equipment_type": "Unit dentar",
+            "serial_number": "DEMO-T21-001", "room_id": room, "responsible_id": str(ids["doctor"]),
+            "state": "available", "is_active": True}, manager_token)
+        once("echipamente T21")
+    history = request("GET", f"/api/equipment/{item['id']}/history", token=manager_token)
+    if not any(x.get("reason") == "Revizie demo fictivă" for x in history["unavailabilities"]):
+        request("POST", f"/api/equipment/{item['id']}/unavailabilities", {"reason": "Revizie demo fictivă",
+            "starts_at": f"{(today + timedelta(days=10)).isoformat()}T09:00:00", "ends_at": f"{(today + timedelta(days=10)).isoformat()}T11:00:00"}, manager_token)
+        once("indisponibilități T21")
+    return made
+
+
 def main() -> None:
     asyncio.run(ensure_schema())
     credentials = load_credentials()
@@ -550,9 +708,10 @@ def main() -> None:
     )
     asyncio.run(seed_records(clinic_id, ids["doctor"]))
     created = seed_clinical(credentials, ids, token)
+    created.update(seed_new_modules(credentials, ids, token))
     print(
         f"Seed fictiv OK: {clinic_name}; {len(roster)} membri, 3 pacienți, 2 cabinete, 3 servicii, 8 programări, "
-        "date clinice T04–T13 (odontogramă, plan, parodontal, documente, încasări)."
+        "date clinice T04–T13 și module T12, T16–T21, A1."
     )
     print("Adăugat în această rulare: " + (", ".join(f"{v} {k}" for k, v in created.items()) or "nimic (deja existent)."))
     print(

@@ -112,3 +112,47 @@ Loguri locale (pentru cine investighează): `~/.local/share/dentacare-pilot-demo
 ## 5. Verificare automată a ghidului
 
 `scripts/pilot/demo-walkthrough.mjs` parcurge acest ghid pe datele seed, pe toate cele trei roluri (agenda, programare, încasare, încasări zi; vizită, odontogramă, manoperă din dinte cu timer, plan, parodontal, documente cu hash, pacient inexistent, favicon; configurare, catalog, ajustare și anulare, reactivare de personal, serviciu cu dinte obligatoriu), cu verificări și clasificarea erorilor de consolă. Variabilele necesare sunt cele ale celorlalte scripturi de acceptanță (`PLAYWRIGHT_MODULE`, `CHROMIUM_EXECUTABLE`, `PILOT_WEB_URL`, `PILOT_API_URL` terminat în `/api`, `PILOT_CREDENTIALS`, `DENTACARE_PILOT_HOME`, `DENTACARE_APP_SHA`).
+
+## Module noi
+
+Datele de mai jos sunt create de seed și pot fi reluate fără dubluri. Folosește conturile din `credentials.json`; nu copia parolele.
+
+Limita T12 menționată la secțiunea 3 descriea seed-ul anterior; șablonul și formularul descrise aici sunt incluse acum.
+
+### Formulare T12
+
+- **Manager — Fă:** *Clinic setup* → editorul de formulare → „Anamneză demo fictivă”. **Observă:** șablonul publicat și întrebările condiționale.
+- **Medic — Fă:** pacientul Elena Test → formulare. **Observă:** formularul completat și trimis, cu răspunsuri demonstrative.
+
+### Listă de așteptare și rechemări T16
+
+- **Recepție — Fă:** *Lista de așteptare* → verifică *Intrări* și *Rechemări scadente*. **Observă:** Elena Test în lista activă pentru igienizare și rechemarea fictivă a Ioanei.
+
+### Stocuri T17 și rețete de materiale T18
+
+- **Manager — Fă:** *Inventory* → verifică articolele, loturile și soldurile. **Observă:** lotul de rășină este sub minim, iar lotul de mănuși se apropie de expirare.
+- **Manager — Fă:** *Materiale* → rețete → deschide CONS-DEMO, PROF-DEMO și REST-DEMO. **Observă:** fiecare serviciu are consumuri estimate fictive.
+- **Medic — Fă:** *Materiale* → necesar pentru programările de azi. **Observă:** planurile A1 se traduc în necesarul rețetelor.
+
+### Proceduri planificate A1
+
+- **Recepție sau medic — Fă:** *Appointments* → deschide fiecare programare de azi. **Observă:** planul de servicii pentru Ioana, Andrei și Elena; planificarea rămâne distinctă de manopera efectuată.
+
+### Echipa și ture T19
+
+- **Manager — Fă:** *Echipă* → *Program* pentru următoarea zi lucrătoare și *Concedii*. **Observă:** tura medicului în cabinetul demo și concediul viitor aprobat al recepției.
+- **Recepție — Fă:** *Echipă* → *Program* pentru următoarea zi lucrătoare. **Observă:** tura; detaliile motivului concediului rămân vizibile numai managerului.
+
+### Conversații și sarcini T20
+
+- **Manager — Fă:** *Messages* → conversații și sarcini. **Observă:** conversația de echipă cu mesajul fictiv și sarcina atribuită recepției.
+- **Recepție — Fă:** *Messages* → sarcini. **Observă:** sarcina de pregătire a cabinetului.
+
+### Echipamente T21
+
+- **Manager — Fă:** *Echipamente* → deschide „Unit dentar demo fictiv” → istoric/indisponibilități. **Observă:** fereastra viitoare de revizie.
+- **Recepție — Fă:** *Echipamente*. **Observă:** aparatul demo în lista echipamentelor.
+
+### Rapoarte T24
+
+- **Manager — Fă:** *Rapoarte* → alege indicatorul programărilor și perioada de azi. **Observă:** valoare și înregistrări din agenda demo; datele fictive susțin și indicatorii de manopere și încasări.
