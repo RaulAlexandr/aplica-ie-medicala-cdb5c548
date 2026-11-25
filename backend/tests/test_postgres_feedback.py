@@ -102,6 +102,23 @@ async def test_feedback_token_is_consumed_once_under_concurrent_posts(migrated):
 
 
 @pytest.mark.asyncio
+async def test_feedback_request_is_unique_per_visit_under_concurrent_closes(migrated):
+    sessions = migrated
+    _clinic_id, _patient_id, appointment_id = await seed(sessions)
+
+    async def close_once():
+        async with sessions() as db:
+            appointment = await db.get(Appointment, appointment_id)
+            await schedule_visit_messages(db, appointment)
+            await db.commit()
+
+    await asyncio.gather(*(close_once() for _ in range(8)))
+    async with sessions() as db:
+        assert await db.scalar(select(func.count()).select_from(FeedbackRequest).where(FeedbackRequest.appointment_id == appointment_id)) == 1
+        assert await db.scalar(select(func.count()).select_from(CommOutbox).where(CommOutbox.appointment_id == appointment_id, CommOutbox.message_type == "feedback_request")) == 1
+
+
+@pytest.mark.asyncio
 async def test_campaign_patient_idempotency_is_enforced_under_concurrency(migrated):
     sessions = migrated
     clinic_id, patient_id, appointment_id = await seed(sessions)
