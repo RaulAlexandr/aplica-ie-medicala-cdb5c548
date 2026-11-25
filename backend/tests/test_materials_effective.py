@@ -166,7 +166,136 @@ async def test_item_linked_to_closed_performed_procedure_leaves_demand(env, stat
     data = await requirements(client, ctx)
     assert appointment(data, appointment_id)["procedures"] == []
     assert material["item_id"] not in data["needed_by_item"]
-    assert appointment_id in without_procedure(data)
+    if status == "completed":
+        assert appointment_id not in without_procedure(data)
+    else:
+        assert appointment_id in without_procedure(data)
+
+
+@pytest.mark.parametrize(("manual", "completed_count", "expected"), [(1, 1, None), (2, 1, "3.000"), (2, 2, None)])
+async def test_completed_performed_procedures_reduce_manual_demand(env, manual, completed_count, expected):  # noqa: F811
+    client, sessions = env
+    ctx = await register(client)
+    procedure_id, material = await with_recipe(client, ctx)
+    appointment_id = await add_appointment(client, ctx, starts_at=DAY_1)
+    await link_manual(client, ctx, appointment_id, procedure_id, manual)
+    for _ in range(completed_count):
+        await performed(client, sessions, ctx, appointment_id, procedure_id, status="completed")
+
+    data = await requirements(client, ctx)
+    procedures = appointment(data, appointment_id)["procedures"]
+    assert ([line["estimated_quantity"] for proc in procedures for line in proc["lines"]]
+            == ([] if expected is None else [expected]))
+    if expected is None:
+        assert material["item_id"] not in data["needed_by_item"]
+        assert appointment_id not in without_procedure(data)
+    else:
+        assert procedures[0]["quantity"] == 1
+
+
+async def test_completed_unlinked_performed_reduces_manual_but_open_does_not(env):  # noqa: F811
+    client, sessions = env
+    ctx = await register(client)
+    procedure_id, _material = await with_recipe(client, ctx)
+    appointment_id = await add_appointment(client, ctx, starts_at=DAY_1)
+    await link_manual(client, ctx, appointment_id, procedure_id, 2)
+    await performed(client, sessions, ctx, appointment_id, procedure_id, status="completed")
+    await performed(client, sessions, ctx, appointment_id, procedure_id)
+
+    data = await requirements(client, ctx)
+    procedures = appointment(data, appointment_id)["procedures"]
+    assert procedures[0]["quantity"] == 1
+    assert appointment_id not in without_procedure(data)
+
+
+@pytest.mark.parametrize("status", ["open", "cancelled"])
+async def test_open_or_cancelled_performed_does_not_reduce_manual_demand(env, status):  # noqa: F811
+    client, sessions = env
+    ctx = await register(client)
+    procedure_id, _material = await with_recipe(client, ctx)
+    appointment_id = await add_appointment(client, ctx, starts_at=DAY_1)
+    await link_manual(client, ctx, appointment_id, procedure_id, 1)
+    await performed(client, sessions, ctx, appointment_id, procedure_id,
+                    status="cancelled" if status == "cancelled" else None)
+
+    data = await requirements(client, ctx)
+    assert appointment(data, appointment_id)["procedures"][0]["quantity"] == 1
+    assert appointment_id not in without_procedure(data)
+
+
+async def test_completed_linked_plan_keeps_remaining_manual_unit(env):  # noqa: F811
+    client, sessions = env
+    ctx = await register(client)
+    procedure_id, _material = await with_recipe(client, ctx)
+    appointment_id = await add_appointment(client, ctx, starts_at=DAY_1)
+    await link_manual(client, ctx, appointment_id, procedure_id, 2)
+    performed_id = await performed(client, sessions, ctx, appointment_id, procedure_id, status="completed")
+    await plan_item(sessions, ctx, procedure_id, appointment_id, performed_id=performed_id)
+
+    data = await requirements(client, ctx)
+    assert appointment(data, appointment_id)["procedures"][0]["quantity"] == 1
+
+
+async def test_unperformed_plan_survives_completed_unlinked_manual_procedure(env):  # noqa: F811
+    client, sessions = env
+    ctx = await register(client)
+    procedure_id, _material = await with_recipe(client, ctx)
+    appointment_id = await add_appointment(client, ctx, starts_at=DAY_1)
+    await link_manual(client, ctx, appointment_id, procedure_id, 1)
+    await plan_item(sessions, ctx, procedure_id, appointment_id)
+    await performed(client, sessions, ctx, appointment_id, procedure_id, status="completed")
+
+    data = await requirements(client, ctx)
+    assert appointment(data, appointment_id)["procedures"][0]["quantity"] == 1
+
+
+async def test_completed_counts_are_grouped_and_isolated_per_appointment(env):  # noqa: F811
+    client, sessions = env
+    ctx = await register(client)
+    procedure_id, _material = await with_recipe(client, ctx)
+    first = await add_appointment(client, ctx, starts_at=DAY_1)
+    second = await add_appointment(client, ctx, starts_at=DAY_2)
+    await link_manual(client, ctx, first, procedure_id, 2)
+    await link_manual(client, ctx, second, procedure_id, 2)
+    await performed(client, sessions, ctx, first, procedure_id, status="completed")
+
+    statements = []
+    def capture(_conn, _cursor, statement, parameters, _context, _many):
+        lowered = statement.lower()
+        if "performed_procedures" in lowered and "group by" in lowered and "completed" in str(parameters):
+            statements.append(statement)
+
+    event.listen(sessions.kw["bind"].sync_engine, "before_cursor_execute", capture)
+    try:
+        data = await requirements(client, ctx)
+    finally:
+        event.remove(sessions.kw["bind"].sync_engine, "before_cursor_execute", capture)
+
+    assert len(statements) == 1
+    assert appointment(data, first)["procedures"][0]["quantity"] == 1
+    assert appointment(data, second)["procedures"][0]["quantity"] == 2
+
+
+async def test_completed_manual_unit_reduces_shortage_and_replenishment(env):  # noqa: F811
+    client, sessions = env
+    ctx = await register(client)
+    procedure_id, material = await with_recipe(client, ctx, stock="5")
+    appointment_id = await add_appointment(client, ctx, starts_at=DAY_1)
+    await link_manual(client, ctx, appointment_id, procedure_id, 2)
+    before = await requirements(client, ctx)
+    assert before["needed_by_item"][material["item_id"]] == "6.000"
+    assert next(row for row in before["shortages"] if row["item_id"] == material["item_id"])["quantity"] == "1.000"
+    before_replenishment = await client.get("/api/materials/replenishment", headers=ctx["auth"], params=WINDOW)
+    before_line = next(row for row in before_replenishment.json()["items"] if row["item_id"] == material["item_id"])
+    assert before_line["needed"] == "6.000"
+
+    await performed(client, sessions, ctx, appointment_id, procedure_id, status="completed")
+    after = await requirements(client, ctx)
+    assert after["needed_by_item"][material["item_id"]] == "3.000"
+    assert not any(row["item_id"] == material["item_id"] for row in after["shortages"])
+    after_replenishment = await client.get("/api/materials/replenishment", headers=ctx["auth"], params=WINDOW)
+    after_line = next(row for row in after_replenishment.json()["items"] if row["item_id"] == material["item_id"])
+    assert after_line["needed"] == "3.000"
 
 
 async def test_open_performed_item_on_draft_plan_does_not_contribute(env):  # noqa: F811
@@ -178,7 +307,7 @@ async def test_open_performed_item_on_draft_plan_does_not_contribute(env):  # no
     await plan_item(sessions, ctx, procedure_id, appointment_id, plan_status="draft", performed_id=performed_id)
     data = await requirements(client, ctx)
     assert appointment(data, appointment_id)["procedures"] == []
-    assert appointment_id in without_procedure(data)
+    assert appointment_id not in without_procedure(data)
 
 
 @pytest.mark.parametrize(("manual", "unperformed", "expected"), [(1, 0, "3.000"), (3, 0, "9.000"), (None, 1, "6.000"), (2, 1, "6.000")])
