@@ -22,6 +22,14 @@ const staffCard = (values: Partial<CabinetCard> = {}): CabinetCard => ({
 const boardWith = (cards: CabinetCard[]): CabinetBoard => ({ day: '2026-12-02', timezone: 'Europe/Bucharest', server_now: '2026-12-02T08:00:00Z', rooms: [{ id: 'room-1', name: 'Cabinet fictiv' }], cards });
 const text = (node: TestRenderer.ReactTestInstance): string => node.children.map(child => typeof child === 'string' ? child : text(child)).join('');
 const flush = () => new Promise(resolve => setTimeout(resolve, 15));
+async function waitForCards(renderer: TestRenderer.ReactTestRenderer, expected: number) {
+  const deadline = Date.now() + 1000;
+  const rendered = () => renderer.root.findAll(node => node.props['aria-label']?.startsWith('Pregătire ')).length;
+  while (rendered() < expected) {
+    if (Date.now() >= deadline) throw new Error(`Așteptam ${expected} carduri Cabinet Ready; au apărut ${rendered()}.`);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+  }
+}
 const button = (renderer: TestRenderer.ReactTestRenderer, label: string) => renderer.root.findAll(node => node.type === 'button' && text(node).includes(label))[0];
 
 async function render(account: User, board: CabinetBoard) {
@@ -30,8 +38,8 @@ async function render(account: User, board: CabinetBoard) {
   vi.spyOn(cabinetApi, 'getBoard').mockResolvedValue(board);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
   let renderer!: TestRenderer.ReactTestRenderer;
-  await act(async () => { renderer = TestRenderer.create(<QueryClientProvider client={client}><CabinetReadyPage user={account} /></QueryClientProvider>); await flush(); });
-  await act(async () => { await flush(); });
+  await act(async () => { renderer = TestRenderer.create(<QueryClientProvider client={client}><CabinetReadyPage user={account} /></QueryClientProvider>); });
+  await waitForCards(renderer, board.cards.length);
   return renderer;
 }
 
