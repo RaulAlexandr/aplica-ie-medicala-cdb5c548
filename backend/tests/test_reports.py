@@ -1,9 +1,11 @@
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from jose import jwt
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.auth.service import hash_password
@@ -26,7 +28,9 @@ from app.database import (
     WorkingHours,
     get_db,
 )
+from app.inventory.models import InventoryItem, InventoryLocation, InventoryLot, InventoryMovement
 from app.main import app
+from app.materials.models import MaterialConsumptionBatch, MaterialConsumptionLine
 
 
 def create_test_token(user_id: str, clinic_id: str, role: str) -> str:
@@ -402,7 +406,7 @@ async def test_reports_financial_service_duration_and_consumptions(report_env):
     assert {kind: f"{amount:.2f}" for kind, amount in sorted(grouped_reversals.items())} == reversal.json()["value"]["by_reversed_kind"]
     assert {row["id"] for row in reversal_records.json()["records"]} == {str(entry.id) for entry in reversal_entries}
     consumption = await client.get(f"/api/reports/consumptions?{params}", headers=headers)
-    assert consumption.json()["value"]["status"] == "unavailable"
+    assert consumption.json()["value"] == []
     consumption_rows = await client.get(f"/api/reports/consumptions/records?{params}", headers=headers)
     assert consumption_rows.json()["total"] == 0 and consumption_rows.json()["records"] == []
     uncontinued = await client.get(f"/api/reports/treatment_items_uncontinued?{params}", headers=headers)
@@ -517,7 +521,7 @@ async def test_every_indicator_filter_reconciles_to_its_exact_source_rows(report
             "treatment_items_uncontinued": {"count": 2, "ages_days": [1, 3]}, "services_performed": "100.00",
             "receipts_net_by_method": {"cash": "0.00"},
             "financial_reversals": {"count": 2, "amount": "42.00", "by_reversed_kind": {"payment": "42.00"}},
-            "consumptions": {"status": "unavailable", "reason": "Indisponibil până la T17."},
+            "consumptions": [],
         },
         "room": {
             "appointments_total": 4, "appointments_cancelled": 1, "appointments_no_show": 0, "appointments_completed": 2,
@@ -526,7 +530,7 @@ async def test_every_indicator_filter_reconciles_to_its_exact_source_rows(report
             "treatment_items_uncontinued": {"count": 2, "ages_days": [1, 2]}, "services_performed": "90.00",
             "receipts_net_by_method": {"cash": "0.00"},
             "financial_reversals": {"count": 2, "amount": "32.00", "by_reversed_kind": {"payment": "32.00"}},
-            "consumptions": {"status": "unavailable", "reason": "Indisponibil până la T17."},
+            "consumptions": [],
         },
     }
     for group, keys in groups.items():
@@ -588,5 +592,149 @@ async def test_every_indicator_filter_reconciles_to_its_exact_source_rows(report
                 assert sum(Decimal(row["amount"]) for row in records) == Decimal(value["amount"])
                 assert sum(Decimal(row["amount"]) for row in records if row.get("reverses_kind") == "payment") == Decimal(value["by_reversed_kind"].get("payment", "0"))
             elif indicator == "consumptions":
-                assert value["status"] == "unavailable" and records == []
+                assert value == [] and records == []
             assert all(not ({"notes", "allergies", "diagnosis", "tooth_fdi", "clinical_note"} & set(row)) for row in records)
+
+
+@pytest.mark.asyncio
+async def test_consumption_report_reconciles_sources_corrections_filters_and_local_period(report_env):
+    client, sessions, ids, headers = report_env
+    async with sessions() as session:
+        item = InventoryItem(clinic_id=ids["clinic"], name="Consumabil fictiv", unit="buc", minimum_quantity=Decimal(0))
+        liquid = InventoryItem(clinic_id=ids["clinic"], name="Lichid fictiv", unit="ml", minimum_quantity=Decimal(0))
+        location = InventoryLocation(clinic_id=ids["clinic"], name="Depozit fictiv")
+        session.add_all([item, liquid, location])
+        await session.flush()
+        lot = InventoryLot(clinic_id=ids["clinic"], item_id=item.id, code="LOT-CONSUM")
+        liquid_lot = InventoryLot(clinic_id=ids["clinic"], item_id=liquid.id, code="LOT-LICHID")
+        catalog = ProcedureCatalog(clinic_id=ids["clinic"], code="CONSUM", code_lower="consum",
+            name="Manoperă fictivă", default_duration_minutes=30, base_price=Decimal("10.00"))
+        session.add_all([lot, liquid_lot, catalog])
+        await session.flush()
+        appointment = Appointment(clinic_id=ids["clinic"], patient_id=ids["patient"], doctor_id=ids["doctor"],
+            room_id=ids["room"], starts_at=at_local("2026-10-25T23:59:59"), duration_minutes=30,
+            status="completed", appointment_type="Control fictiv")
+        session.add(appointment)
+        await session.flush()
+        performed = PerformedProcedure(clinic_id=ids["clinic"], appointment_id=appointment.id,
+            patient_id=ids["patient"], procedure_catalog_id=catalog.id, executed_by_id=ids["doctor"],
+            procedure_code=catalog.code, procedure_name=catalog.name, procedure_base_price=Decimal("10.00"),
+            procedure_currency="RON", procedure_default_duration=30, status="completed")
+        session.add(performed)
+        await session.flush()
+        other_doctor_appointment = Appointment(clinic_id=ids["clinic"], patient_id=ids["patient"],
+            doctor_id=ids["manager"], room_id=ids["room"], starts_at=at_local("2026-10-25T20:00:00"),
+            duration_minutes=30, status="completed", appointment_type="Control fictiv")
+        session.add(other_doctor_appointment)
+        await session.flush()
+        other_doctor_procedure = PerformedProcedure(clinic_id=ids["clinic"], appointment_id=other_doctor_appointment.id,
+            patient_id=ids["patient"], procedure_catalog_id=catalog.id, executed_by_id=ids["manager"],
+            procedure_code=catalog.code, procedure_name=catalog.name, procedure_base_price=Decimal("10.00"),
+            procedure_currency="RON", procedure_default_duration=30, status="completed")
+        session.add(other_doctor_procedure)
+        await session.flush()
+
+        def movement(*, item_id, lot_id, quantity, at, kind="consumption", reverses=None, tag):
+            return InventoryMovement(id=uuid4(), clinic_id=ids["clinic"], item_id=item_id, lot_id=lot_id,
+                location_id=location.id, kind=kind, quantity=Decimal(quantity), client_request_id=tag,
+                signature=(tag.encode().hex() * 32)[:64], reverses_movement_id=reverses,
+                reason=f"Motiv {tag}", created_by_id=ids["manager"], created_at=at_local(at))
+
+        t18 = movement(item_id=item.id, lot_id=lot.id, quantity="1.234", at="2026-10-25T23:59:59", tag="t18")
+        other_t18 = movement(item_id=item.id, lot_id=lot.id, quantity="0.500", at="2026-10-25T20:00:00", tag="other-t18")
+        direct = movement(item_id=item.id, lot_id=lot.id, quantity="2.500", at="2026-10-25T12:00:00", tag="direct")
+        other_unit = movement(item_id=liquid.id, lot_id=liquid_lot.id, quantity="3", at="2026-10-25T12:01:00", tag="liquid")
+        corrected_same_day = movement(item_id=item.id, lot_id=lot.id, quantity="5", at="2026-10-25T13:00:00", tag="same-original")
+        correction_same_day = movement(item_id=item.id, lot_id=lot.id, quantity="5", at="2026-10-25T14:00:00",
+            kind="reversal_in", reverses=corrected_same_day.id, tag="same-reversal")
+        corrected_later = movement(item_id=item.id, lot_id=lot.id, quantity="4", at="2026-10-25T15:00:00", tag="later-original")
+        correction_later = movement(item_id=item.id, lot_id=lot.id, quantity="4", at="2026-10-26T00:10:00",
+            kind="reversal_in", reverses=corrected_later.id, tag="later-reversal")
+        next_local_day = movement(item_id=item.id, lot_id=lot.id, quantity="7", at="2026-10-26T00:00:00", tag="next-day")
+        session.add_all([t18, other_t18, direct, other_unit, corrected_same_day, correction_same_day,
+                         corrected_later, correction_later, next_local_day])
+        batch = MaterialConsumptionBatch(clinic_id=ids["clinic"], performed_procedure_id=performed.id,
+            client_request_id=str(uuid4()), signature="b" * 64, reason="Motiv T18", actor_id=ids["manager"])
+        session.add(batch)
+        await session.flush()
+        session.add(MaterialConsumptionLine(clinic_id=ids["clinic"], batch_id=batch.id,
+            inventory_movement_id=t18.id, item_id=item.id, lot_id=lot.id, location_id=location.id,
+            estimated_quantity=Decimal("0.750"), actual_quantity=Decimal("1.234")))
+        other_batch = MaterialConsumptionBatch(clinic_id=ids["clinic"], performed_procedure_id=other_doctor_procedure.id,
+            client_request_id=str(uuid4()), signature="c" * 64, reason="Motiv T18 secundar", actor_id=ids["manager"])
+        session.add(other_batch)
+        await session.flush()
+        session.add(MaterialConsumptionLine(clinic_id=ids["clinic"], batch_id=other_batch.id,
+            inventory_movement_id=other_t18.id, item_id=item.id, lot_id=lot.id, location_id=location.id,
+            estimated_quantity=Decimal("0.250"), actual_quantity=Decimal("0.500")))
+
+        foreign_clinic = Clinic(name="Foreign Consumption Clinic", timezone="Europe/Bucharest")
+        session.add(foreign_clinic)
+        await session.flush()
+        foreign_user = User(clinic_id=foreign_clinic.id, full_name="Foreign Manager", email="foreign-consumption@reports.test",
+            password_hash=hash_password("password-123456"), role="clinic_manager", is_active=True)
+        foreign_item = InventoryItem(clinic_id=foreign_clinic.id, name="Foreign item", unit="buc", minimum_quantity=Decimal(0))
+        foreign_location = InventoryLocation(clinic_id=foreign_clinic.id, name="Foreign location")
+        session.add_all([foreign_user, foreign_item, foreign_location])
+        await session.flush()
+        foreign_lot = InventoryLot(clinic_id=foreign_clinic.id, item_id=foreign_item.id, code="FOREIGN-LOT")
+        session.add(foreign_lot)
+        await session.flush()
+        session.add(InventoryMovement(clinic_id=foreign_clinic.id, item_id=foreign_item.id, lot_id=foreign_lot.id,
+            location_id=foreign_location.id, kind="consumption", quantity=Decimal(99),
+            client_request_id=str(uuid4()), signature="f" * 64, reason="foreign", created_by_id=foreign_user.id,
+            created_at=at_local("2026-10-25T10:00:00")))
+        await session.commit()
+        t18_id, other_t18_id, direct_id = str(t18.id), str(other_t18.id), str(direct.id)
+        same_id, later_id, next_id = map(str, (corrected_same_day.id, corrected_later.id, next_local_day.id))
+        item_id, liquid_id = str(item.id), str(liquid.id)
+
+    params = "from=2026-10-25&to=2026-10-25"
+    engine = sessions.kw["bind"]
+    query_count = 0
+    def count_query(*_args):
+        nonlocal query_count
+        query_count += 1
+    event.listen(engine.sync_engine, "before_cursor_execute", count_query)
+    summary = await client.get(f"/api/reports/consumptions?{params}", headers=headers)
+    summary_query_count = query_count
+    query_count = 0
+    response = await client.get(f"/api/reports/consumptions/records?{params}", headers=headers)
+    event.remove(engine.sync_engine, "before_cursor_execute", count_query)
+    assert summary.status_code == response.status_code == 200
+    assert summary_query_count <= 3 and query_count <= 3  # Fixed query count, not one query per movement.
+    assert summary.json()["period"]["semantics"] == "local calendar days, inclusive"
+    assert "indiferent de data corecției" in summary.json()["definition"]
+    assert "InventoryMovement" in summary.json()["source"] and "MaterialConsumptionLine" in summary.json()["source"]
+    assert response.json()["total"] == 4
+    assert {row["id"] for row in response.json()["records"]} == {t18_id, other_t18_id, direct_id, str(other_unit.id)}
+    rows = {row["id"]: row for row in response.json()["records"]}
+    assert rows[t18_id]["date"] == "2026-10-25T23:59:59+02:00"
+    assert rows[t18_id]["source_type"] == "t18" and rows[t18_id]["patient_name"] == "Ana Test"
+    assert rows[t18_id]["procedure_name"] == "Manoperă fictivă"
+    assert rows[t18_id]["estimated_quantity"] == "0.750" and rows[t18_id]["actual_quantity"] == "1.234"
+    assert rows[direct_id]["source_type"] == "direct" and rows[direct_id]["estimated_quantity"] is None
+    assert rows[direct_id]["author"] == "Report Manager" and rows[direct_id]["reason"] == "Motiv direct"
+    assert all(row["item_name"] and row["lot"] and row["location"] and row["unit"] for row in rows.values())
+    groups = {(entry["item_id"], entry["unit"], entry["source_type"]): entry for entry in summary.json()["value"]}
+    assert groups[(item_id, "buc", "t18")]["quantity"] == "1.734"
+    assert groups[(item_id, "buc", "t18")]["estimated_quantity"] == "1.000"
+    assert groups[(item_id, "buc", "t18")]["actual_quantity"] == "1.734"
+    assert groups[(item_id, "buc", "direct")]["quantity"] == "2.500"
+    assert groups[(liquid_id, "ml", "direct")]["quantity"] == "3.000"
+    assert not {same_id, later_id, next_id} & {row["id"] for row in response.json()["records"]}
+
+    filtered = await client.get(f"/api/reports/consumptions?{params}&doctor_id={ids['doctor']}&room_id={ids['room']}", headers=headers)
+    filtered_records = await client.get(f"/api/reports/consumptions/records?{params}&doctor_id={ids['doctor']}&room_id={ids['room']}", headers=headers)
+    assert filtered.status_code == filtered_records.status_code == 200
+    assert "Consumul direct nu poate fi atribuit" in filtered.json()["definition"]
+    assert filtered_records.json()["total"] == 1
+    assert filtered_records.json()["records"][0]["id"] == t18_id
+    room_filtered = await client.get(f"/api/reports/consumptions/records?{params}&room_id={ids['room']}", headers=headers)
+    doctor_filtered = await client.get(f"/api/reports/consumptions/records?{params}&doctor_id={ids['doctor']}", headers=headers)
+    assert {row["id"] for row in room_filtered.json()["records"]} == {t18_id, other_t18_id}
+    assert {row["id"] for row in doctor_filtered.json()["records"]} == {t18_id}
+    next_day = await client.get("/api/reports/consumptions/records?from=2026-10-26&to=2026-10-26", headers=headers)
+    assert {row["id"] for row in next_day.json()["records"]} == {next_id}
+    empty = await client.get("/api/reports/consumptions?from=2026-11-01&to=2026-11-01", headers=headers)
+    assert empty.status_code == 200 and empty.json()["value"] == []

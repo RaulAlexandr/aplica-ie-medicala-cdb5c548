@@ -4,7 +4,7 @@ import * as reportApi from './api';
 import { ReportsPage } from './ReportsPage';
 
 const result = (indicator: string): reportApi.ReportResult => ({
-  indicator, value: indicator === 'consumptions' ? { status: 'unavailable', reason: 'T17' } : 3,
+  indicator, value: indicator === 'consumptions' ? [] : 3,
   unit: 'înregistrări', definition: 'Numără înregistrările sursă.',
   period: { from: '2026-11-20', to: '2026-11-20', timezone: 'Europe/Bucharest', semantics: 'local calendar days, inclusive' },
   filters: { doctor_id: null, room_id: null }, source: 'Appointment', undefined_reason: null,
@@ -108,6 +108,50 @@ describe('ReportsPage', () => {
     expect(text(renderer.root)).toContain('Selectați un cabinet pentru a calcula ocuparea.');
     const occupancyCard = renderer.root.findAllByType('article').find(article => text(article).includes('Ocupare cabinet'))!;
     expect(occupancyCard.findAllByType('a')).toHaveLength(0);
+    await act(async () => { renderer.unmount(); });
+  });
+
+  it('shows consumption totals by source and reconciles T18 records without hiding filter limits', async () => {
+    const report = vi.spyOn(reportApi, 'getReport').mockImplementation(async indicator => indicator === 'consumptions'
+      ? { ...result(indicator), filters: { doctor_id: 'doctor-1', room_id: 'room-1' }, value: [
+        { item_id: 'item-1', item_name: 'Material fictiv', unit: 'buc', source_type: 't18', quantity: '1.234', estimated_quantity: '0.750', actual_quantity: '1.234' },
+        { item_id: 'item-1', item_name: 'Material fictiv', unit: 'buc', source_type: 'direct', quantity: '2.500', estimated_quantity: null, actual_quantity: '2.500' },
+      ] }
+      : result(indicator));
+    const records = vi.spyOn(reportApi, 'getReportRecords').mockResolvedValue({
+      indicator: 'consumptions', total: 1, limit: 50, offset: 0, records: [{
+        id: 'movement-1', entity: 'inventory_movement', date: '2026-11-20T10:00:00+02:00',
+        status: 'Consum confirmat (T18)', amount: '1.234', patient_name: 'Ana Test',
+        item_id: 'item-1', item_name: 'Material fictiv', unit: 'buc', lot: 'LOT-FICTIV',
+        location: 'Depozit fictiv', quantity: '1.234', movement_kind: 'consumption', source_type: 't18',
+        author: 'Manager test', reason: 'Consum fictiv', procedure_name: 'Manoperă fictivă',
+        estimated_quantity: '0.750', actual_quantity: '1.234',
+      }],
+    });
+    let renderer!: TestRenderer.ReactTestRenderer;
+    await act(async () => { renderer = TestRenderer.create(<ReportsPage />); });
+    act(() => {
+      renderer.root.findByProps({ 'aria-label': 'Medic' }).props.onChange({ target: { value: 'doctor-1' } });
+      renderer.root.findByProps({ 'aria-label': 'Cabinet' }).props.onChange({ target: { value: 'room-1' } });
+    });
+    const generate = renderer.root.findAllByType('button').find(button => text(button) === 'Generează raportul')!;
+    await act(async () => { await generate.props.onClick(); await flush(); });
+    expect(report).toHaveBeenCalledWith('consumptions', expect.any(String), expect.any(String), { doctor_id: 'doctor-1', room_id: 'room-1' });
+    expect(text(renderer.root)).toContain('Consumul direct nu poate fi atribuit');
+    expect(text(renderer.root)).not.toContain('Indisponibil până la T17');
+    expect(text(renderer.root)).toContain('1.234 buc');
+    expect(text(renderer.root)).toContain('Estimat 0.750 · Real 1.234');
+    expect(text(renderer.root)).toContain('Consum direct (Stocuri) · 2.500 buc');
+    const card = renderer.root.findAllByType('article').find(article => text(article).includes('Consumuri'))!;
+    const link = card.findAllByType('a').find(anchor => text(anchor) === 'Vezi înregistrările')!;
+    await act(async () => { await link.props.onClick({ preventDefault: vi.fn() }); await flush(); });
+    expect(records).toHaveBeenCalledWith('consumptions', expect.any(String), expect.any(String), { doctor_id: 'doctor-1', room_id: 'room-1' });
+    expect(text(card)).toContain('LOT-FICTIV');
+    expect(text(card)).toContain('Depozit fictiv');
+    expect(text(card)).toContain('Manager test');
+    expect(text(card)).toContain('Manoperă fictivă');
+    expect(text(card)).toContain('Ana Test');
+    expect(text(card)).toContain('Consum fictiv');
     await act(async () => { renderer.unmount(); });
   });
 });

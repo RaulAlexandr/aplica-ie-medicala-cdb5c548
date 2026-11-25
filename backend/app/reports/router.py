@@ -9,8 +9,9 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import and_, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.auth.service import require_roles
 from app.database import (
@@ -28,6 +29,8 @@ from app.database import (
     WorkingHours,
     get_db,
 )
+from app.inventory.models import InventoryItem, InventoryLocation, InventoryLot, InventoryMovement
+from app.materials.models import MaterialConsumptionBatch, MaterialConsumptionLine
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 REPORT_ROLES = ("clinic_manager", "administrator")
@@ -87,7 +90,11 @@ def _metric_definition(key: str) -> tuple[str, str, str]:
         "services_performed": ("Suma current_price (fallback procedure_base_price) pentru manopere completed.", "RON", "performed_procedures"),
         "receipts_net_by_method": ("Payment +, refund −, reversal payment −, reversal refund +; reversals de ajustare excluse.", "RON pe metodă", "patient_financial_entries"),
         "financial_reversals": ("Mișcări reversal înregistrate în perioadă, însumate ca magnitudine.", "mișcări și RON", "patient_financial_entries"),
-        "consumptions": ("Indisponibil până la T17.", "indisponibil", "T17"),
+        "consumptions": (
+            "Cantități nete pe articol, unitate și sursă în zilele locale incluse; consumul reversat se exclude indiferent de data corecției, iar corecția nu apare ca minus în perioada ei.",
+            "cantitate (3 zecimale)",
+            "InventoryMovement, InventoryItem, InventoryLot, InventoryLocation, User; MaterialConsumptionLine, MaterialConsumptionBatch, PerformedProcedure, Appointment și Patient pentru T18",
+        ),
     }
     return definitions[key]
 
@@ -96,6 +103,87 @@ async def _records(
     key: str, db: AsyncSession, clinic_id: UUID, lower: datetime, upper: datetime,
     zone: ZoneInfo, doctor_id: UUID | None, room_id: UUID | None,
 ) -> tuple[list[dict[str, Any]], Any, str | None]:
+    if key == "consumptions":
+        correction = aliased(InventoryMovement)
+        reversed_consumption = exists(select(correction.id).where(
+            correction.clinic_id == clinic_id,
+            correction.reverses_movement_id == InventoryMovement.id,
+        ))
+        query = select(
+            InventoryMovement, InventoryItem, InventoryLot, InventoryLocation, User,
+            MaterialConsumptionLine, MaterialConsumptionBatch, PerformedProcedure, Appointment, Patient,
+        ).join(InventoryItem, and_(
+            InventoryItem.id == InventoryMovement.item_id, InventoryItem.clinic_id == clinic_id,
+        )).join(InventoryLot, and_(
+            InventoryLot.id == InventoryMovement.lot_id, InventoryLot.clinic_id == clinic_id,
+        )).join(InventoryLocation, and_(
+            InventoryLocation.id == InventoryMovement.location_id, InventoryLocation.clinic_id == clinic_id,
+        )).join(User, and_(User.id == InventoryMovement.created_by_id, User.clinic_id == clinic_id)
+        ).outerjoin(MaterialConsumptionLine, and_(
+            MaterialConsumptionLine.inventory_movement_id == InventoryMovement.id,
+            MaterialConsumptionLine.clinic_id == clinic_id,
+        )).outerjoin(MaterialConsumptionBatch, and_(
+            MaterialConsumptionBatch.id == MaterialConsumptionLine.batch_id,
+            MaterialConsumptionBatch.clinic_id == clinic_id,
+        )).outerjoin(PerformedProcedure, and_(
+            PerformedProcedure.id == MaterialConsumptionBatch.performed_procedure_id,
+            PerformedProcedure.clinic_id == clinic_id,
+        )).outerjoin(Appointment, and_(
+            Appointment.id == PerformedProcedure.appointment_id, Appointment.clinic_id == clinic_id,
+        )).outerjoin(Patient, and_(
+            Patient.id == PerformedProcedure.patient_id, Patient.clinic_id == clinic_id,
+        )).where(
+            InventoryMovement.clinic_id == clinic_id,
+            InventoryMovement.kind == "consumption",
+            InventoryMovement.created_at >= lower,
+            InventoryMovement.created_at < upper,
+            ~reversed_consumption,
+        )
+        if doctor_id is not None:
+            query = query.where(MaterialConsumptionLine.id.is_not(None), Appointment.doctor_id == doctor_id)
+        if room_id is not None:
+            query = query.where(MaterialConsumptionLine.id.is_not(None), Appointment.room_id == room_id)
+        rows = list((await db.execute(query.order_by(InventoryMovement.created_at, InventoryMovement.id))).all())
+        records: list[dict[str, Any]] = []
+        grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        for movement, item, lot, location, author, line, _batch, procedure, _appointment, patient in rows:
+            source_type = "t18" if line is not None else "direct"
+            quantity = Decimal(str(movement.quantity))
+            estimated = Decimal(str(line.estimated_quantity)) if line is not None else None
+            actual = Decimal(str(line.actual_quantity)) if line is not None else quantity
+            records.append({
+                "id": str(movement.id), "entity": "inventory_movement",
+                "date": _local_time(movement.created_at, zone),
+                "status": "Consum confirmat (T18)" if line is not None else "Consum direct (Stocuri)",
+                "amount": f"{quantity:.3f}", "patient_name": f"{patient.first_name} {patient.last_name}" if patient else None,
+                "item_id": str(item.id), "item_name": item.name, "unit": item.unit,
+                "lot": lot.code, "location": location.name, "quantity": f"{quantity:.3f}",
+                "movement_kind": movement.kind, "source_type": source_type,
+                "author": author.full_name, "reason": movement.reason,
+                "procedure_name": procedure.procedure_name if line is not None and procedure else None,
+                "estimated_quantity": f"{estimated:.3f}" if estimated is not None else None,
+                "actual_quantity": f"{actual:.3f}" if line is not None else None,
+            })
+            group_key = (str(item.id), item.name, item.unit, source_type)
+            group = grouped.setdefault(group_key, {
+                "item_id": str(item.id), "item_name": item.name, "unit": item.unit,
+                "source_type": source_type, "quantity_decimal": Decimal(0),
+                "estimated_decimal": Decimal(0), "actual_decimal": Decimal(0),
+            })
+            group["quantity_decimal"] += quantity
+            group["actual_decimal"] += actual
+            if estimated is not None:
+                group["estimated_decimal"] += estimated
+        value = []
+        for _key, group in sorted(grouped.items(), key=lambda entry: entry[0]):
+            value.append({
+                "item_id": group["item_id"], "item_name": group["item_name"], "unit": group["unit"],
+                "source_type": group["source_type"], "quantity": f"{group['quantity_decimal']:.3f}",
+                "estimated_quantity": f"{group['estimated_decimal']:.3f}" if group["source_type"] == "t18" else None,
+                "actual_quantity": f"{group['actual_decimal']:.3f}",
+            })
+        return records, value, None
+
     if key.startswith("appointments_") or key in {"cancellation_rate", "no_show_rate", "room_occupancy"}:
         if key == "room_occupancy" and room_id is None:
             raise HTTPException(422, "room_id is required for room_occupancy")
@@ -299,7 +387,7 @@ async def _records(
                    for item, _plan, patient, _appointment in rows]
         return records, {"count": len(records), "ages_days": [r["age_days"] for r in records]}, None
 
-    return [], {"status": "unavailable", "reason": "Indisponibil până la T17."}, None
+    raise HTTPException(404, "Report indicator not found")
 
 
 async def _report(
@@ -311,6 +399,8 @@ async def _report(
     clinic, zone, lower, upper = await _scope(db, user.clinic_id, start, end, doctor_id, room_id)
     _records_result, value, reason = await _records(indicator, db, user.clinic_id, lower, upper, zone, doctor_id, room_id)
     definition, unit, source = _metric_definition(indicator)
+    if indicator == "consumptions" and (doctor_id is not None or room_id is not None):
+        definition += " Consumul direct nu poate fi atribuit; cu filtre de medic sau cabinet este exclus."
     return {"indicator": indicator, "value": value, "unit": unit, "definition": definition,
             "period": {"from": start.isoformat(), "to": end.isoformat(), "timezone": clinic.timezone,
                        "semantics": "local calendar days, inclusive"},
