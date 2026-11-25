@@ -4,9 +4,10 @@ from datetime import date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.appointment_procedures.effective import effective_procedures
 from app.cabinet_ready.models import (
     CabinetChecklistItem,
     CabinetChecklistVersion,
@@ -24,13 +25,14 @@ from app.database import (
     PerformedProcedure,
     ProcedureCatalog,
     Room,
+    TreatmentPlan,
     TreatmentPlanItem,
     User,
     utcnow,
 )
 from app.equipment.models import Equipment, EquipmentDependency, EquipmentUnavailability
 from app.equipment.router import effective_end, normalize_service_text
-from app.materials.router import _procedure_demand, _requirements
+from app.materials.router import _requirements
 from app.team.models import TeamLeaveRequest, TeamShift
 
 ACTIVE_APPOINTMENTS = ("scheduled", "confirmed", "arrived", "in_progress")
@@ -41,6 +43,48 @@ RequestRow = tuple[Appointment, Patient, User, Room]
 
 def appointment_end(appointment: Appointment) -> datetime:
     return appointment.ends_at or appointment.starts_at + timedelta(minutes=appointment.duration_minutes)
+
+
+async def preparation_scope(db: AsyncSession, clinic_id: UUID, appointment_ids: list[UUID]) -> dict[UUID, list[dict]]:
+    """Planned procedures of each appointment; finishing work in the visit never shrinks it.
+
+    Materials keep the remaining demand (_procedure_demand). Preparation uses, per procedure,
+    max(manual quantity, active unperformed plan items + plan items linked to an open or completed
+    performed procedure). A cancelled performed procedure is neither progress nor scope.
+    """
+    if not appointment_ids:
+        return {}
+    effective = await effective_procedures(db, clinic_id, appointment_ids)
+    linked_rows = (await db.execute(select(
+        TreatmentPlanItem.appointment_id, TreatmentPlanItem.procedure_catalog_id,
+        func.min(TreatmentPlanItem.procedure_name), func.count(TreatmentPlanItem.id),
+    ).join(TreatmentPlan, TreatmentPlan.id == TreatmentPlanItem.plan_id).join(
+        PerformedProcedure, PerformedProcedure.id == TreatmentPlanItem.performed_procedure_id,
+    ).where(
+        TreatmentPlanItem.clinic_id == clinic_id, TreatmentPlan.clinic_id == clinic_id, PerformedProcedure.clinic_id == clinic_id,
+        TreatmentPlanItem.appointment_id.in_(appointment_ids),
+        TreatmentPlan.status.in_(("accepted", "in_progress", "completed")),
+        TreatmentPlanItem.status != "cancelled", TreatmentPlanItem.cancelled_at.is_(None),
+        PerformedProcedure.status != "cancelled",
+    ).group_by(TreatmentPlanItem.appointment_id, TreatmentPlanItem.procedure_catalog_id))).all()
+    merged: dict[UUID, dict[UUID, dict]] = defaultdict(dict)
+    for appointment_id, lines in effective.items():
+        for line in lines:
+            merged[appointment_id][line["procedure_catalog_id"]] = {
+                "procedure_catalog_id": line["procedure_catalog_id"], "name": line["name"],
+                "manual": line["manual_quantity"] or 0, "plan": line["plan_quantity"] or 0,
+            }
+    for appointment_id, procedure_id, name, quantity in linked_rows:
+        entry = merged[appointment_id].setdefault(procedure_id, {
+            "procedure_catalog_id": procedure_id, "name": name, "manual": 0, "plan": 0,
+        })
+        entry["plan"] += int(quantity)
+    result: dict[UUID, list[dict]] = {}
+    for appointment_id, by_procedure in merged.items():
+        result[appointment_id] = [{**entry, "quantity": max(entry["manual"], entry["plan"])}
+                                  for _procedure_id, entry in sorted(by_procedure.items(), key=lambda pair: str(pair[0]))
+                                  if max(entry["manual"], entry["plan"]) > 0]
+    return result
 
 
 def procedures_signature(procedures: list[dict]) -> str:
@@ -232,7 +276,7 @@ async def build_cards(db: AsyncSession, user: User, rows: list[RequestRow], zone
     now = now or utcnow()
     clinic_id = user.clinic_id
     appointment_ids = [row[0].id for row in rows]
-    demand = await _procedure_demand(db, clinic_id, appointment_ids)
+    demand = await preparation_scope(db, clinic_id, appointment_ids)
     procedure_ids = {entry["procedure_catalog_id"] for entries in demand.values() for entry in entries}
     latest, items_by_version = await latest_checklists(db, clinic_id, procedure_ids)
 

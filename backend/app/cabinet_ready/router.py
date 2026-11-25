@@ -32,11 +32,11 @@ from app.cabinet_ready.service import (
     build_cards,
     latest_checklists,
     planned_lines,
+    preparation_scope,
     procedures_signature,
     reception_card,
 )
 from app.database import Appointment, Clinic, Patient, ProcedureCatalog, Room, User, get_db, utcnow
-from app.materials.router import _procedure_demand
 
 router = APIRouter(prefix="/cabinet-ready", tags=["cabinet_ready"])
 MANAGERS = ("clinic_manager", "administrator")
@@ -263,7 +263,7 @@ async def start_preparation(appointment_id: UUID, payload: RequestIn, user: User
     appointment = await _writable_appointment(db, user, appointment_id)
     if prior := await _replay(db, user.clinic_id, payload.client_request_id, signature):
         return prior
-    demand = (await _procedure_demand(db, user.clinic_id, [appointment.id])).get(appointment.id, [])
+    demand = (await preparation_scope(db, user.clinic_id, [appointment.id])).get(appointment.id, [])
     if not demand:
         raise HTTPException(409, "Programarea nu are nicio procedură efectivă.")
     latest, items = await latest_checklists(db, user.clinic_id, {row["procedure_catalog_id"] for row in demand})
@@ -299,7 +299,7 @@ async def _writable_item(db: AsyncSession, user: User, item_id: UUID):
         raise HTTPException(404, "Element inexistent.")
     appointment = await _writable_appointment(db, user, target.appointment_id)
     current = await _current_preparation(db, user.clinic_id, appointment.id)
-    demand = (await _procedure_demand(db, user.clinic_id, [appointment.id])).get(appointment.id, [])
+    demand = (await preparation_scope(db, user.clinic_id, [appointment.id])).get(appointment.id, [])
     if not current or current.id != target.preparation_id or not _is_current(current, appointment, procedures_signature(demand)):
         raise HTTPException(409, "Programarea s-a schimbat. Reîncepe pregătirea.")
     last = await db.scalar(select(CabinetConfirmationEvent).where(
@@ -424,7 +424,7 @@ async def decide_particularity(particularity_id: UUID, payload: DecisionIn, user
                                         decided_by_id=user.id, decided_at=utcnow()))
     if payload.decision == "approved" and row.item_kind:
         current = await _current_preparation(db, user.clinic_id, appointment.id)
-        demand = (await _procedure_demand(db, user.clinic_id, [appointment.id])).get(appointment.id, [])
+        demand = (await preparation_scope(db, user.clinic_id, [appointment.id])).get(appointment.id, [])
         if current and _is_current(current, appointment, procedures_signature(demand)):
             position = (await db.scalar(select(func.max(CabinetPreparationItem.position)).where(
                 CabinetPreparationItem.preparation_id == current.id)) or 0) + 1

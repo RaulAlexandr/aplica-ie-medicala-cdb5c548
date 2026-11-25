@@ -253,6 +253,7 @@ async def test_board_query_count_with_completed_work(env):  # noqa: F811
     client, sessions = env
     ctx, procedure_id, first = await scenario(client)
     await add_shift(sessions, ctx)
+    await link(client, ctx, first, procedure_id, 2)
     await start(client, ctx["auth"], first)
     await performed(client, sessions, ctx, first, procedure_id)
     statements = []
