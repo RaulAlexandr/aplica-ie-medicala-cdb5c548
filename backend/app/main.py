@@ -38,6 +38,7 @@ from app.database import (
 )
 from app.documents.router import router as documents_router
 from app.equipment.router import router as equipment_router
+from app.feedback.router import router as feedback_router
 from app.finance.router import router as finance_router
 from app.forms.router import router as forms_router
 from app.import_export.router import router as import_export_router
@@ -224,6 +225,7 @@ app.include_router(cabinet_ready_router, prefix="/api")
 app.include_router(comms_router, prefix="/api")
 app.include_router(sterilization_router, prefix="/api")
 app.include_router(portal_router, prefix="/api")
+app.include_router(feedback_router, prefix="/api")
 
 
 @app.get("/health")

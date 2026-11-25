@@ -1,9 +1,9 @@
 import type { Channel, ConsentSource, Message, MessageStatus, MessageType } from './api';
 
 export const channelLabel: Record<Channel, string> = { sms: 'SMS', email: 'Email' };
-export const typeLabel: Record<MessageType, string> = { confirmation: 'Confirmare programare', reminder: 'Reminder', cancellation: 'Anulare', reschedule: 'Reprogramare' };
+export const typeLabel: Record<MessageType, string> = { confirmation: 'Confirmare programare', reminder: 'Reminder', cancellation: 'Anulare', reschedule: 'Reprogramare', feedback_request: 'Cerere feedback', review_invitation: 'Invitație la recenzie', campaign: 'Campanie' };
 export const sourceLabel: Record<ConsentSource, string> = { in_person: 'La recepție', phone: 'Telefon', paper_form: 'Formular pe hârtie', patient_reply: 'Răspuns de la pacient', other: 'Altă sursă' };
-export const allowedVariables = ['prenume', 'data', 'ora', 'medic', 'clinica', 'telefon_clinica'];
+export const allowedVariables = ['prenume', 'data', 'ora', 'medic', 'clinica', 'telefon_clinica', 'link'];
 
 export function statusLabel(message: Pick<Message, 'status' | 'adapter'>): string {
   const labels: Record<MessageStatus, string> = { pending: 'În așteptare', sent: 'Trimis', delivered: 'Livrat', failed: 'Eșuat', cancelled: 'Anulat' };
@@ -16,6 +16,7 @@ const reasons: Record<string, string> = {
   appointment_closed: 'Programarea s-a încheiat', appointment_inactive: 'Programarea nu mai este activă', rescheduled: 'Programarea a fost mutată', superseded: 'Înlocuit de un mesaj mai nou',
   expired: 'Programarea a început deja', attempts_exhausted: 'Încercări epuizate', delivery_failed: 'Livrare eșuată', queued: 'Pus în coadă', revived: 'Reactivat (programare reactivată)',
   quiet_window: 'Amânat: fereastră de liniște',
+  campaign_unsubscribed: 'Dezabonat de la campanii', feedback_link_expired: 'Link feedback expirat',
 };
 export function reasonLabel(reason: string | null): string {
   if (!reason) return '';

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base, UTCDateTime, UUIDType, utcnow
 
 CHANNELS = ("sms", "email")
-MESSAGE_TYPES = ("confirmation", "reminder", "cancellation", "reschedule")
+MESSAGE_TYPES = ("confirmation", "reminder", "cancellation", "reschedule", "feedback_request", "review_invitation", "campaign")
 STATUSES = ("pending", "sent", "delivered", "failed", "cancelled")
 
 
@@ -52,7 +52,7 @@ class CommTemplateVersion(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=utcnow)
     __table_args__ = (
         UniqueConstraint("clinic_id", "message_type", "version", name="uq_comm_template_version"),
-        CheckConstraint("message_type IN ('confirmation','reminder','cancellation','reschedule')", name="ck_comm_template_type"),
+        CheckConstraint("message_type IN ('confirmation','reminder','cancellation','reschedule','feedback_request','review_invitation','campaign')", name="ck_comm_template_type"),
     )
 
 
@@ -74,6 +74,7 @@ class CommOutbox(Base):
     clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id", ondelete="RESTRICT"), nullable=False, index=True)
     patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id", ondelete="RESTRICT"), nullable=False)
     appointment_id: Mapped[UUID] = mapped_column(ForeignKey("appointments.id", ondelete="RESTRICT"), nullable=False)
+    campaign_id: Mapped[UUID | None] = mapped_column(ForeignKey("feedback_campaigns.id", ondelete="RESTRICT"))
     message_type: Mapped[str] = mapped_column(String(24), nullable=False)
     channel: Mapped[str] = mapped_column(String(16), nullable=False)
     appointment_starts_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)

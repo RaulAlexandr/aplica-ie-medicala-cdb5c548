@@ -24,7 +24,7 @@ from app.comms.models import (
 from app.config import settings as app_settings
 from app.database import Appointment, Clinic, Patient, User, utcnow
 
-ALLOWED_VARIABLES = ("prenume", "data", "ora", "medic", "clinica", "telefon_clinica")
+ALLOWED_VARIABLES = ("prenume", "data", "ora", "medic", "clinica", "telefon_clinica", "link")
 ACTIVE_FOR_MESSAGES = {"scheduled", "confirmed"}
 CLOSING_STATUSES = {"arrived", "in_progress", "completed", "no_show"}
 # A cancelled message with one of these reasons comes back if the appointment becomes active again unchanged.
@@ -35,6 +35,9 @@ DEFAULTS: dict[str, tuple[str, str]] = {
     "reminder": ("Reminder programare – {clinica}", "Bună, {prenume}! Te așteptăm la {clinica} pe {data}, la ora {ora}, cu {medic}. Dacă nu poți ajunge, sună-ne la {telefon_clinica}."),
     "cancellation": ("Programare anulată – {clinica}", "Bună, {prenume}! Programarea ta din {data}, ora {ora}, la {clinica} a fost anulată. Pentru o nouă programare sună la {telefon_clinica}."),
     "reschedule": ("Programare mutată – {clinica}", "Bună, {prenume}! Programarea ta la {clinica} a fost mutată pe {data}, la ora {ora}, cu {medic}. Telefon clinică: {telefon_clinica}."),
+    "feedback_request": ("Cum a fost vizita ta la {clinica}?", "Bună, {prenume}! Te rugăm să ne spui cum a fost vizita ta: {link}"),
+    "review_invitation": ("Lasă-ne o recenzie", "Bună, {prenume}! Dacă dorești, poți lăsa o recenzie aici: {link}"),
+    "campaign": ("Noutăți de la {clinica}", "Bună, {prenume}! {data} Pentru dezabonare: {link}"),
 }
 _TOKEN = re.compile(r"\{([^{}]*)\}")
 
@@ -180,6 +183,9 @@ async def sync_appointment(db: AsyncSession, appt: Appointment, actor_id: UUID |
             return
         if appt.status in CLOSING_STATUSES:
             await _cancel_pending(db, appt, "appointment_closed", actor_id)
+            if appt.status == "completed":
+                from app.feedback.service import schedule_visit_messages
+                await schedule_visit_messages(db, appt)
             return
         if old_status in {"cancelled", "no_show"} and appt.status in ACTIVE_FOR_MESSAGES:
             await _schedule(db, appt, "confirmation", actor_id)
@@ -211,6 +217,17 @@ async def _process_row(db: AsyncSession, row: CommOutbox, now: datetime) -> str:
             return await _cancel_row(db, row, "superseded")
         if utc(appt.starts_at) <= now:
             return await _cancel_row(db, row, "expired")
+    feedback_request = None
+    if row.message_type == "feedback_request":
+        from app.feedback.models import FeedbackRequest
+        request = await db.scalar(select(FeedbackRequest).where(FeedbackRequest.outbox_id == row.id))
+        if not request or request.used_at or utc(request.expires_at) <= now:
+            return await _cancel_row(db, row, "feedback_link_expired")
+        feedback_request = request
+    if row.message_type == "campaign":
+        from app.feedback.service import can_send_campaign
+        if not await can_send_campaign(db, row.clinic_id, row.patient_id):
+            return await _cancel_row(db, row, "campaign_unsubscribed")
     consent = (await current_consents(db, row.clinic_id, row.patient_id)).get(row.channel)
     if not consent or not consent.granted:
         return await _cancel_row(db, row, "no_consent")
@@ -218,6 +235,32 @@ async def _process_row(db: AsyncSession, row: CommOutbox, now: datetime) -> str:
     if not recipient:
         return await _cancel_row(db, row, "no_contact")
     clinic, cfg = await db.get(Clinic, row.clinic_id), await get_settings(db, row.clinic_id)
+    link = row.body or ""
+    if row.message_type == "feedback_request":
+        from app.feedback.service import feedback_token, token_digest
+        token = feedback_token(feedback_request.id)
+        if token_digest(token) != feedback_request.token_hash:
+            return await _cancel_row(db, row, "feedback_link_expired")
+        public_origin = app_settings.cors_origins.split(",")[0].strip().rstrip("/")
+        link = f"{public_origin}/feedback/{token}"
+    if row.message_type == "campaign":
+        from app.feedback.models import CampaignUnsubscribeToken
+        from app.feedback.service import campaign_unsubscribe_token, token_digest
+        from app.feedback.service import get_settings as feedback_settings
+        await db.execute(select(Clinic.id).where(Clinic.id == row.clinic_id).with_for_update())
+        limit = (await feedback_settings(db, row.clinic_id)).hourly_limit
+        sent_last_hour = await db.scalar(select(func.count()).select_from(CommOutbox).where(CommOutbox.clinic_id == row.clinic_id, CommOutbox.message_type == "campaign", CommOutbox.status.in_(("sent", "delivered")), CommOutbox.sent_at >= now - timedelta(hours=1)))
+        if sent_last_hour >= limit:
+            row.scheduled_for = now + timedelta(minutes=1)
+            _event(db, row.id, row.clinic_id, "pending", "pending", "hourly_limit", None)
+            return "deferred"
+        if not row.campaign_id:
+            return await _cancel_row(db, row, "campaign_unsubscribe_unavailable")
+        token = campaign_unsubscribe_token(row.campaign_id, row.patient_id)
+        if not await db.get(CampaignUnsubscribeToken, token_digest(token)):
+            return await _cancel_row(db, row, "campaign_unsubscribe_unavailable")
+        public_origin = app_settings.cors_origins.split(",")[0].strip().rstrip("/")
+        link = f"{public_origin}/campaigns/unsubscribe/{token}"
     zone = ZoneInfo(clinic.timezone)
     later = defer_quiet(now, zone, cfg.quiet_start, cfg.quiet_end)
     if later > now:  # still inside the quiet window (late run or changed settings): postpone, never drop
@@ -227,7 +270,7 @@ async def _process_row(db: AsyncSession, row: CommOutbox, now: datetime) -> str:
     version, subject_tpl, body_tpl = await current_template(db, row.clinic_id, row.message_type)
     doctor = await db.get(User, appt.doctor_id) if appt else None
     local = utc(row.appointment_starts_at).astimezone(zone)
-    values = {"prenume": patient.first_name, "data": local.strftime("%d.%m.%Y"), "ora": local.strftime("%H:%M"), "medic": doctor.full_name if doctor else "", "clinica": clinic.name, "telefon_clinica": cfg.clinic_phone or ""}
+    values = {"prenume": patient.first_name, "data": local.strftime("%d.%m.%Y"), "ora": local.strftime("%H:%M"), "medic": doctor.full_name if doctor else "", "clinica": clinic.name, "telefon_clinica": cfg.clinic_phone or "", "link": link}
     subject, body = render(subject_tpl, values), render(body_tpl, values)
     adapter = adapters.get_adapter()
     row.attempts += 1
@@ -242,7 +285,12 @@ async def _process_row(db: AsyncSession, row: CommOutbox, now: datetime) -> str:
         row.scheduled_for = now + timedelta(minutes=app_settings.comms_retry_minutes)
         _event(db, row.id, row.clinic_id, "pending", "pending", f"retry {row.attempts}/{app_settings.comms_max_attempts}: {row.last_error}", None)
         return "retry"
-    row.recipient, row.subject, row.body, row.template_version = recipient, subject, body, version
+    stored_body = body
+    if row.message_type == "feedback_request":
+        stored_body = body.replace(link, "[link feedback]")
+    elif row.message_type == "campaign":
+        stored_body = body.replace(link, "[link dezabonare]")
+    row.recipient, row.subject, row.body, row.template_version = recipient, subject, stored_body, version
     row.provider_ref, row.adapter, row.sent_at, row.last_error = result.provider_ref, adapter.name, now, None
     await record_transition(db, row, "sent", None)
     return "sent"
@@ -260,7 +308,16 @@ async def process_due(db: AsyncSession, now: datetime | None = None, limit: int 
         row = await db.scalar(query.order_by(CommOutbox.scheduled_for, CommOutbox.id).limit(1).with_for_update(skip_locked=True))
         if not row:
             break
-        counts[await _process_row(db, row, now)] += 1
+        result = await _process_row(db, row, now)
+        counts[result] += 1
+        if row.campaign_id and result in {"sent", "failed", "cancelled"}:
+            from app.feedback.models import Campaign
+            campaign = await db.get(Campaign, row.campaign_id)
+            pending = await db.scalar(select(func.count()).select_from(CommOutbox).where(CommOutbox.campaign_id == row.campaign_id, CommOutbox.status == "pending"))
+            sent = await db.scalar(select(func.count()).select_from(CommOutbox).where(CommOutbox.campaign_id == row.campaign_id, CommOutbox.status.in_(("sent", "delivered"))))
+            failed = await db.scalar(select(func.count()).select_from(CommOutbox).where(CommOutbox.campaign_id == row.campaign_id, CommOutbox.status == "failed"))
+            if campaign:
+                campaign.status = "sending" if pending and sent else "scheduled" if pending else "failed" if failed else "sent"
         await db.commit()
     return counts
 

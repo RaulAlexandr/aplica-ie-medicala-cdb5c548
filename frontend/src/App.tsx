@@ -10,6 +10,7 @@ import { WaitlistPanel } from './waitlist/Waitlist';
 import { EquipmentPage } from './equipment/EquipmentPage';
 import { PatientCommsPanel } from './comms/PatientComms';
 import { CommsPage } from './comms/CommsPage';
+import { FeedbackPage, PublicCampaignUnsubscribePage, PublicFeedbackPage } from './feedback/FeedbackPage';
 import { ReportsPage } from './reports/ReportsPage';
 import { StaffDetail } from './staff/StaffDetail';
 import { TeamPage } from './team/TeamPage';
@@ -80,6 +81,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {managementRoles.includes(user.role) && <Link to="/security/access-log">Jurnal de acces</Link>}
         {managementRoles.includes(user.role) && <Link to="/automations">Automatizări</Link>}
         {managementRoles.includes(user.role) && <Link to="/import-export">Import și export</Link>}
+        {['clinic_manager', 'doctor', 'administrator'].includes(user.role) && <Link to="/feedback">Feedback</Link>}
         {managementRoles.includes(user.role) && <><Link to="/setup">Clinic setup</Link><Link to="/staff">Staff</Link></>}
       </nav>
       <button className="link logout" onClick={() => void onLogout()}>Sign out</button>
@@ -498,6 +500,8 @@ export default function App() {
   const location = useLocation();
   useEffect(() => { const handler = () => { setUser(null); navigate('/'); }; window.addEventListener('dentacare:session-cleared', handler); return () => window.removeEventListener('dentacare:session-cleared', handler); }, [navigate]);
   useEffect(() => { if (localStorage.getItem('access_token')) me().then(setUser).catch(() => setUser(null)).finally(() => setLoading(false)); else setLoading(false); }, []);
+  if (location.pathname.startsWith('/feedback/')) return <PublicFeedbackPage />;
+  if (location.pathname.startsWith('/campaigns/unsubscribe/')) return <PublicCampaignUnsubscribePage />;
   if (location.pathname === '/staff/invitations/accept') return <InvitationAccept />;
   if (/^\/portal(\/|$)/.test(location.pathname)) return <PortalApp />;
   if (loading) return <main className="auth"><p>Loading session\u2026</p></main>;
@@ -523,6 +527,7 @@ export default function App() {
       <Route path="/finance/daily" element={cashRoles.includes(user.role) ? <DailyReportPage /> : <Navigate to="/" />} />
       <Route path="/comms" element={managementRoles.includes(user.role) ? <CommsPage /> : <Navigate to="/" />} />
       <Route path="/portal-requests" element={portalRequestRoles.includes(user.role) ? <RescheduleRequestsPage /> : <Navigate to="/" />} />
+      <Route path="/feedback" element={['clinic_manager', 'doctor', 'administrator'].includes(user.role) ? <FeedbackPage role={user.role} /> : <Navigate to="/" />} />
       <Route path="/reports" element={managementRoles.includes(user.role) ? <ReportsPage /> : <Navigate to="/" />} />
       <Route path="/security/access-log" element={managementRoles.includes(user.role) ? <AccessLogPage /> : <Navigate to="/" />} />
       <Route path="/security/sessions" element={staffRoles.includes(user.role) ? <SessionsPage /> : <Navigate to="/" />} />
