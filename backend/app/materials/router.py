@@ -14,6 +14,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.appointment_procedures.effective import effective_procedures
 from app.appointments.service import local_bounds
 from app.auth.service import require_roles
 from app.database import (
@@ -22,6 +23,7 @@ from app.database import (
     Patient,
     PerformedProcedure,
     ProcedureCatalog,
+    TreatmentPlan,
     TreatmentPlanItem,
     User,
     get_db,
@@ -185,6 +187,48 @@ def _reservation_response(event: MaterialReservationEvent, *, retry=False):
             "actor_id": str(event.actor_id), "occurred_at": event.occurred_at.isoformat(), "retry": retry}
 
 
+async def _procedure_demand(db: AsyncSession, clinic_id: UUID, appointment_ids: list[UUID]) -> dict[UUID, list[dict]]:
+    """Effective procedures plus valid plan items whose performed procedure is still open.
+
+    effective_procedures skips every item linked to a performed procedure. An open one is still
+    upcoming work, so it counts as a plan unit before applying the same max(manual, plan) rule.
+    """
+    effective = await effective_procedures(db, clinic_id, appointment_ids)
+    open_rows = (await db.execute(select(
+        TreatmentPlanItem.appointment_id, TreatmentPlanItem.procedure_catalog_id,
+        TreatmentPlanItem.procedure_name, TreatmentPlanItem.performed_procedure_id,
+    ).join(TreatmentPlan, TreatmentPlan.id == TreatmentPlanItem.plan_id).join(
+        PerformedProcedure, PerformedProcedure.id == TreatmentPlanItem.performed_procedure_id,
+    ).where(
+        TreatmentPlanItem.clinic_id == clinic_id,
+        TreatmentPlan.clinic_id == clinic_id,
+        PerformedProcedure.clinic_id == clinic_id,
+        TreatmentPlanItem.appointment_id.in_(appointment_ids) if appointment_ids else False,
+        TreatmentPlan.status.in_(("accepted", "in_progress")),
+        TreatmentPlanItem.status != "cancelled",
+        TreatmentPlanItem.cancelled_at.is_(None),
+        PerformedProcedure.status.not_in(("completed", "cancelled")),
+    ).order_by(TreatmentPlanItem.position, TreatmentPlanItem.id))).all()
+    merged: dict[UUID, dict[UUID, dict]] = defaultdict(dict)
+    for appointment_id, lines in effective.items():
+        for line in lines:
+            merged[appointment_id][line["procedure_catalog_id"]] = {
+                "procedure_catalog_id": line["procedure_catalog_id"], "name": line["name"],
+                "manual": line["manual_quantity"] or 0, "plan": line["plan_quantity"] or 0, "performed_id": None,
+            }
+    for appointment_id, procedure_id, name, performed_id in open_rows:
+        entry = merged[appointment_id].setdefault(procedure_id, {
+            "procedure_catalog_id": procedure_id, "name": name, "manual": 0, "plan": 0, "performed_id": None,
+        })
+        entry["plan"] += 1
+        entry["performed_id"] = entry["performed_id"] or performed_id
+    return {
+        appointment_id: [{**entry, "quantity": max(entry["manual"], entry["plan"])}
+                         for _procedure_id, entry in sorted(by_procedure.items(), key=lambda pair: str(pair[0]))]
+        for appointment_id, by_procedure in merged.items()
+    }
+
+
 async def _requirements(db: AsyncSession, user: User, from_date: date | None, to_date: date | None):
     clinic, zone, start_day, end_day, start_utc, end_utc = await _clinic_window(db, user.clinic_id, from_date, to_date)
     appointment_pairs = (await db.execute(select(Appointment, Patient).join(
@@ -195,22 +239,9 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
         Appointment.starts_at >= start_utc,
         Appointment.starts_at < end_utc,
     ).order_by(Appointment.starts_at, Appointment.id))).all()
-    appointment_ids = {appointment.id for appointment, _patient in appointment_pairs}
-    plan_items = (await db.scalars(select(TreatmentPlanItem).where(
-        TreatmentPlanItem.clinic_id == user.clinic_id,
-        TreatmentPlanItem.appointment_id.in_(appointment_ids) if appointment_ids else False,
-        TreatmentPlanItem.status != "cancelled",
-        TreatmentPlanItem.cancelled_at.is_(None),
-    ).order_by(TreatmentPlanItem.appointment_id, TreatmentPlanItem.position, TreatmentPlanItem.id))).all()
-    linked_appointment_ids = {row.appointment_id for row in plan_items}
-    performed_ids = {row.performed_procedure_id for row in plan_items if row.performed_procedure_id}
-    completed_ids = set((await db.scalars(select(PerformedProcedure.id).where(
-        PerformedProcedure.clinic_id == user.clinic_id,
-        PerformedProcedure.id.in_(performed_ids) if performed_ids else False,
-        PerformedProcedure.status.in_(("completed", "cancelled")),
-    ))).all())
-    plan_items = [row for row in plan_items if row.performed_procedure_id not in completed_ids]
-    procedure_ids = {row.procedure_catalog_id for row in plan_items}
+    appointment_ids = [appointment.id for appointment, _patient in appointment_pairs]
+    demand_by_appt = await _procedure_demand(db, user.clinic_id, appointment_ids)
+    procedure_ids = {entry["procedure_catalog_id"] for entries in demand_by_appt.values() for entry in entries}
     latest, lines_by_version = await _latest_recipes(db, user.clinic_id, procedure_ids)
     catalogs = (await db.scalars(select(ProcedureCatalog).where(
         ProcedureCatalog.clinic_id == user.clinic_id,
@@ -231,9 +262,6 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
         InventoryItem.id.in_(item_ids) if item_ids else False,
     ))).all()
     item_map = {row.id: row for row in item_rows}
-    plan_by_appt = defaultdict(list)
-    for row in plan_items:
-        plan_by_appt[row.appointment_id].append(row)
     appointment_output = []
     unknown_appointments = []
     unknown_procedures = []
@@ -243,21 +271,23 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
     demand_by_item = defaultdict(list)
     for appointment, patient in appointment_pairs:
         local_date = appointment.starts_at.astimezone(zone).date()
-        planned = plan_by_appt.get(appointment.id, [])
+        procedures = demand_by_appt.get(appointment.id, [])
         row = {"id": str(appointment.id), "starts_at": appointment.starts_at.isoformat(), "local_date": local_date.isoformat(),
                "status": appointment.status, "patient_name": f"{patient.first_name} {patient.last_name}", "procedures": []}
-        if appointment.id not in linked_appointment_ids:
+        if not procedures:
             unknown_appointments.append({"id": str(appointment.id), "starts_at": appointment.starts_at.isoformat(),
                                          "local_date": local_date.isoformat(), "patient_name": row["patient_name"]})
         appointment_lines = defaultdict(list)
-        for planned_item in planned:
-            recipe = latest.get(planned_item.procedure_catalog_id)
-            catalog = catalog_map.get(planned_item.procedure_catalog_id)
-            performed_id = str(planned_item.performed_procedure_id) if planned_item.performed_procedure_id else None
+        for procedure in procedures:
+            procedure_id = procedure["procedure_catalog_id"]
+            recipe = latest.get(procedure_id)
+            catalog = catalog_map.get(procedure_id)
+            procedure_name = catalog.name if catalog else procedure["name"]
+            performed_id = str(procedure["performed_id"]) if procedure["performed_id"] else None
             if not recipe:
-                unknown_procedures.append({"appointment_id": str(appointment.id), "procedure_catalog_id": str(planned_item.procedure_catalog_id),
-                                           "procedure_name": planned_item.procedure_name, "patient_name": row["patient_name"]})
-                row["procedures"].append({"procedure_name": planned_item.procedure_name, "recipe_missing": True,
+                unknown_procedures.append({"appointment_id": str(appointment.id), "procedure_catalog_id": str(procedure_id),
+                                           "procedure_name": procedure_name, "patient_name": row["patient_name"]})
+                row["procedures"].append({"procedure_name": procedure_name, "quantity": procedure["quantity"], "recipe_missing": True,
                                           "performed_procedure_id": performed_id, "lines": []})
                 continue
             requirement_lines = []
@@ -265,7 +295,7 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
                 item = item_map.get(recipe_line.item_id)
                 if not item:
                     continue
-                need = _decimal(recipe_line.estimated_quantity)
+                need = _decimal(recipe_line.estimated_quantity) * procedure["quantity"]
                 own_reserved = reserve_by_appt_item[(appointment.id, item.id)]
                 other_reserved = max(Decimal(0), reserve_by_item[item.id] - own_reserved)
                 raw_available = _available_on(stock, item.id, local_date)
@@ -275,10 +305,10 @@ async def _requirements(db: AsyncSession, user: User, from_date: date | None, to
                     "recipe_line_id": str(recipe_line.id), "estimated_quantity": format(need, ".3f"),
                     "available": format(available, ".3f"), "reserved": format(own_reserved, ".3f"),
                     "shortage": "0.000"}
-                appointment_lines[item.id].append((line_output, need, planned_item.procedure_name))
+                appointment_lines[item.id].append((line_output, need, procedure_name))
                 requirement_lines.append(line_output)
-            row["procedures"].append({"procedure_catalog_id": str(planned_item.procedure_catalog_id),
-                "procedure_name": catalog.name if catalog else planned_item.procedure_name,
+            row["procedures"].append({"procedure_catalog_id": str(procedure_id),
+                "procedure_name": procedure_name, "quantity": procedure["quantity"],
                 "recipe_version": recipe.version, "recipe_version_id": str(recipe.id),
                 "performed_procedure_id": performed_id, "recipe_missing": False, "lines": requirement_lines})
         for item_id, item_lines in appointment_lines.items():
