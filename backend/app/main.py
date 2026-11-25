@@ -3,15 +3,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.appointment_procedures.router import router as appointment_procedures_router
 from app.appointments.router import availability_router, staff_router
 from app.appointments.router import router as appointments_router
 from app.auth.router import router as auth_router
 from app.clinic.router import router as clinic_router
 from app.clinical_notes.router import router as clinical_notes_router
+from app.collab.router import router as collab_router
 from app.config import settings
 from app.documents.router import router as documents_router
+from app.equipment.router import router as equipment_router
 from app.finance.router import router as finance_router
 from app.forms.router import router as forms_router
+from app.inventory.router import router as inventory_router
+from app.materials.router import router as materials_router
 from app.odontogram.router import router as odontogram_router
 from app.patients.router import router as patients_router
 from app.performed_procedures.router import router as performed_procedures_router
@@ -20,6 +25,7 @@ from app.procedures.router import router as procedures_router
 from app.reports.router import router as reports_router
 from app.rooms_router import router as rooms_router
 from app.staff.router import router as staff_management_router
+from app.team.router import router as team_router
 from app.treatment_plans.router import router as treatment_plans_router
 from app.waitlist.router import router as waitlist_router
 
@@ -35,6 +41,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(clinic_router, prefix="/api")
 app.include_router(patients_router, prefix="/api")
 app.include_router(appointments_router, prefix="/api")
+app.include_router(appointment_procedures_router, prefix="/api")
 app.include_router(procedures_router, prefix="/api")
 app.include_router(performed_procedures_router, prefix="/api")
 app.include_router(clinical_notes_router, prefix="/api")
@@ -43,13 +50,18 @@ app.include_router(periodontal_router, prefix="/api")
 app.include_router(treatment_plans_router, prefix="/api")
 app.include_router(documents_router, prefix="/api")
 app.include_router(finance_router, prefix="/api")
+app.include_router(equipment_router, prefix="/api")
 app.include_router(waitlist_router, prefix="/api")
+app.include_router(inventory_router, prefix="/api")
+app.include_router(materials_router, prefix="/api")
 app.include_router(forms_router, prefix="/api")
 app.include_router(availability_router, prefix="/api")
 app.include_router(rooms_router, prefix="/api")
 app.include_router(staff_router, prefix="/api")
 app.include_router(staff_management_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
+app.include_router(team_router, prefix="/api")
+app.include_router(collab_router, prefix="/api")
 
 
 @app.get("/health")

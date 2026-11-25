@@ -19,7 +19,10 @@ Schema comună a unui record este `id`, `entity`, `date` (ISO cu fusul clinicii)
 următoarele câmpuri suplimentare de reconciliere, după indicator: `method` și
 `reverses_kind` pentru încasări/reversal-uri; `estimated_seconds`,
 `measured_seconds` și `manual_duration` pentru manopere; `age_days` pentru itemi
-de tratament. Pentru încasări, `amount` este magnitudinea intrării, `status` este
+de tratament; `item_id`, `item_name`, `unit`, `lot`, `location`, `quantity`,
+`movement_kind`, `source_type`, `author`, `reason`, `procedure_name`,
+`estimated_quantity` și `actual_quantity` pentru consumuri. Pentru încasări,
+`amount` este magnitudinea intrării, `status` este
 tipul T13 (`payment`, `refund` sau `reversal`), iar `method` al unui reversal
 este metoda mișcării anulate. Pentru `financial_reversals`, `reverses_kind`
 identifică tipul mișcării țintă. Pentru ocupare, `amount` este numărul de minute
@@ -44,7 +47,7 @@ Records nu returnează note, alergii, diagnostic sau alte date clinice.
 | `services_performed` | sumă RON | Suma `current_price`, cu fallback la `procedure_base_price` dacă prețul curent lipsește, pentru manopere `completed` în interval. Prețurile sunt snapshoturile/override-urile istorice; nu reprezintă încasări. | `PerformedProcedure` |
 | `receipts_net_by_method` | sume RON pe metodă | Netul pentru fiecare metodă este payment `+`, refund `−`, reversal de payment `−`, reversal de refund `+`; anulările/reversal-urile de ajustări nu sunt bani și se exclud. Intrările și reversal-urile sunt datate după `created_at`; o intrare anulată este neutralizată în perioada în care s-a înregistrat reversal-ul, păstrând urmele fiecărui rând. | `PatientFinancialEntry` |
 | `financial_reversals` | număr și sumă RON | Mișcări de tip `reversal` din perioadă, grupate după tipul intrării reversate. Suma este pozitivă ca magnitudine; semnul impactului monetar apare în `receipts_net_by_method`. | `PatientFinancialEntry` |
-| `consumptions` | indisponibil | Indicatorul nu este calculat în T24 v1; consumurile sunt „indisponibil până la T17”. | T17 — nesursat |
+| `consumptions` | cantități pe articol, unitate și sursă, în trei zecimale | Mișcări `InventoryMovement.kind = consumption` în zilele locale incluse. Mișcarea este inclusă numai dacă nu există vreo mișcare care o referă prin `reverses_movement_id`; regula se aplică indiferent de data corecției: consumul corectat este scos din perioada originală, iar corecția nu devine cantitate negativă în perioada înregistrării ei. Gruparea separă articolul, unitatea și sursa (`t18` sau `direct`), fără a aduna unități diferite. T18 arată estimatul și realul separat. Filtrele `doctor_id`/`room_id` se aplică doar rândurilor T18 prin programare; consumul direct nu poate fi atribuit și este exclus dacă este folosit oricare filtru. Înregistrările conțin moment local, articol, lot, locație, cantitate, tip, autor și motiv; pentru T18 includ manopera, pacientul, estimatul și realul. | `InventoryMovement`, `InventoryItem`, `InventoryLot`, `InventoryLocation`, `User`; `MaterialConsumptionLine`, `MaterialConsumptionBatch`, `PerformedProcedure`, `Appointment`, `Patient` pentru T18 |
 
 Toate sumele financiare sunt evidență internă, nu raport fiscal. Nu sunt facturi,
 bonuri/chitanțe fiscale, TVA sau contabilitate. Semnele și neutralizarea anulărilor
@@ -64,5 +67,7 @@ convertește în zero. Valorile sumabile sunt calculate din aceeași selecție d
 
 Pagina de rapoarte permite alegerea perioadei și afișează fiecare card cu
 valoarea, unitatea, definiția și un link „Vezi înregistrările”. Consumurile
-afișează explicit indisponibilitatea T17. Secțiunea financiară afișează
+afișează separat totalurile directe și T18, estimatul și realul pentru T18, precum
+și detaliile sursă; cu filtre medic/cabinet UI precizează că mișcările directe sunt
+excluse. Secțiunea financiară afișează
 „Evidență internă, nu raport fiscal”.

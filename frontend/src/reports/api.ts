@@ -3,7 +3,7 @@ import { api } from '../api/client';
 export type ReportRecord = { id: string; entity: string; date: string; status: string; amount: string | null; patient_name: string | null; [key: string]: unknown };
 export type ReportResult = {
   indicator: string;
-  value: number | string | null | Record<string, unknown>;
+  value: number | string | null | Record<string, unknown> | unknown[];
   unit: string;
   definition: string;
   period: { from: string; to: string; timezone: string; semantics: string };

@@ -3,6 +3,11 @@ import { apiErrorMessage } from '../api/client';
 import { getReport, getReportRecords, ReportResult } from './api';
 import './reports.css';
 
+type ConsumptionGroup = {
+  item_id: string; item_name: string; unit: string; source_type: 't18' | 'direct';
+  quantity: string; estimated_quantity: string | null; actual_quantity: string;
+};
+
 const indicators = [
   'appointments_total', 'appointments_cancelled', 'appointments_no_show', 'appointments_completed',
   'cancellation_rate', 'no_show_rate', 'room_occupancy', 'procedure_estimated_duration',
@@ -82,18 +87,36 @@ export function ReportsPage() {
     <div className="reports-grid">
       {results.map(report => <article className="report-card" key={report.indicator}>
         <h2>{labels[report.indicator]}</h2>
-        <p className="report-value">{report.value && typeof report.value === 'object' && 'status' in report.value && report.value.status === 'undefined'
-          ? 'Nedefinit' : showValue(report.value)} <span>{report.unit}</span></p>
+        <p className="report-value">{report.indicator === 'consumptions' && Array.isArray(report.value)
+          ? `${report.value.length} grupe articol/sursă`
+          : report.value && typeof report.value === 'object' && 'status' in report.value && report.value.status === 'undefined'
+            ? 'Nedefinit' : showValue(report.value)} <span>{report.unit}</span></p>
         {report.undefined_reason && <p>{report.undefined_reason}</p>}
         <p>{report.definition}</p>
+        {report.indicator === 'consumptions' && (report.filters.doctor_id || report.filters.room_id)
+          && <p>Consumul direct nu poate fi atribuit medicului sau cabinetului; este exclus când sunt aplicate aceste filtre.</p>}
+        {report.indicator === 'consumptions' && Array.isArray(report.value) && <ul aria-label="Totaluri de consum pe articol, unitate și sursă">
+          {(report.value as ConsumptionGroup[]).map(group => <li key={`${group.item_id}:${group.unit}:${group.source_type}`}>
+            {group.item_name} · {group.source_type === 't18' ? 'Manoperă (T18)' : 'Consum direct (Stocuri)'} · {group.quantity} {group.unit}
+            {group.source_type === 't18' && ` · Estimat ${group.estimated_quantity ?? '0.000'} · Real ${group.actual_quantity}`}
+          </li>)}
+          {report.value.length === 0 && <li>Nu există consumuri în perioada selectată.</li>}
+        </ul>}
         <small>{report.period.from} – {report.period.to} ({report.period.timezone}) · Sursă: {report.source}</small>
         {report.indicator === 'room_occupancy' && !report.filters.room_id
           ? <p>Selectați cabinetul pentru a vedea înregistrările ocupării.</p>
           : <a href={report.records_url} onClick={event => { event.preventDefault(); void toggleRecords(report); }}>
             {records[report.indicator] ? 'Ascunde înregistrările' : 'Vezi înregistrările'}
           </a>}
-        {report.indicator === 'consumptions' && <p>Indisponibil până la T17.</p>}
-        {records[report.indicator] && <ul aria-label={`Înregistrări ${labels[report.indicator]}`}>
+        {records[report.indicator] && report.indicator === 'consumptions' && <ul aria-label="Înregistrări Consumuri">
+          {records[report.indicator].records.map(record => <li key={`${record.entity}:${record.id}:${record.date}`}>
+            <strong>{String(record.date)} · {String(record.item_name)} · {String(record.quantity)} {String(record.unit)}</strong>
+            <p>{record.source_type === 't18' ? 'Consum confirmat (T18)' : 'Consum direct (Stocuri)'} · Lot {String(record.lot)} · Locație {String(record.location)} · Autor {String(record.author)}</p>
+            <p>Tip {String(record.movement_kind)} · Motiv {String(record.reason || '—')}</p>
+            {record.source_type === 't18' && <p>Manoperă {String(record.procedure_name)} · Pacient {String(record.patient_name ?? '—')} · Estimat {String(record.estimated_quantity)} · Real {String(record.actual_quantity)}</p>}
+          </li>)}
+        </ul>}
+        {records[report.indicator] && report.indicator !== 'consumptions' && <ul aria-label={`Înregistrări ${labels[report.indicator]}`}>
           {records[report.indicator].records.map(record => <li key={`${record.entity}:${record.id}:${record.date}`}>{record.date} · {record.entity} · {record.patient_name ?? '—'} · {record.status}{record.amount ? ` · ${record.amount}` : ''}</li>)}
         </ul>}
       </article>)}

@@ -164,10 +164,12 @@ describe('visit UI', () => {
     let renderer!: TestRenderer.ReactTestRenderer;
     await act(async () => { renderer = TestRenderer.create(makeTree()); await flush(); });
     const summaryRequest = vi.mocked(clinicalApi.getVisitSummary).mock.results[0]?.value;
-    await act(async () => { await summaryRequest; await flush(); });
+    await act(async () => { await summaryRequest; });
+    await until(() => renderer.root.findAllByType('button').some(button => text(button) === 'Close visit' && button.props.disabled === false), 'the close button to become enabled');
     const close = renderer.root.findAllByType('button').find(button => text(button) === 'Close visit');
     expect(close?.props.disabled).toBe(false);
-    await act(async () => { close?.props.onClick(); await flush(); });
+    await act(async () => { close?.props.onClick(); });
+    await until(() => renderer.root.findAllByProps({ role: 'alert' }).some(node => text(node).includes('Cannot close appointment: unresolved procedures exist.')), 'the close conflict error');
 
     expect(closeRequest).toHaveBeenCalledWith(appointment.id, 'completed');
     expect(renderer.root.findAllByProps({ role: 'alert' }).map(node => text(node)).join(' ')).toContain('Cannot close appointment: unresolved procedures exist.');
