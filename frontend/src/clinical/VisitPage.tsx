@@ -5,6 +5,7 @@ import { apiErrorMessage, getAppointment, listProcedures, updateAppointmentStatu
 import { ProcedureCard } from './ProcedureCard';
 import { getVisitSummary, type PerformedProcedure, type VisitSummary } from './api';
 import { ProcedureForm } from './ProcedureForm';
+import { SterilizationVisitPanel } from '../sterilization/TracePanels';
 
 const clinicalRoles = new Set(['doctor', 'clinic_manager', 'administrator']);
 const appointmentManagerRoles = new Set(['clinic_manager', 'doctor', 'reception', 'administrator']);
@@ -118,6 +119,7 @@ function VisitWorkspace({ appointmentId, user }: { appointmentId: string; user: 
         <p><strong>Time zone:</strong> {appointment.timezone}</p>
         {canManageProcedures && summaryQuery.data?.unresolved_procedures.length ? <div className="notice-text"><strong>Needs resolution:</strong><ul>{summaryQuery.data.unresolved_procedures.map(item => <li key={item.id}>{item.procedure_name} · {item.status}</li>)}</ul></div> : null}
         {summaryQuery.isError && <button className="secondary" onClick={() => void summaryQuery.refetch()}>Retry summary</button>}
+        <SterilizationVisitPanel key={`${appointmentId}:sterilization`} appointmentId={appointment.id} role={user.role} closed={isVisitClosed} procedures={procedures.map(item => ({ id: item.id, procedure_name: item.procedure_name }))} />
         <VisitFinanceCard key={`${appointmentId}:finance`} appointmentId={appointment.id} refreshKey={procedures.map(item => `${item.id}:${item.status}:${item.current_price}`).join('|')} />
       </section>
     </div>

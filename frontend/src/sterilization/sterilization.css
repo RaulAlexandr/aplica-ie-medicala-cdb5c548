@@ -1,0 +1,24 @@
+.ster-page { max-width: 1200px; margin: 0 auto; display: grid; gap: 1rem; }
+.ster-note { border: 1px solid #126b6455; background: #eaf5f3; color: #0d3f3b; border-radius: .5rem; padding: .8rem; margin: 0; }
+.ster-tabs { display: flex; flex-wrap: wrap; gap: .5rem; }
+.ster-tabs button { background: white; color: #1f2937; border: 1px solid #d6dbe1; }
+.ster-tabs button[aria-pressed="true"] { border-color: #126b64; box-shadow: 0 0 0 2px #126b6422; font-weight: 600; }
+.ster-layout { display: grid; grid-template-columns: minmax(240px, .9fr) minmax(0, 2fr); gap: 1rem; align-items: start; }
+.ster-list { display: grid; gap: .5rem; min-width: 0; }
+.ster-row { display: grid; gap: .2rem; text-align: left; padding: .7rem; border: 1px solid #d6dbe1; border-radius: .5rem; background: white; color: #1f2937; cursor: pointer; min-width: 0; overflow-wrap: anywhere; }
+.ster-row[aria-current="true"] { border-color: #126b64; box-shadow: 0 0 0 2px #126b6422; }
+.ster-row span { color: #687482; font-size: .9rem; }
+.ster-detail, .ster-card { display: grid; gap: .7rem; min-width: 0; overflow-wrap: anywhere; }
+.ster-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .7rem; align-items: end; }
+.ster-form label { display: grid; gap: .3rem; min-width: 0; }
+.ster-form .wide { grid-column: 1 / -1; }
+.ster-checks { display: grid; gap: .3rem; max-height: 14rem; overflow: auto; border: 1px solid #e3e7eb; border-radius: .5rem; padding: .5rem; }
+.ster-checks label { display: flex; gap: .5rem; align-items: center; }
+.ster-badge { display: inline-block; padding: .1rem .5rem; border-radius: 1rem; font-size: .8rem; background: #e3e7eb; color: #1f2937; width: fit-content; }
+.ster-badge.ok { background: #d9f2e3; color: #0d4a26; }
+.ster-badge.bad { background: #fde1df; color: #7a1710; }
+.ster-badge.warn { background: #fff4d6; color: #573900; }
+.ster-item { border-top: 1px solid #e3e7eb; padding: .5rem 0; display: grid; gap: .2rem; }
+.ster-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.ster-trace { display: grid; gap: .5rem; }
+@media (max-width: 760px) { .ster-layout { grid-template-columns: 1fr; } }
