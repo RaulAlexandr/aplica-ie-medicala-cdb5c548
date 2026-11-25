@@ -359,8 +359,11 @@ async def test_storage_failure_and_db_failure_leave_no_row_and_no_file(env, monk
     assert await doc_count(sessions) == 0 and stored_files(store) == []
 
     FlakySession.fail_commit = True
-    with pytest.raises(OperationalError):
-        await upload(client, ctx["auth"], pid, png())
+    response = await upload(client, ctx["auth"], pid, png())
+    assert response.status_code == 500 and response.json() == {
+        "detail": "Eroare internă.", "request_id": response.headers["x-request-id"]
+    }
+    assert "OperationalError" not in response.text
     assert await doc_count(sessions) == 0 and stored_files(store) == []
 
     # A storage key collision must never overwrite an existing clinical file.

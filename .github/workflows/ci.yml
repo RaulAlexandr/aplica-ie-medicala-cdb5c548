@@ -63,6 +63,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -e '.[test]'
+      - name: Install PostgreSQL client tools
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Upgrade an empty database
         env:
           DATABASE_URL: postgresql+asyncpg://dentacare:dentacare@localhost:5432/dentacare
@@ -76,3 +78,9 @@ jobs:
           JWT_SECRET: ci-only-secret
           ENVIRONMENT: test
         run: pytest -q tests/test_postgres_integrity.py tests/test_postgres_procedures.py tests/test_postgres_concurrency.py tests/test_postgres_odontogram.py tests/test_postgres_treatment_plans.py tests/test_postgres_periodontal.py tests/test_postgres_documents.py tests/test_postgres_finance.py tests/test_postgres_finance_immutable.py tests/test_postgres_t03_locations.py tests/test_postgres_t01_refresh_deactivation.py tests/test_postgres_forms.py tests/test_postgres_waitlist.py tests/test_postgres_team.py tests/test_postgres_equipment.py tests/test_postgres_inventory.py tests/test_postgres_collab.py tests/test_postgres_materials.py tests/test_postgres_appointment_procedures.py tests/test_postgres_cabinet_ready.py tests/test_postgres_patient_comms.py tests/test_postgres_sterilization.py tests/test_postgres_security.py tests/test_postgres_automations.py tests/test_postgres_patient_portal.py -m postgres
+      - name: Verify PostgreSQL backup and restore round-trip
+        env:
+          DATABASE_URL: postgresql+asyncpg://dentacare:dentacare@localhost:5432/dentacare
+          JWT_SECRET: ci-only-secret
+          ENVIRONMENT: test
+        run: python -m app.operations.ci_roundtrip

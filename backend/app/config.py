@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     refresh_token_days: int = 14
     cors_origins: str = "http://localhost:5173,https://5173-iq44yzwn2tim322rhv7dl-e61fa79d.us1.manus.computer"
     https_enabled: bool = False
+    json_logs: bool = True
+    login_attempt_retention_days: int = 90
+    patient_access_log_retention_days: int = 365
     # T11 protected clinical documents. Must be an absolute directory outside the repository
     # and outside any static/public directory; unset means document upload/download is disabled.
     document_storage_dir: str | None = None
@@ -33,6 +36,8 @@ class Settings(BaseSettings):
             raise ValueError("Document limits must be positive")
         if self.comms_max_attempts < 1 or self.comms_retry_minutes < 1:
             raise ValueError("Communication retry limits must be positive")
+        if self.login_attempt_retention_days < 1 or self.patient_access_log_retention_days < 1:
+            raise ValueError("Security history retention must be at least one day")
         if "*" in {origin.strip() for origin in self.cors_origins.split(",")}:
             raise ValueError("Wildcard CORS origins are incompatible with credentialed requests")
         return self

@@ -1,9 +1,13 @@
+import re
+import time
+import traceback
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 from sqlalchemy import update
 
@@ -39,6 +43,8 @@ from app.forms.router import router as forms_router
 from app.inventory.router import router as inventory_router
 from app.materials.router import router as materials_router
 from app.odontogram.router import router as odontogram_router
+from app.operations.observability import log_event
+from app.operations.readiness import check_readiness
 from app.patients.router import router as patients_router
 from app.performed_procedures.router import router as performed_procedures_router
 from app.periodontal.router import router as periodontal_router
@@ -80,7 +86,28 @@ app.add_middleware(CORSMiddleware, allow_origins=[origin.strip() for origin in s
 
 @app.middleware("http")
 async def security_and_patient_access(request: Request, call_next):
-    response = await call_next(request)
+    request_id = request.headers.get("x-request-id", "")
+    if not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", request_id):
+        request_id = str(uuid4())
+    request.state.request_id = request_id
+    started = time.monotonic()
+    unhandled_error = False
+    try:
+        response = await call_next(request)
+    except Exception as exc:  # noqa: BLE001 - convert unhandled failures to safe 500 responses
+        unhandled_error = True
+        stack = [f"{frame.filename}:{frame.lineno}:{frame.name}" for frame in traceback.extract_tb(exc.__traceback__)]
+        log_event(40, "request.exception", request_id=request_id, method=request.method,
+                  path=request.url.path, status_code=500, stack=stack)
+        response = JSONResponse(status_code=500, content={"detail": "Eroare internă.", "request_id": request_id})
+    response.headers["X-Request-ID"] = request_id
+    log_event(20 if response.status_code < 500 else 40, "request.completed", request_id=request_id,
+              method=request.method, path=request.url.path, status_code=response.status_code,
+              duration_ms=round((time.monotonic() - started) * 1000, 2))
+    if response.status_code == 500 and not unhandled_error:
+        stack = [f"{frame.filename}:{frame.lineno}:{frame.name}" for frame in traceback.extract_stack()[:-1]]
+        log_event(40, "request.error_response", request_id=request_id, method=request.method,
+                  path=request.url.path, status_code=500, stack=stack)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
@@ -200,3 +227,11 @@ app.include_router(portal_router, prefix="/api")
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def readiness():
+    checks = await check_readiness(SessionLocal, settings.document_storage_dir)
+    ready = all(value == "ok" for value in checks.values())
+    return JSONResponse(status_code=200 if ready else 503,
+                        content={"status": "ready" if ready else "not_ready", "checks": checks})
