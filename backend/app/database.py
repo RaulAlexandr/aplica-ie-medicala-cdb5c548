@@ -211,6 +211,8 @@ class Patient(Base):
     relevant_medical_conditions: Mapped[str | None] = mapped_column(Text)
     medical_alerts: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
+    cnp: Mapped[str | None] = mapped_column(String(13))
+    external_id: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow, nullable=False)
     __table_args__ = (Index("ix_patients_clinic_name", "clinic_id", "last_name", "first_name"),)
@@ -288,6 +290,32 @@ class AuditEvent(Base):
     entity_id: Mapped[UUID] = mapped_column(UUIDType, nullable=False)
     action: Mapped[str] = mapped_column(String(40), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+
+
+class ImportRun(Base):
+    __tablename__ = "import_runs"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("clinic_id", "kind", "file_hash", name="uq_import_run_clinic_kind_hash"),)
+
+
+class ImportRow(Base):
+    __tablename__ = "import_rows"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    run_id: Mapped[UUID] = mapped_column(ForeignKey("import_runs.id"), nullable=False, index=True)
+    row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    message: Mapped[str | None] = mapped_column(Text)
+    entity_type: Mapped[str | None] = mapped_column(String(24))
+    entity_id: Mapped[UUID | None] = mapped_column(UUIDType)
+    source: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    __table_args__ = (UniqueConstraint("run_id", "row_number", name="uq_import_row_run_number"),)
 
 
 class ProcedureCatalog(Base):

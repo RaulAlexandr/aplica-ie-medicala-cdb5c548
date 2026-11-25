@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     comms_adapter: str = "simulated"
     comms_max_attempts: int = 3
     comms_retry_minutes: int = 15
+    import_max_bytes: int = 5 * 1024 * 1024
+    import_max_rows: int = 2_000
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @model_validator(mode="after")
@@ -34,6 +36,8 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET must be a non-placeholder secret outside development")
         if self.document_max_bytes < 1 or self.document_max_image_pixels < 1 or self.document_max_image_side < 1:
             raise ValueError("Document limits must be positive")
+        if self.import_max_bytes < 1 or self.import_max_rows < 1:
+            raise ValueError("Import limits must be positive")
         if self.comms_max_attempts < 1 or self.comms_retry_minutes < 1:
             raise ValueError("Communication retry limits must be positive")
         if self.login_attempt_retention_days < 1 or self.patient_access_log_retention_days < 1:

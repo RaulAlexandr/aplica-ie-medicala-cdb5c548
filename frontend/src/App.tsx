@@ -28,6 +28,7 @@ import { AutomationsPage } from './automations/AutomationsPage';
 import { PortalApp } from './portal/PortalApp';
 import { PatientPortalSection } from './portal/PatientPortalSection';
 import { RescheduleRequestsPage } from './portal/RescheduleRequestsPage';
+import { ImportExportPage } from './import-export/ImportExportPage';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -78,6 +79,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {managementRoles.includes(user.role) && <Link to="/comms">Comunicare</Link>}
         {managementRoles.includes(user.role) && <Link to="/security/access-log">Jurnal de acces</Link>}
         {managementRoles.includes(user.role) && <Link to="/automations">Automatizări</Link>}
+        {managementRoles.includes(user.role) && <Link to="/import-export">Import și export</Link>}
         {managementRoles.includes(user.role) && <><Link to="/setup">Clinic setup</Link><Link to="/staff">Staff</Link></>}
       </nav>
       <button className="link logout" onClick={() => void onLogout()}>Sign out</button>
@@ -525,6 +527,7 @@ export default function App() {
       <Route path="/security/access-log" element={managementRoles.includes(user.role) ? <AccessLogPage /> : <Navigate to="/" />} />
       <Route path="/security/sessions" element={staffRoles.includes(user.role) ? <SessionsPage /> : <Navigate to="/" />} />
       <Route path="/automations" element={managementRoles.includes(user.role) ? <AutomationsPage /> : <Navigate to="/" />} />
+      <Route path="/import-export" element={managementRoles.includes(user.role) ? <ImportExportPage /> : <Navigate to="/" />} />
       <Route path="/setup" element={managementRoles.includes(user.role) ? <Setup user={user} /> : <Navigate to="/" />} />
       <Route path="/staff" element={managementRoles.includes(user.role) ? <StaffOnboarding /> : <Navigate to="/" />} />
       <Route path="/staff/:id" element={managementRoles.includes(user.role) ? <StaffDetail /> : <Navigate to="/" />} />
