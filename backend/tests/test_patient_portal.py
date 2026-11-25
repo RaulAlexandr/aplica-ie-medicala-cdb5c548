@@ -249,11 +249,15 @@ async def test_unknown_email_is_locked_like_a_known_one(env):
 
 # 2. Separate tokens, on every router -------------------------------------------------------------
 
+# Public bearer-by-link endpoints and readiness checks are not staff routes.
 PUBLIC = {
     ("post", "/api/auth/register"), ("post", "/api/auth/login"), ("post", "/api/auth/refresh"),
     ("post", "/api/staff/invitations/accept"), ("get", "/health"),
     ("get", "/api/portal/clinics/{clinic_id}"), ("post", "/api/portal/auth/login"), ("post", "/api/portal/auth/refresh"),
     ("post", "/api/portal/auth/invitation"), ("post", "/api/portal/auth/accept"),
+    ("get", "/api/feedback/public/{token}"), ("post", "/api/feedback/public/{token}"),
+    ("get", "/api/comms/campaign-unsubscribe/{token}"), ("post", "/api/comms/campaign-unsubscribe/{token}"),
+    ("get", "/health/ready"),
 }
 
 
