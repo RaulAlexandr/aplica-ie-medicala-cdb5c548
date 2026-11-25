@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.comms.models import CommConsent, CommOutbox
 from app.database import Appointment, Clinic, Patient, Room, User, get_db
 from app.feedback.models import FeedbackRequest, PatientFeedback
-from app.feedback.service import schedule_visit_messages
+from app.feedback.service import feedback_token, schedule_visit_messages
 from app.main import app
 
 pytestmark = pytest.mark.postgres
@@ -82,8 +82,8 @@ async def test_feedback_token_is_consumed_once_under_concurrent_posts(migrated):
         await schedule_visit_messages(db, appt)
         await db.commit()
     async with sessions() as db:
-        outbox = await db.scalar(select(CommOutbox).where(CommOutbox.message_type == "feedback_request"))
-        token = outbox.body.rsplit("/feedback/", 1)[-1]
+        request = await db.scalar(select(FeedbackRequest))
+        token = feedback_token(request.id)
 
     async def override():
         async with sessions() as db:

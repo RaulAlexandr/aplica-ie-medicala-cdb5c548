@@ -1,16 +1,23 @@
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.comms import adapters
 from app.comms.models import CommOutbox
 from app.comms.service import process_due
 from app.database import Appointment, Base, Patient, User, get_db
 from app.feedback.models import FeedbackRequest, PatientFeedback
 from app.feedback.router import CampaignFilter, _preview
-from app.feedback.service import schedule_visit_messages
+from app.feedback.service import (
+    campaign_unsubscribe_token,
+    feedback_token,
+    schedule_visit_messages,
+    token_digest,
+)
 from app.main import app
 
 
@@ -80,7 +87,8 @@ async def test_visit_feedback_is_only_scheduled_with_consent_and_once(ctx):
         requests = list((await db.scalars(select(FeedbackRequest))).all())
         outbox = list((await db.scalars(select(CommOutbox).where(CommOutbox.message_type == "feedback_request"))).all())
         assert len(requests) == len(outbox) == 1
-        assert requests[0].token_hash != outbox[0].body.rsplit("/feedback/", 1)[-1]
+        assert requests[0].token_hash == token_digest(feedback_token(requests[0].id))
+        assert "[feedback-link]" == outbox[0].body
 
 
 @pytest.mark.asyncio
@@ -91,8 +99,8 @@ async def test_public_feedback_token_is_scoped_limited_and_creates_one_task(ctx)
     await grant(client, headers, patient["id"])
     await close_and_schedule(sessions, appt["id"])
     async with sessions() as db:
-        message = await db.scalar(select(CommOutbox).where(CommOutbox.message_type == "feedback_request"))
-        token = message.body.rsplit("/feedback/", 1)[-1]
+        request = await db.scalar(select(FeedbackRequest))
+        token = feedback_token(request.id)
     public = await client.get(f"/api/feedback/public/{token}")
     assert public.status_code == 200
     assert set(public.json()) == {"valid", "message", "first_name", "clinic_name", "visit_date"}
@@ -128,9 +136,9 @@ async def test_review_invitation_is_scheduled_independently_of_rating(ctx):
     await close_and_schedule(sessions, appt["id"])
     await close_and_schedule(sessions, second_appt["id"])
     async with sessions() as db:
-        requests = (await db.scalars(select(CommOutbox).where(CommOutbox.message_type == "feedback_request"))).all()
+        requests = (await db.scalars(select(FeedbackRequest))).all()
         assert len(requests) == 2
-        tokens = {str(row.patient_id): row.body.rsplit("/feedback/", 1)[-1] for row in requests}
+        tokens = {str(row.patient_id): feedback_token(row.id) for row in requests}
     low = await client.post(f"/api/feedback/public/{tokens[patient['id']]}", json={"rating": 1})
     high = await client.post(f"/api/feedback/public/{tokens[second_patient['id']]}", json={"rating": 5})
     assert "Mulțumim" in low.json()["message"] and "Mulțumim" in high.json()["message"]
@@ -153,9 +161,7 @@ async def test_campaign_launch_is_idempotent_and_unsubscribe_does_not_revoke_app
     again = await client.post(f"/api/comms/campaigns/{campaign_id}/launch", headers=headers)
     assert first.json()["queued"] == 1
     assert again.json()["queued"] == 0
-    async with sessions() as db:
-        row = await db.scalar(select(CommOutbox).where(CommOutbox.message_type == "campaign"))
-        token = row.body.rsplit("/campaigns/unsubscribe/", 1)[-1]
+    token = campaign_unsubscribe_token(UUID(campaign_id), UUID(patient["id"]))
     unsubscribed = await client.post(f"/api/comms/campaign-unsubscribe/{token}")
     assert "înregistrată" in unsubscribed.json()["message"]
     consent = await client.get(f"/api/patients/{patient['id']}/comms/consents", headers=headers)
@@ -236,3 +242,32 @@ async def test_campaign_hourly_limit_defers_excess_messages(ctx):
         messages = list((await db.scalars(select(CommOutbox).where(CommOutbox.message_type == "campaign"))).all())
         assert result["sent"] == 1 and result["deferred"] == 1
         assert sorted(row.status for row in messages) == ["pending", "sent"]
+
+
+@pytest.mark.asyncio
+async def test_feedback_bearer_is_only_rendered_for_delivery_and_redacted_from_outbox(ctx, monkeypatch):
+    client, sessions = ctx
+    headers, manager, room, patient = await setup(client, "t26-redact@example.com")
+    await grant(client, headers, patient["id"])
+    configured = await client.put("/api/feedback/settings", headers=headers, json={"delay_minutes": 0, "negative_threshold": 3, "review_enabled": False, "review_url": None, "hourly_limit": 10})
+    assert configured.status_code == 200
+    appt = await book(client, headers, manager, room, patient)
+    await close_and_schedule(sessions, appt["id"])
+    sent_bodies = []
+
+    class CapturingAdapter:
+        name = "test"
+
+        async def send(self, _channel, _recipient, _subject, body):
+            sent_bodies.append(body)
+            return adapters.SendResult(provider_ref="fake-reference")
+
+    monkeypatch.setattr(adapters, "get_adapter", CapturingAdapter)
+    async with sessions() as db:
+        request = await db.scalar(select(FeedbackRequest))
+        token = feedback_token(request.id)
+        result = await process_due(db, now=datetime.now(UTC) + timedelta(minutes=1))
+        row = await db.scalar(select(CommOutbox).where(CommOutbox.message_type == "feedback_request"))
+        assert result["sent"] >= 1 and row.status == "sent"
+        assert token not in row.body and "[link feedback]" in row.body
+    assert any(f"/feedback/{token}" in body for body in sent_bodies)

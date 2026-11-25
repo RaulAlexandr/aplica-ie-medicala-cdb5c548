@@ -217,11 +217,13 @@ async def _process_row(db: AsyncSession, row: CommOutbox, now: datetime) -> str:
             return await _cancel_row(db, row, "superseded")
         if utc(appt.starts_at) <= now:
             return await _cancel_row(db, row, "expired")
+    feedback_request = None
     if row.message_type == "feedback_request":
         from app.feedback.models import FeedbackRequest
         request = await db.scalar(select(FeedbackRequest).where(FeedbackRequest.outbox_id == row.id))
         if not request or request.used_at or utc(request.expires_at) <= now:
             return await _cancel_row(db, row, "feedback_link_expired")
+        feedback_request = request
     if row.message_type == "campaign":
         from app.feedback.service import can_send_campaign
         if not await can_send_campaign(db, row.clinic_id, row.patient_id):
@@ -233,7 +235,17 @@ async def _process_row(db: AsyncSession, row: CommOutbox, now: datetime) -> str:
     if not recipient:
         return await _cancel_row(db, row, "no_contact")
     clinic, cfg = await db.get(Clinic, row.clinic_id), await get_settings(db, row.clinic_id)
+    link = row.body or ""
+    if row.message_type == "feedback_request":
+        from app.feedback.service import feedback_token, token_digest
+        token = feedback_token(feedback_request.id)
+        if token_digest(token) != feedback_request.token_hash:
+            return await _cancel_row(db, row, "feedback_link_expired")
+        public_origin = app_settings.cors_origins.split(",")[0].strip().rstrip("/")
+        link = f"{public_origin}/feedback/{token}"
     if row.message_type == "campaign":
+        from app.feedback.models import CampaignUnsubscribeToken
+        from app.feedback.service import campaign_unsubscribe_token, token_digest
         from app.feedback.service import get_settings as feedback_settings
         await db.execute(select(Clinic.id).where(Clinic.id == row.clinic_id).with_for_update())
         limit = (await feedback_settings(db, row.clinic_id)).hourly_limit
@@ -242,6 +254,13 @@ async def _process_row(db: AsyncSession, row: CommOutbox, now: datetime) -> str:
             row.scheduled_for = now + timedelta(minutes=1)
             _event(db, row.id, row.clinic_id, "pending", "pending", "hourly_limit", None)
             return "deferred"
+        if not row.campaign_id:
+            return await _cancel_row(db, row, "campaign_unsubscribe_unavailable")
+        token = campaign_unsubscribe_token(row.campaign_id, row.patient_id)
+        if not await db.get(CampaignUnsubscribeToken, token_digest(token)):
+            return await _cancel_row(db, row, "campaign_unsubscribe_unavailable")
+        public_origin = app_settings.cors_origins.split(",")[0].strip().rstrip("/")
+        link = f"{public_origin}/campaigns/unsubscribe/{token}"
     zone = ZoneInfo(clinic.timezone)
     later = defer_quiet(now, zone, cfg.quiet_start, cfg.quiet_end)
     if later > now:  # still inside the quiet window (late run or changed settings): postpone, never drop
@@ -251,7 +270,7 @@ async def _process_row(db: AsyncSession, row: CommOutbox, now: datetime) -> str:
     version, subject_tpl, body_tpl = await current_template(db, row.clinic_id, row.message_type)
     doctor = await db.get(User, appt.doctor_id) if appt else None
     local = utc(row.appointment_starts_at).astimezone(zone)
-    values = {"prenume": patient.first_name, "data": local.strftime("%d.%m.%Y"), "ora": local.strftime("%H:%M"), "medic": doctor.full_name if doctor else "", "clinica": clinic.name, "telefon_clinica": cfg.clinic_phone or "", "link": row.body or ""}
+    values = {"prenume": patient.first_name, "data": local.strftime("%d.%m.%Y"), "ora": local.strftime("%H:%M"), "medic": doctor.full_name if doctor else "", "clinica": clinic.name, "telefon_clinica": cfg.clinic_phone or "", "link": link}
     subject, body = render(subject_tpl, values), render(body_tpl, values)
     adapter = adapters.get_adapter()
     row.attempts += 1
@@ -266,7 +285,12 @@ async def _process_row(db: AsyncSession, row: CommOutbox, now: datetime) -> str:
         row.scheduled_for = now + timedelta(minutes=app_settings.comms_retry_minutes)
         _event(db, row.id, row.clinic_id, "pending", "pending", f"retry {row.attempts}/{app_settings.comms_max_attempts}: {row.last_error}", None)
         return "retry"
-    row.recipient, row.subject, row.body, row.template_version = recipient, subject, body, version
+    stored_body = body
+    if row.message_type == "feedback_request":
+        stored_body = body.replace(link, "[link feedback]")
+    elif row.message_type == "campaign":
+        stored_body = body.replace(link, "[link dezabonare]")
+    row.recipient, row.subject, row.body, row.template_version = recipient, subject, stored_body, version
     row.provider_ref, row.adapter, row.sent_at, row.last_error = result.provider_ref, adapter.name, now, None
     await record_transition(db, row, "sent", None)
     return "sent"

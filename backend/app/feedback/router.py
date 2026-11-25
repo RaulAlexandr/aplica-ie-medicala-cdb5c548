@@ -1,4 +1,3 @@
-import secrets
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 from uuid import UUID
@@ -12,7 +11,6 @@ from app.auth.service import require_roles
 from app.collab.models import CollabTask, CollabTaskEvent
 from app.comms.models import CommConsent, CommOutbox
 from app.comms.service import utc
-from app.config import settings as app_settings
 from app.database import Appointment, Clinic, Patient, User, get_db, utcnow
 from app.feedback.models import (
     Campaign,
@@ -23,7 +21,12 @@ from app.feedback.models import (
     FeedbackTaskLink,
     PatientFeedback,
 )
-from app.feedback.service import campaign_targets, get_settings, token_digest
+from app.feedback.service import (
+    campaign_targets,
+    campaign_unsubscribe_token,
+    get_settings,
+    token_digest,
+)
 
 router = APIRouter(tags=["feedback"])
 MANAGERS = ("clinic_manager", "administrator")
@@ -266,17 +269,18 @@ async def launch_campaign(campaign_id: UUID, db: AsyncSession = Depends(get_db),
         if existing:
             continue
         preference = await db.get(CampaignPreference, (user.clinic_id, patient.id))
-        unsubscribe_token = secrets.token_urlsafe(32)
+        unsubscribe_token = campaign_unsubscribe_token(campaign.id, patient.id)
         if preference is None:
             preference = CampaignPreference(clinic_id=user.clinic_id, patient_id=patient.id, opted_out=False, updated_by_id=user.id)
             db.add(preference)
         if preference.opted_out:
             continue
         db.add(CampaignUnsubscribeToken(token_hash=token_digest(unsubscribe_token), clinic_id=user.clinic_id, patient_id=patient.id))
-        public_origin = app_settings.cors_origins.split(",")[0].strip().rstrip("/")
-        link = f"{public_origin}/campaigns/unsubscribe/{unsubscribe_token}"
+        token_hash = token_digest(unsubscribe_token)
+        if await db.get(CampaignUnsubscribeToken, token_hash) is None:
+            db.add(CampaignUnsubscribeToken(token_hash=token_hash, clinic_id=user.clinic_id, patient_id=patient.id))
         row = CommOutbox(clinic_id=user.clinic_id, patient_id=patient.id, appointment_id=appt.id, campaign_id=campaign.id, message_type="campaign", channel=channel, appointment_starts_at=appt.starts_at, idempotency_key=key, status="pending", scheduled_for=campaign.scheduled_for, attempts=0)
-        row.body = link
+        row.body = "[unsubscribe-link]"
         db.add(row)
         await db.flush()
         _event(db, row.id, user.clinic_id, None, "pending", "campaign_launched", user.id)

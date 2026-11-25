@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import hashlib
-import secrets
+import hmac
 from datetime import UTC, date, datetime, time, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -18,6 +18,17 @@ from app.feedback.models import CampaignPreference, FeedbackRequest, FeedbackSet
 
 def token_digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def feedback_token(request_id: UUID) -> str:
+    """Derive the one-time bearer from a random request id without persisting the raw token."""
+    return hmac.new(app_settings.jwt_secret.encode(), f"feedback:{request_id}".encode(), hashlib.sha256).hexdigest()
+
+
+def campaign_unsubscribe_token(campaign_id: UUID, patient_id: UUID) -> str:
+    """Derive the patient/campaign unsubscribe token; only its hash is stored."""
+    message = f"campaign-unsubscribe:{campaign_id}:{patient_id}".encode()
+    return hmac.new(app_settings.jwt_secret.encode(), message, hashlib.sha256).hexdigest()
 
 
 async def get_settings(db: AsyncSession, clinic_id: UUID) -> FeedbackSettings:
@@ -50,20 +61,21 @@ async def schedule_visit_messages(db: AsyncSession, appt: Appointment) -> None:
     channel = channels[0]
     req = await db.scalar(select(FeedbackRequest).where(FeedbackRequest.clinic_id == appt.clinic_id, FeedbackRequest.appointment_id == appt.id).with_for_update())
     if req is None:
-        token = secrets.token_urlsafe(32)
-        req = FeedbackRequest(clinic_id=appt.clinic_id, appointment_id=appt.id, patient_id=appt.patient_id, token_hash=token_digest(token), expires_at=utcnow() + timedelta(days=14))
+        request_id = uuid4()
+        token = feedback_token(request_id)
+        req = FeedbackRequest(id=request_id, clinic_id=appt.clinic_id, appointment_id=appt.id, patient_id=appt.patient_id, token_hash=token_digest(token), expires_at=utcnow() + timedelta(days=14))
         db.add(req)
         await db.flush()
     else:
-        token = None
+        token = feedback_token(req.id)
     zone = ZoneInfo(clinic.timezone)
     scheduled = defer_quiet(utcnow() + timedelta(minutes=cfg.delay_minutes), zone, (await _comms_settings(db, appt.clinic_id)).quiet_start, (await _comms_settings(db, appt.clinic_id)).quiet_end)
     if token:
         new = await enqueue(db, appt, "feedback_request", channel, scheduled, None)
         row = await db.scalar(select(CommOutbox).where(CommOutbox.idempotency_key == f"{appt.id}:feedback_request:{channel}:{utc(appt.starts_at).strftime('%Y%m%dT%H%M%SZ')}"))
         if row:
-            public_origin = app_settings.cors_origins.split(",")[0].strip().rstrip("/")
-            row.body = f"{public_origin}/feedback/{token}"
+            if row.status == "pending":
+                row.body = "[feedback-link]"
             if new:
                 req.outbox_id = row.id
     if cfg.review_enabled and cfg.review_url:
