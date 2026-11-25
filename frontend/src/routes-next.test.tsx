@@ -78,6 +78,27 @@ describe('T24 reports route', () => {
   }
 });
 
+describe('T34 security routes', () => {
+  it('shows the access log only to clinic managers and administrators', async () => {
+    vi.spyOn(client, 'listAccessLog').mockResolvedValue({ items: [], has_more: false, limit: 50, offset: 0 });
+    const manager = await renderApp('clinic_manager', '/security/access-log');
+    expect(navLinks(manager)).toContain('/security/access-log');
+    expect(textOf(manager.root)).toContain('Jurnal de acces');
+    await act(async () => manager.unmount());
+    const doctor = await renderApp('doctor', '/security/access-log');
+    expect(navLinks(doctor)).not.toContain('/security/access-log');
+    await act(async () => doctor.unmount());
+  });
+
+  it('shows the current user session page', async () => {
+    vi.spyOn(client, 'listSessions').mockResolvedValue([]);
+    const manager = await renderApp('clinic_manager', '/security/sessions');
+    expect(navLinks(manager)).toContain('/security/sessions');
+    expect(textOf(manager.root)).toContain('Sesiunile mele');
+    await act(async () => manager.unmount());
+  });
+});
+
 describe('T12 forms mounting', () => {
   for (const [role, review] of [['reception', 'false'], ['assistant', 'false'], ['doctor', 'true'], ['clinic_manager', 'true']] as const) {
     it(`${role} gets the patient forms panel with canReview=${review}`, async () => {

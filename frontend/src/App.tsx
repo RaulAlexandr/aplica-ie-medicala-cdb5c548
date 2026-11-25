@@ -16,10 +16,12 @@ import { locationLabel, ruleOf } from './catalog/locations';
 import { CatalogProcedureForm } from './catalog/CatalogProcedureForm';
 import { InventoryPage } from './inventory/InventoryPage';
 import { MaterialsPage } from './materials/MaterialsPage';
+import { AccessLogPage } from './security/AccessLogPage';
+import { SessionsPage } from './security/SessionsPage';
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { acceptInvitation, activateProcedure, apiErrorMessage, Clinic, countPatients, countProcedures, createAppointment, createInvitation, createPatient, createRoom, deactivateProcedure, deactivateStaff, Doctor, getClinic, getPatient, getProcedure, Invitation, listAppointments, listDoctors, listInvitations, listPatients, listProcedures, listRooms, listStaff, login, logout, me, Patient, ProcedureCatalog, register, reissueInvitation, revokeInvitation, Room, Staff, updateClinic, updatePatient, updateRoom, User } from './api/client';
+import { acceptInvitation, activateProcedure, apiErrorMessage, Clinic, countPatients, countProcedures, createAppointment, createInvitation, createPatient, createRoom, deactivateProcedure, deactivateStaff, Doctor, exportPatientData, getClinic, getPatient, getProcedure, Invitation, listAppointments, listDoctors, listInvitations, listPatients, listProcedures, listRooms, listStaff, login, logout, me, Patient, ProcedureCatalog, register, reissueInvitation, revokeInvitation, Room, Staff, updateClinic, updatePatient, updateRoom, User } from './api/client';
 import { clinicHour, greetingForHour } from './timezone';
 
 const managementRoles = ['clinic_manager', 'administrator'];
@@ -49,6 +51,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         <Link to="/">Overview</Link>
         {staffRoles.includes(user.role) && <Link to="/patients">Patients</Link>}
         {staffRoles.includes(user.role) && <Link to="/appointments">Appointments</Link>}
+        {staffRoles.includes(user.role) && <Link to="/security/sessions">Sesiunile mele</Link>}
         {staffRoles.includes(user.role) && <Link to="/procedures">Procedure catalog</Link>}
         {staffRoles.includes(user.role) && <Link to="/waitlist">Lista de așteptare</Link>}
         {staffRoles.includes(user.role) && <Link to="/team">Echipă</Link>}
@@ -58,6 +61,7 @@ function Layout({ user, children, onLogout }: { user: User; children: ReactNode;
         {staffRoles.includes(user.role) && <Link to="/materials">Materiale</Link>}
         {cashRoles.includes(user.role) && <Link to="/finance/daily">Încasări zi</Link>}
         {managementRoles.includes(user.role) && <Link to="/reports">Rapoarte</Link>}
+        {managementRoles.includes(user.role) && <Link to="/security/access-log">Jurnal de acces</Link>}
         {managementRoles.includes(user.role) && <><Link to="/setup">Clinic setup</Link><Link to="/staff">Staff</Link></>}
       </nav>
       <button className="link logout" onClick={() => void onLogout()}>Sign out</button>
@@ -115,15 +119,29 @@ const isClientError = (error: unknown) => error instanceof AxiosError && (error.
 
 export function PatientDetail({ user, id, appointmentId }: { user: User; id: string; appointmentId?: string }) {
   const [editing, setEditing] = useState(false);
+  const [exportError, setExportError] = useState('');
   const query = useQuery({ queryKey: ['patient', id], queryFn: () => getPatient(id), retry: (count, error) => !isClientError(error) && count < 2 });
   const client = useQueryClient();
+  async function downloadExport(patientId: string) {
+    setExportError('');
+    try {
+      const blob = await exportPatientData(patientId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `dentacare-patient-${patientId}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) { setExportError(apiErrorMessage(error)); }
+  }
   if (query.isLoading) return <p className="muted">Loading patient…</p>;
   if (query.isError && isClientError(query.error)) return <><Link to="/patients">← Patients</Link><p className="error" role="alert">{PATIENT_UNAVAILABLE}</p></>;
   if (query.isError || !query.data) return <ErrorState error={query.error} />;
   if (editing) return <><Link to="/patients">← Patients</Link><PatientForm initial={query.data} onSaved={() => { setEditing(false); client.invalidateQueries({ queryKey: ['patient', id] }); }} /></>;
   const p = query.data;
   return <>
-    <header><div><p className="eyebrow">PATIENT DETAIL</p><h1>{p.first_name} {p.last_name}</h1></div>{canEditPatients(user.role) && <button onClick={() => setEditing(true)}>Edit patient</button>}</header>
+    <header><div><p className="eyebrow">PATIENT DETAIL</p><h1>{p.first_name} {p.last_name}</h1></div><div className="actions">{user.role === 'clinic_manager' && <button className="secondary" onClick={() => void downloadExport(p.id)}>Exportă JSON</button>}{canEditPatients(user.role) && <button onClick={() => setEditing(true)}>Edit patient</button>}</div></header>
+    {exportError && <p className="error" role="alert">{exportError}</p>}
     <section className="card">
       <h2>Contact</h2>
       <p>{p.phone || 'No phone'} · {p.email || 'No email'}</p>
@@ -480,6 +498,8 @@ export default function App() {
       <Route path="/procedures/:id" element={<ProcedureDetail user={user} />} />
       <Route path="/finance/daily" element={cashRoles.includes(user.role) ? <DailyReportPage /> : <Navigate to="/" />} />
       <Route path="/reports" element={managementRoles.includes(user.role) ? <ReportsPage /> : <Navigate to="/" />} />
+      <Route path="/security/access-log" element={managementRoles.includes(user.role) ? <AccessLogPage /> : <Navigate to="/" />} />
+      <Route path="/security/sessions" element={staffRoles.includes(user.role) ? <SessionsPage /> : <Navigate to="/" />} />
       <Route path="/setup" element={managementRoles.includes(user.role) ? <Setup user={user} /> : <Navigate to="/" />} />
       <Route path="/staff" element={managementRoles.includes(user.role) ? <StaffOnboarding /> : <Navigate to="/" />} />
       <Route path="/staff/:id" element={managementRoles.includes(user.role) ? <StaffDetail /> : <Navigate to="/" />} />

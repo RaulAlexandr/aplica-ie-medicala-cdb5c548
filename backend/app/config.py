@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     access_token_minutes: int = 15
     refresh_token_days: int = 14
     cors_origins: str = "http://localhost:5173,https://5173-iq44yzwn2tim322rhv7dl-e61fa79d.us1.manus.computer"
+    https_enabled: bool = False
     # T11 protected clinical documents. Must be an absolute directory outside the repository
     # and outside any static/public directory; unset means document upload/download is disabled.
     document_storage_dir: str | None = None
@@ -26,6 +27,8 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET must be a non-placeholder secret outside development")
         if self.document_max_bytes < 1 or self.document_max_image_pixels < 1 or self.document_max_image_side < 1:
             raise ValueError("Document limits must be positive")
+        if "*" in {origin.strip() for origin in self.cors_origins.split(",")}:
+            raise ValueError("Wildcard CORS origins are incompatible with credentialed requests")
         return self
 
 @lru_cache
