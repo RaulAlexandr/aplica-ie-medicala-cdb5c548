@@ -7,6 +7,7 @@ from app.appointment_procedures.router import router as appointment_procedures_r
 from app.appointments.router import availability_router, staff_router
 from app.appointments.router import router as appointments_router
 from app.auth.router import router as auth_router
+from app.automations.router import router as automations_router
 from app.clinic.router import router as clinic_router
 from app.clinical_notes.router import router as clinical_notes_router
 from app.collab.router import router as collab_router
@@ -41,6 +42,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(clinic_router, prefix="/api")
 app.include_router(patients_router, prefix="/api")
 app.include_router(appointments_router, prefix="/api")
+app.include_router(automations_router, prefix="/api")
 app.include_router(appointment_procedures_router, prefix="/api")
 app.include_router(procedures_router, prefix="/api")
 app.include_router(performed_procedures_router, prefix="/api")
