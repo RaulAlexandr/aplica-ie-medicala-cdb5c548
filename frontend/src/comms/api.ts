@@ -1,7 +1,7 @@
 import { api } from '../api/client';
 
 export type Channel = 'sms' | 'email';
-export type MessageType = 'confirmation' | 'reminder' | 'cancellation' | 'reschedule';
+export type MessageType = 'confirmation' | 'reminder' | 'cancellation' | 'reschedule' | 'feedback_request' | 'review_invitation' | 'campaign';
 export type MessageStatus = 'pending' | 'sent' | 'delivered' | 'failed' | 'cancelled';
 export type ConsentSource = 'in_person' | 'phone' | 'paper_form' | 'patient_reply' | 'other';
 export type Consent = { id: string; channel: Channel; granted: boolean; source: ConsentSource; recorded_by_id: string; recorded_by: string | null; recorded_at: string };
@@ -16,7 +16,7 @@ export type Template = { message_type: MessageType; version: number; subject: st
 export type CommSettings = { reminder_hours: number; quiet_start: string; quiet_end: string; clinic_phone: string | null; allowed_variables: string[] };
 
 export const channels: Channel[] = ['sms', 'email'];
-export const messageTypes: MessageType[] = ['confirmation', 'reminder', 'cancellation', 'reschedule'];
+export const messageTypes: MessageType[] = ['confirmation', 'reminder', 'cancellation', 'reschedule', 'feedback_request', 'review_invitation', 'campaign'];
 export const statuses: MessageStatus[] = ['pending', 'sent', 'delivered', 'failed', 'cancelled'];
 
 export async function getConsents(patientId: string) { return (await api.get<Consents>(`/patients/${patientId}/comms/consents`)).data; }

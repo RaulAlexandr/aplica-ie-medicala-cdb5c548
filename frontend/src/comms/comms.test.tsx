@@ -15,7 +15,7 @@ const message = (values: Partial<Message> = {}): Message => ({
   provider_ref: null, adapter: null, template_version: null, sent_at: null, created_at: '2030-05-01T06:00:00Z',
   events: [{ id: 'e1', from_status: null, to_status: 'pending', reason: 'queued', occurred_at: '2030-05-01T06:00:00Z' }], ...values,
 });
-const templates: Template[] = (['confirmation', 'reminder', 'cancellation', 'reschedule'] as const).map(t => ({ message_type: t, version: 0, subject: `Subiect ${t}`, body: `Text ${t} {prenume}`, created_at: null }));
+const templates: Template[] = (['confirmation', 'reminder', 'cancellation', 'reschedule', 'feedback_request', 'review_invitation', 'campaign'] as const).map(t => ({ message_type: t, version: 0, subject: `Subiect ${t}`, body: `Text ${t} {prenume}`, created_at: null }));
 
 const text = (node: TestRenderer.ReactTestInstance): string => node.children.map(c => typeof c === 'string' ? c : text(c)).join('');
 const newClient = () => new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
@@ -100,7 +100,7 @@ describe('CommsPage (manager)', () => {
     vi.spyOn(commsApi, 'listTemplates').mockResolvedValue(templates);
     const save = vi.spyOn(commsApi, 'saveTemplate').mockResolvedValue({ ...templates[0], version: 1 });
     const r = await mount(<CommsPage />);
-    await waitFor(() => r.root.findAll(n => n.type === 'form').length === 4, 'template forms');
+    await waitFor(() => r.root.findAll(n => n.type === 'form').length === 7, 'template forms');
     const form = r.root.findByProps({ 'aria-label': 'Șablon Confirmare programare' });
     const body = form.findAll(n => n.type === 'textarea')[0];
     await act(async () => { body.props.onChange({ target: { value: 'Alergie {alergii}' } }); });
