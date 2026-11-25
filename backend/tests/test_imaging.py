@@ -249,3 +249,15 @@ async def test_rights_follow_t11_and_other_clinic_gets_404(env):
     listing = (await client.get(f"/api/documents/patients/{pid}", headers=doctor)).json()
     assert {item["imaging"]["kind"] for item in listing} == {"stl", "dicom"}
     assert (await up(client, foreign, pid, stl_binary(), "x.stl")).status_code == 404
+
+
+async def test_dicom_with_pixel_data_larger_than_pydicom_defer_threshold(env):
+    """Regression: pixel data above 1 KB must still yield an offset/length and a viewable file."""
+    client, _s, _store = env
+    ctx, pid = await setup(client)
+    big = dicom(rows=120, cols=200, frames=2, bits=16)
+    response = await up(client, ctx, pid, big, "mare.dcm")
+    assert response.status_code == 201, response.text
+    meta = response.json()["imaging"]
+    assert meta["viewable"] is True and meta["pixel_length"] == 120 * 200 * 2 * 2
+    assert len(big) - (meta["pixel_offset"] + meta["pixel_length"]) >= 0

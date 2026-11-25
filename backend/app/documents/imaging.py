@@ -145,7 +145,7 @@ def _study_date(raw: str | None) -> str | None:
 
 def inspect_dicom(path: Path, size: int) -> dict:
     try:
-        ds = pydicom.dcmread(str(path), defer_size=1024)
+        ds = pydicom.dcmread(str(path))  # no deferral: deferred elements lose their raw offset/length
     except (InvalidDicomError, OSError, EOFError, ValueError, AttributeError, KeyError, IndexError, struct.error) as exc:
         raise ImagingRejected("Fișier DICOM invalid sau deteriorat") from exc
     meta = getattr(ds, "file_meta", None)
