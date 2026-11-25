@@ -30,7 +30,7 @@ from app.performed_procedures.router import validate_fdi_tooth
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 DOCUMENT_ROLES = ("clinic_manager", "doctor", "administrator")
-CATEGORIES = ("photo", "radiograph", "document", "other")
+CATEGORIES = ("photo", "radiograph", "document", "other", "imaging")
 IMAGE_ONLY_CATEGORIES = {"photo", "radiograph"}
 MAX_DESCRIPTION = 500
 SECURITY_HEADERS = {
@@ -89,12 +89,15 @@ def _limits() -> dict:
     return {
         "accepted_types": ["image/jpeg", "image/png", "application/pdf"],
         "accepted_extensions": [".jpg", ".jpeg", ".png", ".pdf"],
+        "imaging_types": sorted(storage.IMAGING_TYPES),
+        "imaging_extensions": [".stl", ".dcm"],
         "max_bytes": settings.document_max_bytes,
+        "imaging_max_bytes": settings.imaging_max_bytes,
         "max_image_side": settings.document_max_image_side,
         "max_image_pixels": settings.document_max_image_pixels,
         "categories": list(CATEGORIES),
         "image_only_categories": sorted(IMAGE_ONLY_CATEGORIES),
-        "not_supported": ["DICOM", "SVG", "HTML", "PDF with JavaScript/embedded files"],
+        "not_supported": ["SVG", "HTML", "PDF with JavaScript/embedded files", "DICOM cu mai multe fișiere (serii)"],
         "antivirus_scan": False,
     }
 
@@ -156,6 +159,7 @@ async def _serialize(db: AsyncSession, documents: list[ClinicalDocument]) -> lis
             "description": d.description, "original_filename": d.original_filename,
             "content_type": d.content_type, "size_bytes": d.size_bytes, "width": d.width, "height": d.height,
             "is_image": d.content_type in storage.IMAGE_TYPES, "tooth_fdi": d.tooth_fdi,
+            "imaging": d.imaging_metadata,
             "appointment": None if not appointment else {
                 "id": str(appointment.id), "starts_at": _iso(appointment.starts_at),
                 "appointment_type": appointment.appointment_type, "status": appointment.status},
@@ -213,7 +217,7 @@ async def list_documents(
 async def upload_document(
     patient_id: UUID,
     request: Request,
-    category: Literal["photo", "radiograph", "document", "other"] = Query(...),
+    category: Literal["photo", "radiograph", "document", "other", "imaging"] = Query(...),
     appointment_id: UUID | None = Query(default=None),
     tooth_fdi: str | None = Query(default=None, max_length=3),
     clinical_date: date | None = Query(default=None),
@@ -233,9 +237,11 @@ async def upload_document(
     display_name = storage.safe_display_name(_decode_header(file_name, "X-File-Name", 1024))
     description = _decode_header(description_header, "X-Document-Description", MAX_DESCRIPTION)
     key = _uuid_key(idempotency_key)
-    max_bytes = settings.document_max_bytes
+    is_imaging = category == "imaging"
+    max_bytes = settings.imaging_max_bytes if is_imaging else settings.document_max_bytes
+    limit_message = f"Fișierul depășește limita de {max_bytes // (1024 * 1024)} MiB pentru imagistică" if is_imaging else None
     if content_length is not None and content_length > max_bytes:
-        raise HTTPException(413, f"File exceeds the {max_bytes // (1024 * 1024)} MiB limit")
+        raise HTTPException(413, limit_message or f"File exceeds the {max_bytes // (1024 * 1024)} MiB limit")
 
     # The session is rolled back below (expiring ORM objects): keep plain identifiers.
     clinic_id, user_id = user.clinic_id, user.id
@@ -247,13 +253,17 @@ async def upload_document(
     final_path = None
     try:
         try:
-            staged = await storage.stage_upload(request.stream(), max_bytes)
+            staged = await storage.stage_upload(request.stream(), max_bytes, limit_message)
             await asyncio.to_thread(storage.inspect_content, staged)  # full decode off the event loop
             storage.check_extension(display_name, staged.content_type)
         except storage.ContentRejected as exc:
             raise HTTPException(exc.status_code, exc.detail) from exc
         if category in IMAGE_ONLY_CATEGORIES and staged.content_type not in storage.IMAGE_TYPES:
             raise HTTPException(422, "Photos and radiographs must be JPEG or PNG images")
+        if is_imaging and staged.content_type not in storage.IMAGING_TYPES:
+            raise HTTPException(422, "Categoria Imagistică acceptă numai fișiere STL și DICOM (.dcm)")
+        if staged.content_type in storage.IMAGING_TYPES and not is_imaging:
+            raise HTTPException(422, "Fișierele STL și DICOM se încarcă în categoria Imagistică")
 
         if key:
             existing = await db.scalar(select(ClinicalDocument).where(
@@ -268,11 +278,15 @@ async def upload_document(
         # The lock is taken only now, after the body was streamed and inspected.
         await _validate_refs(db, clinic_id, patient_id, appointment_id, lock=True)
         storage_key = storage.new_storage_key()
+        study_date = None
+        if staged.imaging and staged.imaging.get("study_date"):
+            candidate = date.fromisoformat(staged.imaging["study_date"])
+            study_date = candidate if candidate <= (utcnow() + timedelta(days=1)).date() else None
         document = ClinicalDocument(
             clinic_id=clinic_id, patient_id=patient_id, appointment_id=appointment_id, tooth_fdi=tooth,
             category=category, description=description, original_filename=display_name,
             content_type=staged.content_type, size_bytes=staged.size, sha256=staged.sha256,
-            width=staged.width, height=staged.height, storage_key=storage_key, clinical_date=clinical_date,
+            width=staged.width, height=staged.height, imaging_metadata=staged.imaging, storage_key=storage_key, clinical_date=clinical_date or study_date,
             uploaded_by_id=user_id, uploaded_at=utcnow(), idempotency_key=key, status="active")
         db.add(document)
         try:
@@ -336,8 +350,8 @@ async def document_content(
         raise HTTPException(404, "Document content unavailable")
     _audit(db, document, user.id, "downloaded" if download else "viewed")
     await db.commit()
-    # PDFs are always an attachment: the app does not render PDFs inline.
-    disposition = "attachment" if download or document.content_type == "application/pdf" else "inline"
+    # PDFs, STL and DICOM are always attachments: the browser never renders them itself.
+    disposition = "attachment" if download or document.content_type == "application/pdf" or document.content_type in storage.IMAGING_TYPES else "inline"
     ascii_name = "".join(ch if ch.isascii() and (ch.isalnum() or ch in "._- ") else "_" for ch in document.original_filename)
     headers = {
         **SECURITY_HEADERS,

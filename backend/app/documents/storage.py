@@ -22,6 +22,7 @@ from uuid import UUID
 from PIL import Image, ImageFile
 
 from app.config import settings
+from app.documents import imaging
 
 ImageFile.LOAD_TRUNCATED_IMAGES = False
 
@@ -32,8 +33,11 @@ TYPE_EXTENSIONS = {
     "image/jpeg": {".jpg", ".jpeg"},
     "image/png": {".png"},
     "application/pdf": {".pdf"},
+    "model/stl": {".stl"},
+    "application/dicom": {".dcm"},
 }
 IMAGE_TYPES = {"image/jpeg", "image/png"}
+IMAGING_TYPES = {"model/stl", "application/dicom"}
 # Heuristic only: names that make a PDF interactive/active. Not an antivirus scan.
 PDF_ACTIVE = re.compile(
     rb"/(JavaScript|JS|Launch|EmbeddedFiles?|RichMedia|XFA|SubmitForm|ImportData|GoToE)(?![A-Za-z0-9])"
@@ -60,6 +64,7 @@ class StagedFile:
     content_type: str = ""
     width: int | None = None
     height: int | None = None
+    imaging: dict | None = None
 
 
 def storage_root() -> Path:
@@ -97,7 +102,7 @@ def extension_of(name: str) -> str:
     return f".{ext.lower()}" if dot else ""
 
 
-async def stage_upload(chunks: AsyncIterator[bytes], max_bytes: int) -> StagedFile:
+async def stage_upload(chunks: AsyncIterator[bytes], max_bytes: int, limit_message: str | None = None) -> StagedFile:
     """Stream the request body to a private temp file, enforcing the size limit while reading."""
     root = storage_root()
     path = root / INCOMING_DIR / f"{secrets.token_hex(16)}.part"
@@ -111,7 +116,7 @@ async def stage_upload(chunks: AsyncIterator[bytes], max_bytes: int) -> StagedFi
                     continue
                 size += len(chunk)
                 if size > max_bytes:
-                    raise ContentRejected(413, f"File exceeds the {max_bytes // (1024 * 1024)} MiB limit")
+                    raise ContentRejected(413, limit_message or f"File exceeds the {max_bytes // (1024 * 1024)} MiB limit")
                 digest.update(chunk)
                 handle.write(chunk)
             handle.flush()
@@ -151,12 +156,34 @@ def inspect_content(staged: StagedFile) -> None:
             staged.content_type = "application/pdf"
             _check_pdf(handle, staged.size)
             return
+        elif imaging.is_dicom(head + handle.read(132 - len(head))):
+            _inspect_imaging(staged, "application/dicom")
+            return
         else:
-            raise ContentRejected(415, "Unsupported file type: only JPEG, PNG and PDF are accepted")
+            if _inspect_imaging(staged, "model/stl"):
+                return
+            raise ContentRejected(415, "Unsupported file type: only JPEG, PNG, PDF, STL and DICOM are accepted")
     staged.width, staged.height = _decode_image(staged.path, PIL_FORMATS[staged.content_type])
 
 
 PIL_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG"}
+
+
+def _inspect_imaging(staged: StagedFile, kind: str) -> bool:
+    """STL/DICOM validation (T31). Returns False when an STL candidate is not STL at all."""
+    try:
+        if kind == "application/dicom":
+            info = imaging.inspect_dicom(staged.path, staged.size)
+        else:
+            info = imaging.inspect_stl(staged.path, staged.size)
+            if info is None:
+                return False
+    except imaging.ImagingRejected as exc:
+        raise ContentRejected(415, str(exc)) from exc
+    staged.content_type, staged.imaging = kind, info
+    if kind == "application/dicom":
+        staged.width, staged.height = info.get("columns"), info.get("rows")
+    return True
 
 
 def _decode_image(path: Path, expected_format: str) -> tuple[int, int]:

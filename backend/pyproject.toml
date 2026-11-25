@@ -17,6 +17,8 @@ dependencies = [
   "httpx>=0.27,<1",
   # T11: real JPEG/PNG decoding validation with pixel limits (no image editing).
   "pillow>=11,<13",
+  # T31: DICOM header parsing for metadata and validation (MIT licence, no mandatory dependencies).
+  "pydicom>=3.0,<4",
 ]
 
 [project.optional-dependencies]

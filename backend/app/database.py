@@ -606,14 +606,16 @@ class ClinicalDocument(Base):
     archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     archived_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     archive_reason: Mapped[str | None] = mapped_column(Text)
+    # T31: STL/DICOM metadata extracted at upload (never patient identifiers from inside the file).
+    imaging_metadata: Mapped[dict | None] = mapped_column(JSON)
     __table_args__ = (
         Index("ix_clinical_documents_patient", "clinic_id", "patient_id", "uploaded_at"),
         Index("ix_clinical_documents_appointment", "appointment_id"),
         UniqueConstraint("storage_key", name="uq_clinical_document_storage_key"),
         UniqueConstraint("clinic_id", "uploaded_by_id", "idempotency_key", name="uq_clinical_document_retry"),
         CheckConstraint("status IN ('active', 'archived')", name="ck_clinical_document_status"),
-        CheckConstraint("category IN ('photo', 'radiograph', 'document', 'other')", name="ck_clinical_document_category"),
-        CheckConstraint("content_type IN ('image/jpeg', 'image/png', 'application/pdf')", name="ck_clinical_document_type"),
+        CheckConstraint("category IN ('photo', 'radiograph', 'document', 'other', 'imaging')", name="ck_clinical_document_category"),
+        CheckConstraint("content_type IN ('image/jpeg', 'image/png', 'application/pdf', 'model/stl', 'application/dicom')", name="ck_clinical_document_type"),
         CheckConstraint("size_bytes > 0", name="ck_clinical_document_size"),
         CheckConstraint(
             "(status = 'archived') = (archived_at IS NOT NULL AND archived_by_id IS NOT NULL AND archive_reason IS NOT NULL)",
