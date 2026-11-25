@@ -160,7 +160,11 @@ def inspect_dicom(path: Path, size: int) -> dict:
     representation = _number(ds, "PixelRepresentation") or 0
     if not 1 <= frames <= MAX_FRAMES:
         raise ImagingRejected("Fișier DICOM invalid: număr de cadre necorespunzător")
-    raw = ds.get_item("PixelData") if "PixelData" in ds else None
+    # Keep deferred values deferred. Dataset.get_item() otherwise materializes PixelData and
+    # converts it to a DataElement, losing the RawDataElement offset/length used below. That
+    # made valid images larger than pydicom's defer threshold look truncated (and read the full
+    # image into memory during validation).
+    raw = ds.get_item("PixelData", keep_deferred=True) if "PixelData" in ds else None
     pixel_offset = pixel_length = None
     if raw is not None:
         pixel_offset, pixel_length = getattr(raw, "value_tell", None), getattr(raw, "length", None)
