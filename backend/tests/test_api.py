@@ -110,6 +110,7 @@ async def test_logout_revokes_refresh_token_and_count_is_not_page_length(client)
     assert count.status_code == 200 and count.json() == 3
     assert (await client.post("/api/auth/logout", headers=headers, json={"refresh_token": tokens["refresh_token"]})).status_code == 204
     assert (await client.post("/api/auth/refresh", json={"refresh_token": tokens["refresh_token"]})).status_code == 401
+    assert (await client.get("/api/auth/me", headers=headers)).status_code == 401
 
 
 @pytest.mark.asyncio

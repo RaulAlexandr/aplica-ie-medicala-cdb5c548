@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiErrorMessage, getStaff, reactivateStaff } from '../api/client';
+import { apiErrorMessage, getStaff, reactivateStaff, unlockStaffLogin } from '../api/client';
 
 const managementRoles = ['clinic_manager', 'administrator'];
 
@@ -21,9 +21,15 @@ export function StaffDetail({ staffId }: { staffId?: string } = {}) {
     onSuccess: data => { setConfirming(false); setMessage(`${data.full_name} a fost reactivat. Se va autentifica din nou cu parola existentă.`); client.invalidateQueries({ queryKey: ['staff'] }); },
     onError: error => { setConfirming(false); setMessage(apiErrorMessage(error)); },
   });
+  const unlock = useMutation({
+    mutationFn: () => unlockStaffLogin(id),
+    onSuccess: () => setMessage(`Autentificarea pentru ${personName} a fost deblocată. Acțiunea a fost înregistrată.`),
+    onError: error => setMessage(apiErrorMessage(error)),
+  });
   if (query.isLoading) return <p className="muted">Loading staff member…</p>;
   if (query.isError || !query.data) return <ErrorState error={query.error} />;
   const person = query.data;
+  const personName = person.full_name;
   const canReactivate = !person.is_active && !managementRoles.includes(person.role);
   return <>
     <Link to="/staff">← Staff</Link>
@@ -34,6 +40,7 @@ export function StaffDetail({ staffId }: { staffId?: string } = {}) {
       <p>{person.phone || 'No phone recorded'} · {person.specialization || 'No specialization recorded'}</p>
       <p>Upcoming active appointments: {person.upcoming_appointment_count}</p>
       {canReactivate && !confirming && <button type="button" onClick={() => { setMessage(''); setConfirming(true); }}>Reactivează</button>}
+      {managementRoles.includes(person.role) && person.is_active && <button type="button" className="secondary" disabled={unlock.isPending} onClick={() => { setMessage(''); unlock.mutate(); }}>Deblochează autentificarea</button>}
       {canReactivate && confirming && <div role="group" aria-label="Confirmare reactivare">
         <p>Reactivezi contul lui {person.full_name}? Sesiunile închise la dezactivare nu se redeschid; persoana se autentifică din nou.</p>
         <button type="button" onClick={() => reactivate.mutate()} disabled={reactivate.isPending}>Confirmă reactivarea</button>

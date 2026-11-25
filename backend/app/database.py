@@ -115,6 +115,7 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(40))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     deactivated_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    password_changed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow, nullable=False)
     clinic: Mapped[Clinic] = relationship(back_populates="users")
@@ -124,10 +125,40 @@ class RefreshToken(Base):
     __tablename__ = "refresh_tokens"
     id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    session_id: Mapped[UUID] = mapped_column(UUIDType, nullable=False, default=uuid4, index=True)
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64))
+    attempted_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False, index=True)
+    succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class LoginUnlock(Base):
+    __tablename__ = "login_unlocks"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    unlocked_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False, index=True)
+
+
+class AccessLog(Base):
+    __tablename__ = "patient_access_log"
+    id: Mapped[UUID] = mapped_column(UUIDType, primary_key=True, default=uuid4)
+    clinic_id: Mapped[UUID] = mapped_column(ForeignKey("clinics.id"), nullable=False, index=True)
+    actor_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    patient_id: Mapped[UUID] = mapped_column(ForeignKey("patients.id"), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False, index=True)
+    __table_args__ = (Index("ix_patient_access_clinic_date", "clinic_id", "occurred_at"),)
 
 
 class StaffInvitation(Base):

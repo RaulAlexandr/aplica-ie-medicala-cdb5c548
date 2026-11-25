@@ -181,6 +181,17 @@ export async function logout(): Promise<void> {
   }
 }
 export async function me() { return (await api.get<User>('/auth/me')).data; }
+export type AccessLogEntry = { id: string; patient_id: string; actor_id: string; action: string; occurred_at: string };
+export async function listAccessLog(filters: { patient_id?: string; actor_id?: string; start?: string; end?: string; offset?: number } = {}) {
+  return (await api.get<{ items: AccessLogEntry[]; has_more: boolean; limit: number; offset: number }>('/security/access-log', { params: filters })).data;
+}
+export type ActiveSession = { session_id: string; created_at: string; last_used_at: string; current: boolean };
+export async function listSessions() { return (await api.get<ActiveSession[]>('/security/sessions')).data; }
+export async function closeSession(id: string) { await api.delete(`/security/sessions/${id}`); }
+export async function closeOtherSessions() { await api.delete('/security/sessions/others'); }
+export async function changePassword(current_password: string, new_password: string) { await api.post('/auth/change-password', { current_password, new_password }); }
+export async function unlockStaffLogin(id: string) { await api.post(`/security/staff/${id}/unlock`); }
+export async function exportPatientData(id: string) { return (await api.get<Blob>(`/security/patients/${id}/export`, { responseType: 'blob' })).data; }
 export async function listDoctors() { return (await api.get<Doctor[]>('/staff/doctors')).data; }
 export async function listPatients(search?: string, limit = 100, offset = 0) { return (await api.get<Patient[]>('/patients', { params: { ...(search ? { search } : {}), limit, offset } })).data; }
 export async function countPatients() { return (await api.get<number>('/patients/count')).data; }
