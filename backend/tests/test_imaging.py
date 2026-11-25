@@ -154,6 +154,20 @@ async def test_dicom_single_and_multiframe_metadata_and_identical_download(env):
     assert multi[offset: offset + meta["pixel_length"]] == (bytes(range(256))[:48]) * 3
 
 
+async def test_large_deferred_dicom_pixel_data_is_validated_without_loading_it(env):
+    client, _s, _store = env
+    ctx, pid = await setup(client)
+    content = dicom(rows=120, cols=200)
+
+    response = await up(client, ctx, pid, content, "panoramica-mare.dcm")
+
+    assert response.status_code == 201, response.text
+    meta = response.json()["imaging"]
+    assert meta["pixel_length"] == 120 * 200 * 2
+    expected_pixels = (bytes(range(256)) * ((120 * 200 * 2 + 255) // 256))[: 120 * 200 * 2]
+    assert content[meta["pixel_offset"]: meta["pixel_offset"] + meta["pixel_length"]] == expected_pixels
+
+
 async def test_unsupported_transfer_syntax_is_stored_but_marked_not_viewable(env):
     client, _s, _store = env
     ctx, pid = await setup(client)
